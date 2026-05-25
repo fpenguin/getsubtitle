@@ -238,6 +238,8 @@ For ruby VTT furigana in asbplayer:
 
 `Detect and Display Ruby` is optional. It helps asbplayer treat ruby text correctly for mouseover/auto-pause behavior, but it is not required for rendering.
 
+![asbplayer rendering Japanese ruby furigana from WebVTT](examples/asbplayer-ruby-vtt-preview.png)
+
 Recommended commands for asbplayer:
 
 ```sh
