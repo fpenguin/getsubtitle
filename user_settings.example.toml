@@ -1,0 +1,136 @@
+# getsubtitle user settings — non-secret defaults
+#
+# Copy this file to:
+#   macOS/Linux: ~/.config/getsubtitle/user_settings.toml
+#   Windows:     %APPDATA%\getsubtitle\user_settings.toml
+# Or run:        getsubtitle config --init
+#
+# Anything you set here becomes the default for the corresponding flag.
+# Command-line flags ALWAYS win, so config is just a way to skip typing the
+# same flags every run.
+#
+# DO NOT put API keys here. Keys live in macOS Keychain or in environment
+# variables (JIMAKU_API_KEY, WYZIE_API_KEY, DEEPL_API_KEY).
+
+[download]
+# Default languages for the download flow. String or array.
+# langs = "ja"
+# langs = ["ja", "ko", "en", "es"]
+
+# Output folder for downloaded subtitles.
+# output = "~/Movies/Subtitles"
+
+# Folder layout: archive | flat | plex
+# layout = "archive"
+
+# Release-source preference: auto | any | netflix | crunchyroll
+# release_source = "auto"
+
+# Open the output folder after each download.
+# open_folder = false
+
+# Flatten every downloaded .srt to one line per cue (asbplayer-friendly).
+# single_line = false
+
+# Strip broadcast-caption noise (currently the Japanese ➡ continuation arrow).
+# strip_cc_noise = false
+
+
+[combine]
+# Default language order for `getsubtitle combine`. First language is the
+# timing master unless --master or [combine].priority overrides.
+# langs = "ja,ko"
+# langs = ["ja", "ko"]
+
+# Sync strictness preset: auto | strict | loose
+# sync = "auto"
+
+# Keep each source language's original line breaks instead of flattening to one line.
+# preserve_lines = false
+
+# Overwrite existing combined files and bypass the episode match-rate threshold.
+# force = false
+
+# Master-language priority list. If set, the first language in this list that
+# is also in -l becomes the timing master (overrides the "first in -l" default
+# but is still beaten by --master on the command line).
+# priority = ["ja", "en", "ko", "es"]
+
+
+[furigana]
+# Apply Japanese readings automatically during downloads when ja is requested.
+# This creates extra .furigana-*.srt side files from downloaded Japanese SRTs.
+# enabled = false
+
+# Inline Japanese readings automatically into combined subtitles when ja is
+# part of `getsubtitle combine -l ...`. This is often the most useful default
+# for Japanese study files because the combined output itself gets furigana.
+# CLI override for one run: --no-furigana
+# combine = false
+
+# Reading style: hiragana | romaji
+# mode = "hiragana"
+
+# Output format(s) for furigana side files. Comma list of any combination
+# of srt, ass, vtt — or "all" for every variant.
+#
+# Recommended choices:
+#   srt   asbplayer-friendly SRT with inline 漢字（かんじ） readings.
+#         One file per episode. Safest fallback across players.
+#   ass   Stacked-line ASS (readings on a row above each cue). Experimental.
+#   vtt   Ruby VTT with real <ruby><rt> markup. Renders correctly in
+#         browser <track> tags and in asbplayer when:
+#           Settings > Misc > Subtitles > Subtitle HTML = Render
+#         Detect and Display Ruby is optional for mouseover/auto-pause behavior.
+#   all   Same as "srt,ass,vtt".
+#
+# CLI override for any single run:  --format srt   (or --format vtt, etc.)
+#
+# format = "srt"
+# format = "srt,vtt"
+# format = "srt,ass,vtt"
+# format = "all"
+
+
+[translate]
+# MT engine to use when languages are missing. "" disables auto-MT.
+# Valid: "", "argos", "ollama", "deepl"
+# engine = ""
+
+# Ollama model name (only used when engine = "ollama").
+# Used when no language-pair model below matches.
+# model = "aya-expanse:8b"
+
+# Force a source language for MT, e.g. "en" or "ja". Use "auto" to let
+# getsubtitle pick the closest available source per target.
+# source_lang = "auto"
+
+[translate.ollama_models]
+# Optional per-language-pair Ollama model choices. Keys are source:target
+# (source-target with a dash is also accepted).
+# Command-line --mt-model still wins for a single run.
+#
+# CJK pairs benefit from stronger multilingual models:
+# "ja:ko" = "qwen3:4b"
+# "ko:ja" = "qwen3:4b"
+# "ja:en" = "qwen3:4b"
+#
+# European-language pairs can usually use smaller/faster models:
+# "en:es" = "llama3.2:3b"
+# "es:en" = "llama3.2:3b"
+#
+# Higher-quality, slower examples:
+# "ja:ko" = "qwen3:8b"
+# "ja:ko" = "aya-expanse:8b"
+# "ja:ko" = "translategemma:12b"
+
+
+[experimental]
+# Always-on diagnostics for missing-subtitle debugging.
+# debug_providers = false
+
+# Enable Spanish Subdivx fallback by default.
+# subdivx = false
+
+# Enable Korean Addic7ed fallback by default. May rate-limit.
+# addic7ed = false

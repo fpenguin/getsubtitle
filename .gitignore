@@ -1,0 +1,27 @@
+.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+dist/
+build/
+*.egg-info/
+.DS_Store
+test-furi.*/
+
+# Local secrets and machine-specific config
+.env
+.env.*
+!.env.example
+*.local.toml
+*.local.json
+config.toml
+config.json
+getsubtitle.toml
+getsubtitle.json
+user_settings.toml
+!user_settings.example.toml
+
+# AI-agent briefing kept locally; contains absolute paths for this machine.
+HANDOFF.md

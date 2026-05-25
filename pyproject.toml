@@ -1,0 +1,42 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "getsubtitle"
+version = "0.1.0"
+description = "Download and prepare subtitles for streaming and local media language learning workflows."
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+authors = [
+  { name = "getsubtitle contributors" }
+]
+keywords = ["subtitles", "language-learning", "anime", "netflix", "crunchyroll", "srt"]
+classifiers = [
+  "Development Status :: 3 - Alpha",
+  "Environment :: Console",
+  "Intended Audience :: End Users/Desktop",
+  "License :: OSI Approved :: MIT License",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.10",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Programming Language :: Python :: 3.13",
+  "Topic :: Multimedia :: Video",
+  "Topic :: Text Processing",
+]
+# tomllib is built-in on 3.11+; tomli is the backport for 3.10.
+dependencies = [
+  'tomli>=2.0 ; python_version < "3.11"',
+]
+
+[project.optional-dependencies]
+furigana = ["pykakasi>=2.3"]
+dev = ["pytest>=8"]
+
+[project.scripts]
+getsubtitle = "getsubtitle:main"
+
+[tool.setuptools]
+py-modules = ["getsubtitle"]
