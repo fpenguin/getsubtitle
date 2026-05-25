@@ -21,8 +21,18 @@ Three primary workflows:
 
 1. **Download** subtitles for any show or movie from a streaming or catalog URL
 2. **Modify** or convert subtitle file formats, add Japanese furigana, and remove odd characters.
-2. **Translate** missing languages from what you already have, with an offline or online engine
-3. **Combine** multiple language subtitle files into one stacked, time-aligned file (great for asbplayer)
+3. **Translate** missing languages from what you already have, with an offline or online engine
+4. **Combine** multiple language subtitle files into one stacked, time-aligned file (great for asbplayer)
+
+## Keywords
+
+Subtitle downloader, multi-language subtitles, dual subtitles, double subtitles,
+bilingual subtitles, trilingual subtitles, multilingual subtitles, parallel
+subtitles, stacked subtitles, language-learning subtitles, anime subtitles,
+Japanese subtitles, Korean subtitles, English subtitles, Spanish subtitles,
+furigana subtitles, ruby subtitles, asbplayer subtitles, Netflix subtitles,
+Crunchyroll subtitles, Plex subtitles, SRT, WebVTT, VTT, subtitle translator,
+machine-translated subtitles.
 
 [More projects by fpenguin](https://github.com/fpenguin)
 
