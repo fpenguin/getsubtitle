@@ -174,6 +174,7 @@ class MediaInfo:
     source_url: str
     provider: str
     title: str | None = None
+    title_aliases: list[str] | None = None
     season: str = "auto"
     episode: str = "auto"
     anilist_id: int | None = None
@@ -246,6 +247,43 @@ class AniListInfo:
     id: int
     title: str | None
     episodes: int | None
+    title_aliases: list[str] | None = None
+
+
+def _norm_title_key(title: str) -> str:
+    return re.sub(r"\s+", " ", title).strip().casefold()
+
+
+def unique_titles(titles: Iterable[str | None]) -> list[str]:
+    """Return non-empty title variants preserving order and removing
+    case-insensitive duplicates."""
+    out: list[str] = []
+    seen: set[str] = set()
+    for title in titles:
+        if not isinstance(title, str):
+            continue
+        cleaned = re.sub(r"\s+", " ", title).strip()
+        if not cleaned:
+            continue
+        key = _norm_title_key(cleaned)
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append(cleaned)
+    return out
+
+
+def media_title_queries(media: MediaInfo) -> list[str]:
+    """Search titles to try with providers that only accept free-text titles."""
+    return unique_titles([media.title, *(media.title_aliases or [])])
+
+
+def add_media_title_aliases(media: MediaInfo, aliases: Iterable[str | None]) -> None:
+    merged = unique_titles([*(media.title_aliases or []), *aliases])
+    media.title_aliases = [
+        title for title in merged
+        if _norm_title_key(title) != _norm_title_key(media.title or "")
+    ]
 
 
 def request_json(url: str, *, headers: dict[str, str] | None = None, data: dict | None = None) -> object:
@@ -726,10 +764,21 @@ def wikidata_entity_from_statement(prop: str, value: str) -> dict | None:
 
 def update_media_from_wikidata_entity(media: MediaInfo, entity: dict) -> None:
     labels = entity.get("labels", {}) if isinstance(entity, dict) else {}
+    aliases = entity.get("aliases", {}) if isinstance(entity, dict) else {}
     claims = entity.get("claims", {}) if isinstance(entity, dict) else {}
     label = labels.get("en", {}).get("value") or labels.get("ja", {}).get("value")
     if isinstance(label, str) and label.strip():
         media.title = media.title or label
+    discovered: list[str] = []
+    for lang in ("en", "ja", "ko", "es"):
+        value = labels.get(lang, {}).get("value")
+        if isinstance(value, str) and value.strip():
+            discovered.append(value)
+        for alias in aliases.get(lang, []) if isinstance(aliases.get(lang), list) else []:
+            value = alias.get("value") if isinstance(alias, dict) else None
+            if isinstance(value, str) and value.strip():
+                discovered.append(value)
+    add_media_title_aliases(media, discovered)
     media.imdb_id = media.imdb_id or wikidata_claim_value(claims, "P345")
     media.tmdb_id = media.tmdb_id or wikidata_claim_value(claims, "P4983")
     media.tvdb_id = media.tvdb_id or wikidata_claim_value(claims, "P4835")
@@ -1139,6 +1188,7 @@ def fetch_anilist_info(anilist_id: int) -> AniListInfo:
       Media(id: $id, type: ANIME) {
         id
         title { romaji english native }
+        synonyms
         episodes
       }
     }
@@ -1152,8 +1202,19 @@ def fetch_anilist_info(anilist_id: int) -> AniListInfo:
         )
     title_data = media.get("title") or {}
     title = title_data.get("romaji") or title_data.get("english") or title_data.get("native")
+    aliases = unique_titles([
+        title_data.get("romaji"),
+        title_data.get("english"),
+        title_data.get("native"),
+        *(media.get("synonyms") or []),
+    ])
     episodes = media.get("episodes")
-    return AniListInfo(id=int(media["id"]), title=title, episodes=int(episodes) if episodes else None)
+    return AniListInfo(
+        id=int(media["id"]),
+        title=title,
+        episodes=int(episodes) if episodes else None,
+        title_aliases=[alias for alias in aliases if _norm_title_key(alias) != _norm_title_key(title or "")],
+    )
 
 
 def _anilist_title_fallbacks(title: str) -> list[str]:
@@ -1499,22 +1560,31 @@ class SubdivxProvider:
         return self.enabled
 
     def files(self, media: MediaInfo, episode: str) -> list[SubtitleFile]:
-        title = media.title
-        if not title:
+        titles = media_title_queries(media)
+        if not titles:
             return []
 
-        query = title
-        if media.season not in {"auto", "all"} and episode not in {"auto", "all"}:
+        all_subs: list[SubtitleFile] = []
+        seen_urls: set[str] = set()
+        for title in titles:
+            query = title
+            if media.season not in {"auto", "all"} and episode not in {"auto", "all"}:
+                try:
+                    query = f"{title} S{int(media.season):02d}E{int(episode):02d}"
+                except (TypeError, ValueError):
+                    pass
             try:
-                query = f"{title} S{int(media.season):02d}E{int(episode):02d}"
-            except (TypeError, ValueError):
-                pass
-
-        try:
-            data = self._search(query)
-        except CliError:
-            return []
-        return parse_subdivx_response(data, media, episode)
+                data = self._search(query)
+            except CliError:
+                continue
+            for sub in parse_subdivx_response(data, media, episode):
+                if sub.url in seen_urls:
+                    continue
+                seen_urls.add(sub.url)
+                all_subs.append(sub)
+            if all_subs:
+                break
+        return all_subs
 
     def _search(self, query: str):
         post_body = urllib.parse.urlencode({"tabla": "resultados", "buscar2": query}).encode("utf-8")
@@ -1634,15 +1704,22 @@ class Addic7edProvider:
         """Return (subtitles, diagnostic). `diagnostic` is a short human-readable
         reason when no subtitles were returned, or None on success. Surfacing
         this lets --debug-providers tell apart 'no match' from 'HTTP 403'."""
-        title = media.title
-        if not title or not episode.isdigit() or not str(media.season).isdigit():
+        titles = media_title_queries(media)
+        if not titles or not episode.isdigit() or not str(media.season).isdigit():
             return [], "title or season/episode not numeric"
+        diagnostics: list[str] = []
+        show_id = None
         try:
-            show_id, show_diag = self._find_show_id(title)
+            for title in titles:
+                show_id, show_diag = self._find_show_id(title)
+                if show_id:
+                    break
+                if show_diag:
+                    diagnostics.append(f"{title}: {show_diag}")
         except CliError as e:
             return [], str(e)
         if not show_id:
-            return [], show_diag or "no matching show on Addic7ed"
+            return [], "; ".join(diagnostics[:3]) or "no matching show on Addic7ed"
         episode_url = (
             f"{ADDIC7ED_BASE}/serie/{show_id}/{int(media.season)}/{int(episode)}/{ADDIC7ED_KOREAN_LANG_ID}"
         )
@@ -3324,9 +3401,26 @@ def is_dialogue_cue(cue: SrtCue) -> bool:
     text = " ".join(line.strip() for line in cue.text_lines if line.strip())
     if not text:
         return False
+    plain = strip_subtitle_markup(text)
+    plain = re.sub(r"<[^>]+>", " ", plain)
+    plain = re.sub(r"\s+", " ", plain).strip()
+    lower = plain.casefold()
+    if not plain:
+        return False
     if re.fullmatch(r"[♬♪～\s]+", text):
         return False
     if re.fullmatch(r"[（）()\s・…ー\-！!？?]+", text):
+        return False
+    if re.search(r"https?://|www\.|\.com\b|discord\.gg|@[\w.-]+", lower):
+        return False
+    credit_patterns = (
+        r"\b(?:subtitle|subtitles|subs|translation|translated|timing|sync|synced|edited|encoded)\s+by\b",
+        r"\b(?:subbed|translated|timed|synced|encoded)\s+by\b",
+        r"\b(?:raws?|rip|release)\s+by\b",
+        r"\b(?:visit|follow|join)\s+(?:us\s+)?(?:at|on)\b",
+        r"\bopensubtitles\b|\baddic7ed\b|\bsubdivx\b",
+    )
+    if any(re.search(pattern, lower) for pattern in credit_patterns):
         return False
     return True
 
@@ -5606,6 +5700,7 @@ def main(argv: list[str] | None = None) -> int:
     if anilist_info:
         if not media.title or (args.anilist and not args.title):
             media.title = anilist_info.title or media.title
+        add_media_title_aliases(media, [anilist_info.title, *(anilist_info.title_aliases or [])])
     if any(lang != "ja" for lang in langs):
         bridge_anilist_to_external_ids(media)
 

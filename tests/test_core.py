@@ -182,6 +182,45 @@ def test_external_ids_from_netflix_id_handles_empty_response():
     assert result == (None, None, None, None)
 
 
+def test_fetch_anilist_info_collects_title_aliases():
+    fake_response = {
+        "data": {
+            "Media": {
+                "id": 16498,
+                "title": {
+                    "romaji": "Shingeki no Kyojin",
+                    "english": "Attack on Titan",
+                    "native": "進撃の巨人",
+                },
+                "synonyms": ["진격의 거인", "AoT"],
+                "episodes": 25,
+            }
+        }
+    }
+    saved = _patch_request_json(lambda url, **kwargs: fake_response)
+    try:
+        info = MODULE["fetch_anilist_info"](16498)
+    finally:
+        _restore_request_json(saved)
+    assert info.title == "Shingeki no Kyojin"
+    assert info.title_aliases == ["Attack on Titan", "進撃の巨人", "진격의 거인", "AoT"]
+
+
+def test_media_title_queries_preserves_main_then_aliases():
+    media = MODULE["MediaInfo"](
+        source_url="x",
+        provider="test",
+        title="Shingeki no Kyojin",
+        title_aliases=["Attack on Titan", "進撃の巨人", "진격의 거인", "Attack on Titan"],
+    )
+    assert MODULE["media_title_queries"](media) == [
+        "Shingeki no Kyojin",
+        "Attack on Titan",
+        "進撃の巨人",
+        "진격의 거인",
+    ]
+
+
 def test_lang_matches_accepts_iso_variants():
     m = MODULE["lang_matches"]
     # Korean
@@ -454,6 +493,30 @@ def test_subdivx_parser_handles_html_response():
     assert "id=78" in subs[1].url
 
 
+def test_subdivx_provider_tries_title_aliases_until_found():
+    provider = MODULE["SubdivxProvider"](enabled=True)
+    calls = []
+
+    def fake_search(query):
+        calls.append(query)
+        if "Attack on Titan" in query:
+            return [{"id": 88, "title": "Attack on Titan S01E01 Spanish"}]
+        return []
+
+    provider._search = fake_search
+    media = MODULE["MediaInfo"](
+        source_url="x",
+        provider="test",
+        title="Shingeki no Kyojin",
+        title_aliases=["Attack on Titan", "進撃の巨人", "진격의 거인"],
+        season="1",
+    )
+    subs = provider.files(media, "1")
+    assert len(subs) == 1
+    assert "Shingeki no Kyojin S01E01" in calls[0]
+    assert "Attack on Titan S01E01" in calls[1]
+
+
 def test_tvdb_id_from_html_artworks_cdn():
     html = """
     <html><body>
@@ -671,6 +734,15 @@ def test_overlap_ratio_handles_basic_cases():
     assert o(500, 500, 0, 1000) == 0.0
 
 
+def test_is_dialogue_cue_rejects_credit_and_url_noise():
+    SrtCue = MODULE["SrtCue"]
+    is_dialogue = MODULE["is_dialogue_cue"]
+    assert is_dialogue(SrtCue("1", "00:00:01,000 --> 00:00:02,000", ["Hello there"])) is True
+    assert is_dialogue(SrtCue("2", "00:00:01,000 --> 00:00:02,000", ["Subtitles by Example Team"])) is False
+    assert is_dialogue(SrtCue("3", "00:00:01,000 --> 00:00:02,000", ["www.example.com"])) is False
+    assert is_dialogue(SrtCue("4", "00:00:01,000 --> 00:00:02,000", ["♪ ♬ ♪"])) is False
+
+
 def test_combine_cues_preserves_lang_order_ja_then_ko():
     SrtCue = MODULE["SrtCue"]
     master = [
@@ -763,6 +835,23 @@ def test_estimate_timing_offset_detects_constant_shift():
         SrtCue("1", "00:00:01,000 --> 00:00:03,000", ["A ko"]),
         SrtCue("2", "00:00:11,000 --> 00:00:13,000", ["B ko"]),
         SrtCue("3", "00:00:21,000 --> 00:00:23,000", ["C ko"]),
+    ]
+    assert MODULE["estimate_timing_offset_ms"](master, target, MODULE["SYNC_PRESETS"]["auto"]) == 9000
+
+
+def test_estimate_timing_offset_ignores_subtitle_credit_cues():
+    SrtCue = MODULE["SrtCue"]
+    master = [
+        SrtCue("1", "00:00:01,000 --> 00:00:03,000", ["Subtitles by Example Team"]),
+        SrtCue("2", "00:00:10,000 --> 00:00:12,000", ["A"]),
+        SrtCue("3", "00:00:20,000 --> 00:00:22,000", ["B"]),
+        SrtCue("4", "00:00:30,000 --> 00:00:32,000", ["C"]),
+    ]
+    target = [
+        SrtCue("1", "00:00:05,000 --> 00:00:07,000", ["www.example.com"]),
+        SrtCue("2", "00:00:01,000 --> 00:00:03,000", ["A ko"]),
+        SrtCue("3", "00:00:11,000 --> 00:00:13,000", ["B ko"]),
+        SrtCue("4", "00:00:21,000 --> 00:00:23,000", ["C ko"]),
     ]
     assert MODULE["estimate_timing_offset_ms"](master, target, MODULE["SYNC_PRESETS"]["auto"]) == 9000
 
@@ -3075,6 +3164,32 @@ def test_addic7ed_provider_returns_diagnostic_when_no_show():
 
     assert subs == []
     assert diag and isinstance(diag, str)
+
+
+def test_addic7ed_provider_tries_title_aliases_until_show_found():
+    prov = MODULE["Addic7edProvider"](enabled=True)
+    calls = []
+
+    def fake_find_show_id(title):
+        calls.append(title)
+        return (16498, None) if title == "Attack on Titan" else (None, "no matching show")
+
+    def fake_fetch(url):
+        return '<a class="buttonDownload" href="/original/12345/0">Download</a>'
+
+    prov._find_show_id = fake_find_show_id
+    prov._fetch = fake_fetch
+    media = MODULE["MediaInfo"](
+        source_url="x",
+        provider="example",
+        title="Shingeki no Kyojin",
+        title_aliases=["Attack on Titan", "進撃の巨人", "진격의 거인"],
+        season="1",
+    )
+    subs, diag = prov.files(media, "1")
+    assert diag is None
+    assert len(subs) == 1
+    assert calls == ["Shingeki no Kyojin", "Attack on Titan"]
 
 
 def test_addic7ed_provider_returns_diagnostic_on_http_error():

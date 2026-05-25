@@ -15,6 +15,11 @@ Highlights from the most recent round of work:
 - AniList prefix-trim fallback for slug-derived titles like "Frieren Beyond Journeys End"
 - Per-provider download headers (so Addic7ed downloads can supply a Referer)
 - Experimental Spanish (Subdivx) and Korean (Addic7ed) fallback scrapers
+- Localized title-alias search for fallback providers, so anime can be searched
+  by romanized, English, native Japanese, or Korean titles when metadata exposes
+  them
+- Timing offset estimation now ignores obvious subtitle credit, URL, and music
+  cues before trying to sync mixed-source subtitle files
 
 ## Implemented
 
@@ -47,6 +52,9 @@ Highlights from the most recent round of work:
   - Tries TMDB ID when IMDb returns empty
   - Cache per `(id, season, episode)` so multi-language requests don't re-hit the API
 - Experimental: Subdivx (Spanish), Addic7ed (Korean)
+- Fallback providers try known title aliases from AniList/Wikidata, improving
+  searches for titles like `Shingeki no Kyojin` / `Attack on Titan` /
+  `進撃の巨人` / `진격의 거인`
 - Source/release scoring (Netflix/Crunchyroll/Amazon/BluRay/WEB-DL/HDTV/DVD)
 
 ### Output processing
@@ -63,6 +71,8 @@ Highlights from the most recent round of work:
   - `--preserve-lines` to keep original cue line breaks
   - `--force` to overwrite and bypass match-rate threshold
   - `-furigana` inlines readings before combining
+  - constant-offset estimation ignores obvious non-dialogue credits/URLs/music
+    cues before scoring overlap
 
 ### Diagnostics
 
