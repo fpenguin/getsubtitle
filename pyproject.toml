@@ -39,4 +39,4 @@ dev = ["pytest>=8"]
 getsubtitle = "getsubtitle:main"
 
 [tool.setuptools]
-py-modules = ["getsubtitle"]
+py-modules = ["getsubtitle", "getsubtitle_core"]

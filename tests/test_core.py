@@ -2,7 +2,7 @@ import runpy
 from pathlib import Path
 
 
-MODULE = runpy.run_path(str(Path(__file__).resolve().parents[1] / "getsubtitle"), run_name="getsubtitle_test")
+MODULE = runpy.run_path(str(Path(__file__).resolve().parents[1] / "getsubtitle_core.py"), run_name="getsubtitle_test")
 
 
 def test_catalog_provider_detection():

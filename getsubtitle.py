@@ -1,20 +1,17 @@
-"""Import wrapper for the getsubtitle executable module."""
+"""Console entry point for getsubtitle."""
 
 from __future__ import annotations
 
-import runpy
 import sys
-from pathlib import Path
 from typing import Sequence
 
-
-_module = runpy.run_path(str(Path(__file__).with_name("getsubtitle")), run_name="getsubtitle_script")
+import getsubtitle_core
 
 
 def main(argv: Sequence[str] | None = None) -> int:
     try:
-        return _module["main"](list(argv) if argv is not None else None)
-    except _module["CliError"] as e:
+        return getsubtitle_core.main(list(argv) if argv is not None else None)
+    except getsubtitle_core.CliError as e:
         print(f"getsubtitle: {e}", file=sys.stderr)
         return 2
 
