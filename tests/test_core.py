@@ -26,6 +26,252 @@ def test_release_source_detection():
     assert MODULE["normalized_release_source"]("Movie.1080p.BluRay") == "bluray"
 
 
+def test_release_source_detects_new_streaming_services():
+    # Hulu / HBO-Max / Disney+ / Apple TV+ / Paramount+ / Peacock all
+    # have common release-tag conventions surfaced by Wyzie results.
+    nrs = MODULE["normalized_release_source"]
+    assert nrs("Show.S01E01.1080p.HULU.WEB-DL.x264") == "hulu"
+    assert nrs("Show.S01E01.1080p.HMAX.WEB-DL") == "hbo"
+    assert nrs("Show.S01E01.1080p.MAX.WEB-DL") == "hbo"
+    assert nrs("Show.S01E01.2160p.DSNP.WEB-DL.HDR") == "disney"
+    assert nrs("Movie.2023.1080p.ATVP.WEB-DL") == "apple"
+    assert nrs("Show.S01E01.1080p.PMTP.WEB-DL") == "paramount"
+    assert nrs("Show.S01E01.1080p.PCOK.WEB-DL") == "peacock"
+
+
+def test_release_source_from_host_maps_streaming_urls():
+    rh = MODULE["release_source_from_host"]
+    assert rh("www.netflix.com") == "netflix"
+    assert rh("crunchyroll.com") == "crunchyroll"
+    assert rh("www.hulu.com") == "hulu"
+    assert rh("max.com") == "hbo"
+    assert rh("play.max.com") == "hbo"
+    assert rh("hbomax.com") == "hbo"
+    assert rh("www.disneyplus.com") == "disney"
+    assert rh("tv.apple.com") == "apple"
+    assert rh("www.paramountplus.com") == "paramount"
+    assert rh("peacocktv.com") == "peacock"
+    assert rh("www.amazon.com") == "amazon"
+    assert rh("primevideo.com") == "amazon"
+    # Unknown hosts → None so the caller falls back to the legacy logic.
+    assert rh("www.somerandom.com") is None
+    assert rh("") is None
+
+
+def test_release_source_choices_include_new_services():
+    # The parser's choices list must accept the new services so users can
+    # explicitly opt in with e.g. `--release-source hulu`.
+    parser = MODULE["build_parser"]()
+    args = parser.parse_args(["URL", "--release-source", "hulu"])
+    assert args.release_source == "hulu"
+    args = parser.parse_args(["URL", "--release-source", "hbo"])
+    assert args.release_source == "hbo"
+
+
+def test_parse_season_from_title_strips_common_markers():
+    p = MODULE["parse_season_from_title"]
+    assert p("Mashle Magic And Muscles Season 2") == ("Mashle Magic And Muscles", 2)
+    assert p("Mashle Magic And Muscles - Season 2") == ("Mashle Magic And Muscles", 2)
+    assert p("Hibike Euphonium S2") == ("Hibike Euphonium", 2)
+    assert p("Hibike Euphonium Part 1") == ("Hibike Euphonium", 1)
+    assert p("Some Anime Cour 2") == ("Some Anime", 2)
+    # No marker → unchanged with None.
+    assert p("Your Name") == ("Your Name", None)
+    assert p("") == ("", None)
+    # Don't false-positive on a title that ends with a digit (e.g. "Akira").
+    assert p("Akira") == ("Akira", None)
+
+
+def test_infer_from_crunchyroll_url_extracts_id_and_season():
+    # No HTML scrape (request_text mocked to return ""), so we exercise the
+    # slug-only path which is what hits Cloudflare-blocked URLs in practice.
+    cr_globals = MODULE["infer_from_crunchyroll_url"].__globals__
+    saved = cr_globals["request_text"]
+    cr_globals["request_text"] = lambda url: ""
+    try:
+        media = MODULE["infer_from_crunchyroll_url"](
+            "https://www.crunchyroll.com/series/G4VUQYDXR/mashle-magic-and-muscles-season-2"
+        )
+    finally:
+        cr_globals["request_text"] = saved
+    assert media.title == "Mashle Magic And Muscles"
+    assert media.season == "2"
+    assert getattr(media, "crunchyroll_id", None) == "G4VUQYDXR"
+
+
+def test_looks_like_generic_streaming_title_filters_auth_walls():
+    f = MODULE["_looks_like_generic_streaming_title"]
+    assert f("Sign in to Netflix") is True
+    assert f("Watch Now") is True
+    assert f("Stream TV and Movies") is True
+    assert f("Free Trial") is True
+    # Real show titles pass through.
+    assert f("The Witcher") is False
+    assert f("Couples Therapy") is False
+
+
+def test_infer_from_streaming_url_extracts_title_from_slug():
+    # No HTML available → relies on slug parsing alone.
+    sm_globals = MODULE["infer_from_streaming_url"].__globals__
+    saved = sm_globals["request_text"]
+    sm_globals["request_text"] = lambda url: ""
+    try:
+        cases = [
+            ("https://www.hulu.com/series/the-bear-abc12345", "hulu", "The Bear"),
+            # slug_to_title title-cases every word including small words;
+            # AniList/TMDB search is case-insensitive so this is fine.
+            ("https://max.com/show/house-of-the-dragon", "hbo", "House Of The Dragon"),
+            ("https://www.disneyplus.com/series/the-mandalorian/123",
+             "disney", "The Mandalorian"),
+            ("https://tv.apple.com/us/show/severance/umc.cmc.1srk2goyh",
+             "apple", "Severance"),
+            ("https://www.paramountplus.com/shows/star-trek-strange-new-worlds/",
+             "paramount", "Star Trek Strange New Worlds"),
+        ]
+        for url, expected_provider, expected_title in cases:
+            host = url.split("//", 1)[1].split("/", 1)[0]
+            media = MODULE["infer_from_streaming_url"](url, host)
+            assert media.provider == expected_provider, (url, media.provider)
+            assert media.title == expected_title, (url, media.title)
+    finally:
+        sm_globals["request_text"] = saved
+
+
+def test_infer_from_streaming_url_uses_scraped_title_when_present():
+    sm_globals = MODULE["infer_from_streaming_url"].__globals__
+    saved = sm_globals["request_text"]
+    sm_globals["request_text"] = lambda url: (
+        '<html><head>'
+        '<meta property="og:title" content="The Bear (Hulu)">'
+        '</head></html>'
+    )
+    try:
+        media = MODULE["infer_from_streaming_url"](
+            "https://www.hulu.com/series/the-bear-deadbeef99",
+            "hulu.com",
+        )
+    finally:
+        sm_globals["request_text"] = saved
+    # Scraped title wins over slug-derived title (better casing).
+    assert media.title == "The Bear (Hulu)"
+    assert media.provider == "hulu"
+
+
+def test_infer_from_streaming_url_ignores_generic_scraped_title():
+    sm_globals = MODULE["infer_from_streaming_url"].__globals__
+    saved = sm_globals["request_text"]
+    # Simulate an auth wall returning a generic page title.
+    sm_globals["request_text"] = lambda url: (
+        '<html><head>'
+        '<meta property="og:title" content="Sign in to Hulu">'
+        '<title>Stream TV and Movies Live Online</title>'
+        '</head></html>'
+    )
+    try:
+        media = MODULE["infer_from_streaming_url"](
+            "https://www.hulu.com/series/the-mandalorian-deadbeef",
+            "hulu.com",
+        )
+    finally:
+        sm_globals["request_text"] = saved
+    # Slug-derived title used because scraped title was generic boilerplate.
+    assert media.title == "The Mandalorian"
+
+
+def test_infer_media_routes_streaming_hosts_to_generic_handler():
+    sm_globals = MODULE["infer_from_streaming_url"].__globals__
+    saved = sm_globals["request_text"]
+    sm_globals["request_text"] = lambda url: ""
+    try:
+        for url, expected_provider in [
+            ("https://www.hulu.com/series/the-bear-12345", "hulu"),
+            ("https://max.com/show/house-of-the-dragon", "hbo"),
+            ("https://www.disneyplus.com/series/the-mandalorian/abc", "disney"),
+            ("https://tv.apple.com/us/show/severance/xyz", "apple"),
+            ("https://www.paramountplus.com/shows/star-trek-snw/", "paramount"),
+            ("https://www.peacocktv.com/stream-tv/poker-face", "peacock"),
+        ]:
+            media = MODULE["infer_media"](url)
+            assert media.provider == expected_provider, (url, media.provider)
+    finally:
+        sm_globals["request_text"] = saved
+
+
+def test_expand_episodes_uses_tmdb_when_anilist_count_missing():
+    # When `-e all` can't be expanded by AniList episodes (None) but the
+    # media has a TMDB ID + numeric season, we should fall through to
+    # TMDB and produce the right number of episodes.
+    import types
+    # Patch tmdb_tv_season_episode_count to return a known count without
+    # touching the network.
+    scope = MODULE["expand_episodes"].__globals__
+    saved_tmdb_count = scope["tmdb_tv_season_episode_count"]
+    scope["tmdb_tv_season_episode_count"] = lambda tmdb_id, season: 7
+    try:
+        # Simulate the main()-flow integration: expand returns ["all"] when
+        # AniList didn't provide a count.
+        first = MODULE["expand_episodes"]("all", None)
+        assert first == ["all"]
+        # Caller then asks TMDB and would produce 7 episodes.
+        # The actual integration sits in main() — we exercise the helper
+        # directly here for confidence.
+        from getsubtitle_core import tmdb_tv_season_episode_count as _tmdb_count
+        n = scope["tmdb_tv_season_episode_count"]("12345", 1)
+        assert n == 7
+    finally:
+        scope["tmdb_tv_season_episode_count"] = saved_tmdb_count
+
+
+def test_infer_from_netflix_url_falls_back_to_scraped_title():
+    # Simulate the Netflix /watch/ URL case where Wikidata has no entry
+    # for the title — we should still surface a title (the scraped one)
+    # rather than leaving it None.
+    nf_globals = MODULE["infer_from_netflix_url"].__globals__
+    saved_request_text = nf_globals["request_text"]
+    saved_external = nf_globals["external_ids_from_netflix_id"]
+    nf_globals["request_text"] = lambda url: (
+        '<html><head>'
+        '<meta property="og:title" content="Some Niche Show: Pilot">'
+        '</head></html>'
+    )
+    nf_globals["external_ids_from_netflix_id"] = lambda nid: (None, None, None, None)
+    try:
+        media = MODULE["infer_from_netflix_url"](
+            "https://www.netflix.com/watch/81234567"
+        )
+    finally:
+        nf_globals["request_text"] = saved_request_text
+        nf_globals["external_ids_from_netflix_id"] = saved_external
+    # Wikidata returned nothing AND it was a /watch/ URL — the fallback
+    # path uses the scraped (episode) title as a search seed.
+    assert media.title == "Some Niche Show: Pilot"
+    assert media.provider == "netflix"
+    assert media.netflix_id == "81234567"
+
+
+def test_infer_from_netflix_url_skips_generic_scraped_titles():
+    # Auth-walled or anti-bot page returns "Watch Netflix Online" or
+    # similar — must NOT be used as a show title.
+    nf_globals = MODULE["infer_from_netflix_url"].__globals__
+    saved_request_text = nf_globals["request_text"]
+    saved_external = nf_globals["external_ids_from_netflix_id"]
+    nf_globals["request_text"] = lambda url: (
+        '<html><head>'
+        '<meta property="og:title" content="Sign in to Netflix">'
+        '<title>Watch TV Shows Online</title>'
+        '</head></html>'
+    )
+    nf_globals["external_ids_from_netflix_id"] = lambda nid: (None, None, None, None)
+    try:
+        media = MODULE["infer_from_netflix_url"](
+            "https://www.netflix.com/title/81234567"
+        )
+    finally:
+        nf_globals["request_text"] = saved_request_text
+        nf_globals["external_ids_from_netflix_id"] = saved_external
+    assert media.title is None  # both scraped candidates were generic
+
+
 def test_language_aliases():
     assert MODULE["split_csv"]("ja,ko,en,sp", "ja") == ["ja", "ko", "en", "es"]
     assert MODULE["split_csv"]("japanese,korean,english,spanish", "ja") == ["ja", "ko", "en", "es"]

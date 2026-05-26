@@ -1200,11 +1200,48 @@ def infer_from_anilist_url(url: str) -> MediaInfo:
     )
 
 
+# Common multi-season markers at the end of a slug-derived title. Used to
+# split "Mashle Magic And Muscles Season 2" → ("Mashle Magic And Muscles", 2)
+# so AniList search hits the right season entry and `-s` reflects the URL.
+_TRAILING_SEASON_RE = re.compile(
+    r"\s*(?:[-:]\s*)?"
+    r"(?:season\s*0*(\d+)"
+    r"|s(?:eason)?\s*0*(\d+)"
+    r"|part\s*0*(\d+)"
+    r"|cours?\s*0*(\d+))"
+    r"\s*$",
+    re.IGNORECASE,
+)
+
+
+def parse_season_from_title(title: str) -> tuple[str, int | None]:
+    """Strip a trailing 'Season N' / 'Part N' / 'Cour N' marker from a title.
+    Returns (cleaned_title, season_number). When no marker is present
+    returns (title, None) so callers can fall back to their default."""
+    if not title:
+        return title, None
+    m = _TRAILING_SEASON_RE.search(title)
+    if not m:
+        return title, None
+    season = next((int(g) for g in m.groups() if g), None)
+    cleaned = title[: m.start()].rstrip(" -:·–—")
+    return cleaned or title, season
+
+
 def infer_from_crunchyroll_url(url: str) -> MediaInfo:
     parsed = urllib.parse.urlparse(url)
     parts = [p for p in parsed.path.split("/") if p]
     title = None
     episode = "auto"
+    season: str = "auto"
+    # Crunchyroll URLs include a stable alphanumeric series/episode ID like
+    # `/series/GEXH3W2W7/...` — captured here so future Crunchyroll-specific
+    # lookups (e.g. private API or a Wikidata bridge) can use it. Currently
+    # informational; the slug + AniList search still does the real work.
+    crunchyroll_id: str | None = None
+    if len(parts) >= 2 and parts[0] in ("series", "watch"):
+        if re.fullmatch(r"[A-Z0-9]{6,}", parts[1]):
+            crunchyroll_id = parts[1]
 
     html = request_text(url)
     if html:
@@ -1229,7 +1266,21 @@ def infer_from_crunchyroll_url(url: str) -> MediaInfo:
         elif parts[0] != "watch":
             title = slug_to_title(parts[-1])
 
-    return MediaInfo(source_url=url, provider="crunchyroll", title=title, episode=episode)
+    # Strip trailing "Season N" / "Part N" / "Cour N" markers from whichever
+    # title we ended up with — these confuse AniList's exact-match search.
+    # The number we strip becomes the inferred season (overridable by -s).
+    if title:
+        cleaned, parsed_season = parse_season_from_title(title)
+        if parsed_season is not None:
+            title = cleaned
+            season = str(parsed_season)
+
+    media = MediaInfo(source_url=url, provider="crunchyroll", title=title, episode=episode, season=season)
+    # Attach the Crunchyroll ID via attribute so downstream code can use it
+    # without forcing a MediaInfo schema migration for every URL handler.
+    if crunchyroll_id:
+        setattr(media, "crunchyroll_id", crunchyroll_id)
+    return media
 
 
 def netflix_id_from_url(url: str) -> str | None:
@@ -1286,22 +1337,38 @@ def infer_from_netflix_url(url: str) -> MediaInfo:
     parsed = urllib.parse.urlparse(url)
     parts = [p for p in parsed.path.split("/") if p]
     netflix_id = netflix_id_from_url(url)
+    is_watch_page = bool(parts) and parts[0] == "watch"
 
-    title = None
-    if not (parts and parts[0] == "watch"):
-        # Watch pages often surface the episode title, not the series title,
-        # so we skip the HTML scrape there. Browse/title pages can be useful.
-        html = request_text(url)
-        if html:
-            og = re.search(r'<meta[^>]+property=["\']og:title["\'][^>]+content=["\']([^"\']+)["\']', html, re.I)
-            if og:
-                title = clean_page_title(og.group(1))
-            if not title:
-                mt = re.search(r"<title[^>]*>(.*?)</title>", html, re.I | re.S)
-                if mt:
-                    title = clean_page_title(mt.group(1))
+    # Always try to scrape a title. On title/browse pages this is the
+    # canonical series title. On /watch/ pages it's usually the EPISODE
+    # title (e.g. "Pilot") — useful only as a last-resort fallback when
+    # Wikidata returns nothing for the Netflix ID.
+    scraped_title: str | None = None
+    html = request_text(url)
+    if html:
+        og = re.search(
+            r'<meta[^>]+property=["\']og:title["\'][^>]+content=["\']([^"\']+)["\']',
+            html, re.I,
+        )
+        if og:
+            candidate = clean_page_title(og.group(1))
+            if candidate and not _looks_like_generic_streaming_title(candidate):
+                scraped_title = candidate
+        if not scraped_title:
+            mt = re.search(r"<title[^>]*>(.*?)</title>", html, re.I | re.S)
+            if mt:
+                candidate = clean_page_title(mt.group(1))
+                if candidate and not _looks_like_generic_streaming_title(candidate):
+                    scraped_title = candidate
 
-    media = MediaInfo(source_url=url, provider="netflix", title=title, netflix_id=netflix_id)
+    # Use the scraped title immediately for non-/watch/ pages — it's the
+    # series title there. For /watch/ pages, keep it on the side and only
+    # use it as a fallback if Wikidata returns nothing.
+    media = MediaInfo(
+        source_url=url, provider="netflix",
+        title=None if is_watch_page else scraped_title,
+        netflix_id=netflix_id,
+    )
 
     # Bridge Netflix ID -> IMDb/TMDB/TVDB via Wikidata so downstream providers
     # (Wyzie) and the AniList bridge can take it from there.
@@ -1312,7 +1379,122 @@ def infer_from_netflix_url(url: str) -> MediaInfo:
         media.tmdb_id = media.tmdb_id or tmdb_id
         media.tvdb_id = media.tvdb_id or tvdb_id
 
+    # Fallback: Wikidata had nothing for this Netflix ID and the URL was
+    # a /watch/ page we skipped earlier. Use the (likely episode) title
+    # as a search seed — TMDB enrichment downstream may still resolve it,
+    # and at minimum the user sees what we got instead of "unknown".
+    if not media.title and scraped_title:
+        media.title = scraped_title
+
     return media
+
+
+# Streaming hosts handled by the generic streaming inferrer. Maps host →
+# (provider_label, list_of_path_keywords_that_mark_a_useful_slug).
+STREAMING_URL_HOSTS: dict[str, tuple[str, tuple[str, ...]]] = {
+    "hulu.com": ("hulu", ("series", "movie", "movies")),
+    "max.com": ("hbo", ("show", "shows", "movie", "movies")),
+    "play.max.com": ("hbo", ("show", "shows", "movie", "movies")),
+    "hbomax.com": ("hbo", ("show", "shows", "movie", "movies")),
+    "disneyplus.com": ("disney", ("video", "movies", "series", "browse")),
+    "tv.apple.com": ("apple", ("show", "movie")),
+    "paramountplus.com": ("paramount", ("shows", "movies")),
+    "peacocktv.com": ("peacock", ("watch", "stream-tv", "shows", "movies")),
+    "primevideo.com": ("amazon", ("detail",)),
+}
+
+# Strings that show up as og:title on auth-walled pages and aren't the show
+# title. Each is a substring match (case-insensitive).
+_GENERIC_STREAMING_TITLE_PATTERNS = (
+    "sign in", "log in", "stream tv", "watch ", "stream on ",
+    "tv shows", "movies", "free trial", "subscribe",
+)
+
+
+def _looks_like_generic_streaming_title(title: str) -> bool:
+    """True for og:title strings that are clearly marketing boilerplate
+    rather than the actual show name (auth wall / homepage redirect)."""
+    if not title:
+        return True
+    lower = title.lower().strip()
+    if len(lower) < 2 or len(lower) > 200:
+        return True
+    for pat in _GENERIC_STREAMING_TITLE_PATTERNS:
+        if pat in lower:
+            return True
+    return False
+
+
+def _slug_from_streaming_path(parts: list[str], known_keywords: tuple[str, ...]) -> str | None:
+    """Pull the most likely 'show slug' out of a streaming URL path. Looks
+    for a path segment that follows one of the known keywords (e.g. after
+    `/series/` for Hulu, `/show/` for Max). Strips trailing UUID-ish
+    suffixes that some services append (`some-show-name-deadbeef12ab...`)."""
+    if not parts:
+        return None
+    for i, segment in enumerate(parts):
+        if segment.lower() in known_keywords and i + 1 < len(parts):
+            slug = parts[i + 1]
+            # Strip trailing hex/UUID-ish chunk after the last hyphen.
+            tail = slug.rsplit("-", 1)
+            if len(tail) == 2 and re.fullmatch(r"[a-f0-9]{8,}", tail[1], re.I):
+                slug = tail[0]
+            return slug or None
+    return None
+
+
+def infer_from_streaming_url(url: str, host: str) -> MediaInfo:
+    """Generic handler for hulu / max / disneyplus / apple tv+ / paramount+ /
+    peacock / prime video. Extracts a title from the URL slug, falls back to
+    scraping `og:title` (most services expose it even when content is
+    auth-walled). Returns a MediaInfo with provider set to the service tag
+    so the downstream release-source preference picks the right releases.
+
+    No IDs are returned directly — the TMDB enrichment hook in main() takes
+    the title and resolves IMDb/TMDB IDs."""
+    host_key = host.lower()
+    if host_key.startswith("www."):
+        host_key = host_key[4:]
+
+    provider_label = "unknown"
+    known_keywords: tuple[str, ...] = ()
+    for known_host, (label, kws) in STREAMING_URL_HOSTS.items():
+        if host_key == known_host or host_key.endswith("." + known_host):
+            provider_label = label
+            known_keywords = kws
+            break
+
+    parsed = urllib.parse.urlparse(url)
+    parts = [p for p in parsed.path.split("/") if p]
+
+    # 1) Try the URL slug as a title hint.
+    title: str | None = None
+    slug = _slug_from_streaming_path(parts, known_keywords)
+    if slug:
+        title = slug_to_title(slug)
+
+    # 2) Try scraping og:title / <title>. Falls back gracefully on 403 /
+    # network error (request_text returns "").
+    html = request_text(url)
+    if html:
+        og = re.search(
+            r'<meta[^>]+property=["\']og:title["\'][^>]+content=["\']([^"\']+)["\']',
+            html, re.I,
+        )
+        if og:
+            scraped = clean_page_title(og.group(1))
+            if scraped and not _looks_like_generic_streaming_title(scraped):
+                # Prefer scraped title over slug — usually has correct casing
+                # / spacing / punctuation.
+                title = scraped
+        if not title:
+            mt = re.search(r"<title[^>]*>(.*?)</title>", html, re.I | re.S)
+            if mt:
+                scraped = clean_page_title(mt.group(1))
+                if scraped and not _looks_like_generic_streaming_title(scraped):
+                    title = scraped
+
+    return MediaInfo(source_url=url, provider=provider_label, title=title)
 
 
 def infer_media(url: str) -> MediaInfo:
@@ -1326,6 +1508,13 @@ def infer_media(url: str) -> MediaInfo:
         return infer_from_crunchyroll_url(url)
     if "netflix.com" in host:
         return infer_from_netflix_url(url)
+    # Generic streaming-service handler covers hulu/max/disney+/apple/
+    # paramount+/peacock/prime video. Falls through to the catalog
+    # branch below for non-streaming hosts.
+    host_stripped = host[4:] if host.startswith("www.") else host
+    if any(host_stripped == h or host_stripped.endswith("." + h)
+           for h in STREAMING_URL_HOSTS):
+        return infer_from_streaming_url(url, host)
     if "anilist.co" in host:
         return infer_from_anilist_url(url)
     catalog_provider = provider_from_host(host)
@@ -2801,6 +2990,30 @@ def normalized_release_source(text: str) -> str | None:
         return "crunchyroll"
     if any(token in value for token in ["amazon", ".amzn.", " amzn ", "prime video"]):
         return "amazon"
+    if any(token in value for token in ["hulu", ".hulu.", "webrip.hulu", "web-dl.hulu"]):
+        return "hulu"
+    # Both HBO Max and the rebranded Max share these tags; .max. catches the
+    # newer brand and .hmax./.hbomax. cover the older era's release groups.
+    if any(token in value for token in [
+        "hbo", "hmax", "hbomax", "max.web", ".max.", "webrip.max", "web-dl.max",
+    ]):
+        return "hbo"
+    if any(token in value for token in [
+        "disney+", "disneyplus", "dsnp", ".dsnp.", "webrip.dsnp", "web-dl.dsnp",
+    ]):
+        return "disney"
+    if any(token in value for token in [
+        "apple tv", "appletv", "atvp", ".atvp.", "webrip.atvp", "web-dl.atvp",
+    ]):
+        return "apple"
+    if any(token in value for token in [
+        "paramount+", "paramountplus", "pmtp", ".pmtp.", "webrip.pmtp", "web-dl.pmtp",
+    ]):
+        return "paramount"
+    if any(token in value for token in [
+        "peacock", "pcok", ".pcok.", "webrip.pcok", "web-dl.pcok",
+    ]):
+        return "peacock"
     if any(token in value for token in ["bluray", "blu-ray", "bdrip", "brrip"]):
         return "bluray"
     if any(token in value for token in ["web-dl", "webrip", "web "]):
@@ -2809,6 +3022,37 @@ def normalized_release_source(text: str) -> str | None:
         return "hdtv"
     if "dvd" in value:
         return "dvd"
+    return None
+
+
+# Streaming host → release-source preference. Used by --release-source auto
+# so pasting a hulu.com URL preselects HULU rips when multiple are available.
+STREAMING_HOST_RELEASE_SOURCE: dict[str, str] = {
+    "netflix.com": "netflix",
+    "crunchyroll.com": "crunchyroll",
+    "amazon.com": "amazon",
+    "primevideo.com": "amazon",
+    "hulu.com": "hulu",
+    "max.com": "hbo",
+    "play.max.com": "hbo",
+    "hbomax.com": "hbo",
+    "disneyplus.com": "disney",
+    "tv.apple.com": "apple",
+    "paramountplus.com": "paramount",
+    "peacocktv.com": "peacock",
+}
+
+
+def release_source_from_host(host: str) -> str | None:
+    """Return a release-source preference inferred from a URL host, or None.
+    Used by --release-source auto to bias subtitle picking toward releases
+    that match the source the user is actually watching from."""
+    host = (host or "").lower().lstrip(".")
+    if host.startswith("www."):
+        host = host[4:]
+    for known_host, source in STREAMING_HOST_RELEASE_SOURCE.items():
+        if host == known_host or host.endswith("." + known_host):
+            return source
     return None
 
 
@@ -5033,7 +5277,17 @@ def build_parser() -> argparse.ArgumentParser:
     search.add_argument("--title", metavar="TEXT", help="Title override when URL metadata is missing or blocked.")
     search.add_argument("--anilist", type=int, metavar="ID", help="AniList ID override for anime.")
     search.add_argument("--browser", action="store_true", help="Open the URL in your browser first, useful for login/Cloudflare pages.")
-    search.add_argument("--release-source", choices=["auto", "any", "netflix", "crunchyroll"], default="auto", metavar="{auto,any,netflix,crunchyroll}", help="Prefer matching release sources. Default: match the URL source when useful; use any to disable source preference.")
+    search.add_argument(
+        "--release-source",
+        choices=[
+            "auto", "any",
+            "netflix", "crunchyroll", "amazon", "hulu",
+            "hbo", "disney", "apple", "paramount", "peacock",
+        ],
+        default="auto",
+        metavar="{auto,any,netflix,crunchyroll,amazon,hulu,hbo,disney,apple,paramount,peacock}",
+        help="Prefer matching release sources. Default: auto = infer from URL host (works for all the listed services); use any to disable source preference.",
+    )
     search.add_argument("-release-source", dest="release_source", choices=["auto", "any", "netflix", "crunchyroll"], help=argparse.SUPPRESS)
 
     output = p.add_argument_group("Output")
@@ -6459,8 +6713,16 @@ def main(argv: list[str] | None = None) -> int:
             print("Browser opened. Continuing without waiting because stdin is not interactive.")
     langs = split_csv(args.langs, "ja")
     media = infer_media(args.url)
-    media.season = str(args.season).lower()
-    media.episode = str(args.episode).lower()
+    # User-supplied -s wins; otherwise keep any season the URL inferred
+    # (e.g. Crunchyroll "...-season-2" slug → season=2). Same pattern for -e.
+    if str(args.season).lower() != "auto":
+        media.season = str(args.season).lower()
+    elif not media.season or media.season == "auto":
+        media.season = "auto"
+    if str(args.episode).lower() != "auto":
+        media.episode = str(args.episode).lower()
+    elif not media.episode or media.episode == "auto":
+        media.episode = "auto"
     if args.title:
         media.title = args.title
     # TMDB title → IDs enrichment. Only fires when the user has a TMDB
@@ -6508,8 +6770,21 @@ def main(argv: list[str] | None = None) -> int:
         bridge_anilist_to_external_ids(media)
 
     episodes = expand_episodes(media.episode, anilist_info.episodes if anilist_info else None)
+    # If `-e all` couldn't be expanded by AniList (anime path) and we have
+    # a TMDB ID + a numeric season, ask TMDB for the season's episode count.
+    # Unlocks `-e all` for live-action shows without anyone counting by hand.
+    if episodes == ["all"] and media.tmdb_id:
+        season_str = str(media.season).strip().lower()
+        if season_str.isdigit():
+            tmdb_count = tmdb_tv_season_episode_count(media.tmdb_id, int(season_str))
+            if tmdb_count and tmdb_count > 0:
+                episodes = [str(i) for i in range(1, tmdb_count + 1)]
     if episodes == ["all"]:
-        raise CliError("Episode count is unknown. Use -e 1-12, -e 1,2,3, or pass --anilist for automatic expansion.")
+        raise CliError(
+            "Episode count is unknown. Use -e 1-12, -e 1,2,3, pass --anilist "
+            "for anime, or set up a TMDB key (getsubtitle --set-key tmdb) "
+            "for live-action `-e all` expansion."
+        )
     if episodes == ["auto"] and media.episode == "auto":
         episodes = ["auto"]
 
@@ -6537,7 +6812,14 @@ def main(argv: list[str] | None = None) -> int:
     if args.release_source == "any":
         preferred_release_source = None
     elif args.release_source == "auto":
-        preferred_release_source = media.provider if media.provider in {"netflix", "crunchyroll"} else None
+        # Prefer the source URL's host first (covers Hulu/Disney/Apple/etc.
+        # via release_source_from_host); fall back to the legacy provider-
+        # equals-source check for catalog-site URLs that share a name.
+        host = urllib.parse.urlparse(media.source_url or "").netloc
+        preferred_release_source = (
+            release_source_from_host(host)
+            or (media.provider if media.provider in {"netflix", "crunchyroll"} else None)
+        )
     else:
         preferred_release_source = args.release_source
     planned: list[tuple[str, str, SubtitleFile]] = []
