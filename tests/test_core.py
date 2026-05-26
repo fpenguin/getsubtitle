@@ -879,6 +879,14 @@ def test_tmdb_in_key_providers_registry():
     assert kp["subdl"]["account"] == "subdl"
 
 
+def test_provider_choices_accepts_uninstall_friendly_dash_all():
+    choices = MODULE["provider_choices"]
+    providers = set(MODULE["KEY_PROVIDERS"])
+    assert set(choices("all")) == providers
+    assert set(choices("-all")) == providers
+    assert set(choices("-jimaku,-wyzie")) == {"jimaku", "wyzie"}
+
+
 def test_wyzie_falls_back_when_broad_call_returns_nothing():
     # If the broad (no-language) call returns 0 items, we should retry once
     # with the language filter applied (legacy behavior).

@@ -257,6 +257,7 @@ getsubtitle --set-key wyzie          # movies / TV (Wyzie)
 getsubtitle --set-key subdl          # direct SubDL fallback when Wyzie misses
 getsubtitle --set-key deepl          # DeepL MT (free 500K chars/month)
 getsubtitle --set-key tmdb           # title → IMDb/TMDB ID resolution + `-e all` for TV
+getsubtitle --reset-key -all         # remove all saved keys before uninstalling
 ```
 
 Keys live in macOS Keychain when available; otherwise set `JIMAKU_API_KEY`, `WYZIE_API_KEY`, `SUBDL_API_KEY`, `DEEPL_API_KEY`, `TMDB_API_KEY` in your shell.

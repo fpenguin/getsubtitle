@@ -756,9 +756,11 @@ def provider_choices(value: str | None) -> list[str]:
     if not value:
         return []
     value = value.strip().lower()
+    if value == "-all":
+        value = "all"
     if value == "all":
         return list(KEY_PROVIDERS)
-    providers = [part.strip().lower() for part in value.split(",") if part.strip()]
+    providers = [part.strip().lower().lstrip("-") for part in value.split(",") if part.strip()]
     invalid = [provider for provider in providers if provider not in KEY_PROVIDERS]
     if invalid:
         raise CliError(f"Unknown key provider: {', '.join(invalid)}. Use one of: {', '.join(KEY_PROVIDERS)}, all.")
@@ -8732,6 +8734,7 @@ Examples:
   getsubtitle --set-key subdl
   getsubtitle --set-key tmdb
   getsubtitle --reset-key wyzie
+  getsubtitle --reset-key -all     # remove all saved keys (uninstall-friendly)
 
 Environment variables:
   JIMAKU_API_KEY
