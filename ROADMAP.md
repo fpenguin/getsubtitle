@@ -6,6 +6,11 @@ What's shipped, what's experimental, what's planned next, and what's intentional
 
 Highlights from the most recent round of work:
 
+- **Default flip to language-learner-friendly settings**: `[download].single_line`, `[download].strip_cc_noise`, `[furigana].enabled`, and `[furigana].combine` now default to `true`; `[translate].engine` defaults to `"argos"`; `DEFAULT_OLLAMA_MODEL` is `"qwen3:4b"`. Added opt-out flags (`--no-single-line`/`--preserve-lines`, `--no-strip-cc-noise`, `--no-mt-engine`) so the on-by-default behavior can still be turned off at the CLI.
+- **`user_settings.example.toml` rewritten in active-value style** — every setting uncommented at its default with a descriptive "Default: X" comment, quickstart recipes block at the top, expanded per-language model recommendations, fuller `[combine].priority` worked example.
+- **`modify --convert smi-to-srt`** — parse Microsoft SAMI `.smi` files and emit one sibling `.<lang>.srt` per language found inside. Class → ISO-639-1 mapping (KRCC→ko, ENCC→en, JPCC→ja, …, KOKRCC→ko); unknown classes default to `ko`. Encoding auto-detect (UTF-8 / UTF-16-BOM / CP949). Existing targets protected unless `--force` is passed.
+- **`[furigana].strip_before_mt`** (default `true`) — strips inline `漢字（かんじ）` readings from `ja` source cues before passing to the translator, preventing duplicated MT output on furigana-laden third-party sources.
+- **`[translate.ollama_models].auto_load` / `auto_unload`** (both default `true`) — auto-pull missing Ollama models, and free them from RAM/VRAM (`keep_alive=0`) as soon as the MT pass finishes rather than waiting Ollama's 5-minute default.
 - `combine` subcommand — stack 2+ language SRTs into one timed file, with language-order preservation, time-overlap matching, master override, sync presets (auto/strict/loose), and dry-run summaries
 - Machine translation fallback (`--mt-engine argos|ollama|deepl`) for filling missing languages from what's already downloaded; smart source-language auto-pick (e.g. `ko` from `ja`, `es` from `en`)
 - Topic-based help system (`getsubtitle --help download|combine|keys|furigana|translate|advanced`) replacing the wall-of-flags help
@@ -60,9 +65,12 @@ Highlights from the most recent round of work:
 ### Output processing
 
 - Furigana from `.ja.srt`: SRT with inline `（よみがな）`, ruby VTT (`<ruby><rt>`), stacked-line ASS, single-line ASS
-- `--single-line` flatten for asbplayer (Japanese full-width separator; regular space otherwise)
-- `--strip-cc-noise` removes Japanese broadcast continuation arrows (➡); umbrella name so future categories can be added without a CLI rename
-- Machine translation outputs as `.<lang>.mt.srt` via Argos / Ollama / DeepL with smart source-language auto-pick
+- `--single-line` flatten for asbplayer (Japanese full-width separator; regular space otherwise); on by default
+- `--strip-cc-noise` removes Japanese broadcast continuation arrows (➡); umbrella name so future categories can be added without a CLI rename; on by default
+- `modify --convert smi-to-srt` parses Microsoft SAMI `.smi` files and emits one sibling `.<lang>.srt` per language (KRCC/ENCC/JPCC/... → ko/en/ja/...; unknown class → ko). Auto-detects UTF-8 / UTF-16-BOM / CP949. `--force` overwrites existing siblings.
+- Machine translation outputs as `.<lang>.mt.srt` via Argos / Ollama / DeepL with smart source-language auto-pick. Default engine is `argos` (offline); `--no-mt-engine` opts out per-run.
+- `[furigana].strip_before_mt` (default on) strips inline `漢字（かんじ）` readings from `ja` source cues before MT
+- `[translate.ollama_models].auto_load` / `auto_unload` (both default on) auto-pull missing Ollama models and free them from RAM/VRAM (`keep_alive=0`) as soon as the MT pass completes
 - `combine` subcommand: stack multiple language SRTs into one timed file
   - Recursive SRT scan; ignores combined outputs (`.ja-ko.srt`) and furigana variants
   - Language order from `-l` is preserved top-to-bottom
@@ -74,6 +82,15 @@ Highlights from the most recent round of work:
   - constant-offset estimation ignores obvious non-dialogue credits/URLs/music
     cues before scoring overlap
 
+### User configuration
+
+- `user_settings.toml` for non-secret defaults; secrets stay in macOS Keychain / env vars / future OS keyring backends
+- Sections: `[download]`, `[combine]`, `[furigana]`, `[translate]`, `[translate.ollama_models]`, `[experimental]`
+- `getsubtitle config --path | --init | --open | --show` to manage and inspect
+- `BUILTIN_CONFIG_DEFAULTS` is the single source of truth: both `config --show` and the runtime argparse defaults merge user TOML over the same dict, so flips take effect with or without a user config file
+- Active-value example template (every key uncommented at its default) with quickstart recipes at the top
+- Three-tier TOML parser: Python 3.11 `tomllib` → `tomli` backport on 3.10 → in-tree minimal parser
+
 ### Diagnostics
 
 - `--debug-providers` shows raw counts and per-language tags for each provider call
@@ -81,16 +98,10 @@ Highlights from the most recent round of work:
 
 ### Testing
 
-- 109 automated tests covering URL parsing, slug-to-ID extraction, provider response parsing (Wyzie/Subdivx/Addic7ed), combine logic (file scanning/grouping, time overlap, sync presets, language ordering, missing-language skip, master override, force overwrite), MT helpers (round-trip, source-pick, Ollama response parsing), help system, and dispatch routing
+- 250+ automated tests covering URL parsing, slug-to-ID extraction, provider response parsing (Wyzie/Subdivx/Addic7ed), SAMI parsing + smi-to-srt conversion (encoding sniff, multi-language, blank-line collapse, stem-strip), combine logic (file scanning/grouping, time overlap, sync presets, language ordering, missing-language skip, master override, force overwrite), MT helpers (round-trip, source-pick, Ollama response parsing, release_resources, auto_load/auto_unload, strip-before-MT), config validation (mixed-schema ollama_models, BUILTIN-default merge), help system, and dispatch routing
 
 ## In progress / first-release polish
 
-- [ ] Non-secret user configuration support
-  - default languages, output folder, layout
-  - cleanup defaults (single-line, strip-cc-noise)
-  - combine defaults (language order, sync mode, master)
-  - MT defaults (engine, model, source language)
-  - Secrets stay in Keychain / env / OS keyring backend
 - [ ] CHANGELOG
 - [ ] PyPI package metadata polish
 - [ ] Clean-install verification in a fresh virtual env
@@ -131,7 +142,7 @@ getsubtitle modify FOLDER --convert srt-to-vtt
 
 Initial pair (motivated by the Korean coverage gap):
 
-- [ ] `--convert smi-to-srt` — parse Microsoft SAMI `.smi` files (`<SYNC Start=...>` blocks) and emit `.srt` siblings. Unlocks the rest of the pipeline (combine, translate, modify) for `.smi` files already on disk.
+- [x] `--convert smi-to-srt` — parse Microsoft SAMI `.smi` files (`<SYNC Start=...>` blocks) and emit one `.srt` sibling per language found inside. Class-attribute → ISO-639-1 mapping (KRCC→ko, ENCC→en, JPCC→ja, …); unknown classes default to `ko`. Encoding auto-detect (UTF-8/UTF-16-BOM/CP949). Existing targets are protected (skipped) unless `--force` is passed. Unlocks the rest of the pipeline (combine, translate, modify) for `.smi` files already on disk.
 
 Follow-on directions (whitelist as concrete need appears):
 

@@ -1860,7 +1860,7 @@ def _subdivx_items_from_html(html: str) -> list[dict]:
 # return the original text for cues they can't translate.
 
 DEFAULT_OLLAMA_HOST = "http://localhost:11434"
-DEFAULT_OLLAMA_MODEL = "aya-expanse:8b"
+DEFAULT_OLLAMA_MODEL = "qwen3:4b"
 DEEPL_FREE_API = "https://api-free.deepl.com/v2/translate"
 
 
@@ -1888,6 +1888,13 @@ class _BaseTranslator:
         called as `on_progress(done, total)` after each item or chunk so
         callers can render a cue-level progress bar."""
         raise NotImplementedError
+
+    def release_resources(self) -> bool:
+        """Release any heavy resources held by this translator (loaded
+        models, GPU memory, etc.). Default is a no-op — Argos and DeepL
+        have nothing to release. Subclasses override when they do.
+        Returns True if anything was released."""
+        return False
 
 
 class ArgosTranslator(_BaseTranslator):
@@ -2002,10 +2009,21 @@ class OllamaTranslator(_BaseTranslator):
 
     name = "ollama"
 
-    def __init__(self, model: str = DEFAULT_OLLAMA_MODEL, host: str = DEFAULT_OLLAMA_HOST, batch_size: int = 10):
+    def __init__(
+        self,
+        model: str = DEFAULT_OLLAMA_MODEL,
+        host: str = DEFAULT_OLLAMA_HOST,
+        batch_size: int = 10,
+        auto_load: bool = True,
+    ):
         self.model = model
         self.host = host.rstrip("/")
         self.batch_size = max(1, batch_size)
+        # auto_load=True (the default) calls `/api/pull` for missing models
+        # before the first translation. auto_load=False makes us fail fast
+        # with an actionable error instead — useful in restricted environments
+        # or when the user wants strict control over model installs.
+        self.auto_load = auto_load
 
     def is_available(self) -> bool:
         try:
@@ -2050,6 +2068,16 @@ class OllamaTranslator(_BaseTranslator):
         installed = self.installed_models()
         if self.model in installed:
             return
+        if not self.auto_load:
+            raise TranslatorError(
+                f"Ollama model {self.model!r} is not installed and "
+                f"[translate.ollama_models].auto_load is false.\n"
+                "Install it manually, then retry:\n"
+                f"  ollama pull {self.model}\n"
+                "Or re-enable auto-pull by setting:\n"
+                "  [translate.ollama_models]\n"
+                "  auto_load = true"
+            )
         print(f"Ollama model {self.model!r} is not installed. Pulling it now; this can take a while.")
         body = json.dumps({"name": self.model, "stream": True}).encode("utf-8")
         req = urllib.request.Request(
@@ -2176,6 +2204,30 @@ class OllamaTranslator(_BaseTranslator):
             f"{numbered}\n"
         )
 
+    def release_resources(self) -> bool:
+        """Ask Ollama to evict the model from memory (RAM/VRAM) immediately.
+
+        Sends `keep_alive: 0` on a no-op generate call — Ollama treats that
+        as 'drop this model now'. Best-effort: any error is swallowed,
+        because the user's MT run already succeeded by the time we get here.
+        Returns True on success, False otherwise."""
+        body = json.dumps({
+            "model": self.model,
+            "prompt": "",
+            "keep_alive": 0,
+        }).encode("utf-8")
+        req = urllib.request.Request(
+            self.host + "/api/generate",
+            data=body,
+            headers={"Content-Type": "application/json"},
+        )
+        try:
+            with urllib.request.urlopen(req, timeout=10) as res:
+                res.read()
+            return True
+        except (urllib.error.URLError, OSError):
+            return False
+
 
 class DeepLTranslator(_BaseTranslator):
     """DeepL Free API client. Free tier: 500,000 characters per month.
@@ -2299,13 +2351,21 @@ def translate_srt_file(
     source_lang: str,
     target_lang: str,
     on_progress=None,
+    strip_furigana: bool = True,
 ) -> int:
     """Translate every cue's text from source_path, writing to target_path.
 
     Returns the number of cues translated. Preserves indices and timings.
     `on_progress(done, total)` is forwarded to the underlying translator so
     callers can render a cue-level progress bar instead of one tick per
-    episode."""
+    episode.
+
+    When `strip_furigana` is True (the default) and the source language is
+    Japanese, inline 漢字（かんじ） readings are stripped from each cue
+    before the translator sees it. Otherwise every reading would be
+    translated as if it were extra content, producing duplicated output.
+    The default may be overridden per-run via the [furigana].strip_before_mt
+    config setting (translate_main and the download flow read it once)."""
     text = source_path.read_text(encoding="utf-8-sig", errors="replace")
     cues = parse_srt(text)
     if not cues:
@@ -2313,7 +2373,12 @@ def translate_srt_file(
     # Translate each cue as a single string with internal newlines preserved
     # by joining with a sentinel that translators rarely emit.
     sentinel = " ⏎ "
-    payload = [sentinel.join(cue.text_lines) if cue.text_lines else "" for cue in cues]
+    apply_strip = strip_furigana and source_lang.lower() == "ja"
+    payload = [
+        (strip_inline_furigana(sentinel.join(cue.text_lines)) if apply_strip
+         else sentinel.join(cue.text_lines)) if cue.text_lines else ""
+        for cue in cues
+    ]
     try:
         translated = translator.translate_batch(payload, source_lang, target_lang, on_progress=on_progress)
     except TypeError as e:
@@ -2416,12 +2481,27 @@ def parse_mt_source_lang(value: str | None, requested_langs: list[str]) -> dict[
     return mapping
 
 
+def _ollama_models_flag(name: str, default: bool = True) -> bool:
+    """Read a boolean flag from [translate.ollama_models] (auto_load,
+    auto_unload). Falls back to `default` if unset or if the config can't
+    be loaded."""
+    try:
+        cfg = load_user_config()
+    except CliError:
+        return default
+    val = cfg.get("translate", {}).get("ollama_models", {}).get(name, default)
+    return bool(val)
+
+
 def select_translator(engine: str, model: str | None) -> _BaseTranslator:
     engine = engine.lower()
     if engine == "argos":
         return ArgosTranslator()
     if engine == "ollama":
-        return OllamaTranslator(model=model or DEFAULT_OLLAMA_MODEL)
+        return OllamaTranslator(
+            model=model or DEFAULT_OLLAMA_MODEL,
+            auto_load=_ollama_models_flag("auto_load", True),
+        )
     if engine == "deepl":
         return DeepLTranslator(api_key=get_provider_api_key("deepl", prompt_if_missing=True))
     raise CliError(f"Unknown --mt-engine: {engine}. Use argos, ollama, or deepl.")
@@ -2627,6 +2707,17 @@ def has_kanji(text: str) -> bool:
 
 
 EXISTING_READING_RE = re.compile(r"([\u4e00-\u9fff々〆ヶ]+)[(（]([ぁ-ゖァ-ヺーa-zA-Z0-9 -]+)[)）]")
+
+
+def strip_inline_furigana(text: str) -> str:
+    """Remove inline reading annotations like 漢字（かんじ） from `text`,
+    keeping just the surface kanji. Safe to call on any text — non-matching
+    text is returned unchanged. Used to clean MT input when furigana may
+    have been inlined upstream (which would cause every reading to be
+    re-translated as if it were extra content)."""
+    return EXISTING_READING_RE.sub(lambda m: m.group(1), text)
+
+
 ASS_INLINE_TAG_RE = re.compile(r"\{\\[^}]*\}")
 
 
@@ -2870,6 +2961,266 @@ def flatten_separator_for(path: Path) -> str:
     Full-width space '　' for Japanese (matches CJK rendering width); regular
     space for everything else."""
     return "　" if ".ja" in path.name else " "
+
+
+# ---------------------------------------------------------------------------
+# SAMI (.smi) → SRT conversion
+# ---------------------------------------------------------------------------
+# Microsoft SAMI is the dominant Korean subtitle container on consumer disks.
+# Files we care about look roughly like:
+#
+#   <SAMI>
+#     <HEAD><STYLE>.KRCC { ... } .ENCC { ... }</STYLE></HEAD>
+#     <BODY>
+#       <SYNC Start=1234><P Class=KRCC>안녕하세요<br>반갑습니다</P></SYNC>
+#       <SYNC Start=4321><P Class=KRCC>&nbsp;</P></SYNC>
+#       ...
+#
+# The "empty" SYNC marks the end of the previous cue. We pair adjacent SYNCs
+# to derive duration and emit one .srt per language tag found.
+
+# Class-attribute → ISO 639-1 language code mapping. The list below covers
+# the names actually seen in the wild on Korean SMI sources. Unknown classes
+# default to "ko" because the overwhelming majority of .smi files in this
+# corpus are Korean.
+_SAMI_CLASS_TO_LANG: dict[str, str] = {
+    "KRCC": "ko", "KOREAN": "ko", "KO": "ko", "KOR": "ko", "KORCC": "ko",
+    "KOKRCC": "ko", "KOKR": "ko",  # seen in the wild (e.g. Mashle CC).
+    "ENCC": "en", "ENUSCC": "en", "ENGCC": "en", "ENGLISH": "en", "EN": "en",
+    "ENG": "en", "ENUS": "en",
+    "JPCC": "ja", "JPNCC": "ja", "JACC": "ja", "JAPANESE": "ja",
+    "JA": "ja", "JAP": "ja", "JPN": "ja",
+    "CHCC": "zh", "CHICC": "zh", "ZH": "zh", "CHINESE": "zh",
+    "SPCC": "es", "SPANISH": "es", "ES": "es", "ESP": "es",
+}
+
+
+def _sami_decode_bytes(data: bytes) -> str:
+    """Try a sequence of plausible encodings for SAMI files. Falls back to
+    Latin-1 with replacement so we always return something.
+
+    Order matters: UTF-16 will happily decode any even-length byte string,
+    so we only try it when a real BOM is present. Korean SAMI files are
+    overwhelmingly CP949 (superset of EUC-KR), so it goes before any
+    last-resort decode."""
+    # BOM-gated UTF-16 first — covers the rarer Korean editor exports.
+    if data.startswith((b"\xff\xfe", b"\xfe\xff")):
+        try:
+            return data.decode("utf-16")
+        except UnicodeDecodeError:
+            pass
+    # UTF-8 (with optional BOM) — the modern default.
+    for enc in ("utf-8-sig", "utf-8"):
+        try:
+            return data.decode(enc)
+        except UnicodeDecodeError:
+            continue
+    # CP949 covers the bulk of older Korean SAMI files.
+    try:
+        return data.decode("cp949")
+    except UnicodeDecodeError:
+        pass
+    return data.decode("latin-1", errors="replace")
+
+
+_SAMI_ENTITY_RE = re.compile(r"&(?:#(\d+)|#x([0-9a-fA-F]+)|([a-zA-Z]+));")
+_SAMI_NAMED_ENTITIES: dict[str, str] = {
+    "nbsp": " ", "amp": "&", "lt": "<", "gt": ">",
+    "quot": '"', "apos": "'",
+}
+
+
+def _sami_decode_entities(text: str) -> str:
+    def replace(m: "re.Match[str]") -> str:
+        dec, hex_, name = m.group(1), m.group(2), m.group(3)
+        try:
+            if dec is not None:
+                return chr(int(dec))
+            if hex_ is not None:
+                return chr(int(hex_, 16))
+            if name and name.lower() in _SAMI_NAMED_ENTITIES:
+                return _SAMI_NAMED_ENTITIES[name.lower()]
+        except (ValueError, OverflowError):
+            pass
+        return m.group(0)
+    return _SAMI_ENTITY_RE.sub(replace, text)
+
+
+_SAMI_TAG_RE = re.compile(r"<[^>]+>")
+_SAMI_BR_RE = re.compile(r"<\s*br\s*/?\s*>", re.IGNORECASE)
+
+
+def _sami_normalize_text(raw: str) -> str:
+    """Convert SAMI cue HTML into plain SRT text. <br> → newline, then strip
+    all other tags, then decode entities, then collapse whitespace per line.
+    Returns empty string for cues that contain only whitespace/nbsp."""
+    text = _SAMI_BR_RE.sub("\n", raw)
+    text = _SAMI_TAG_RE.sub("", text)
+    text = _sami_decode_entities(text)
+    # Drop ALL empty lines (including internal ones) — multi-<br> in SAMI is
+    # a vertical-spacing convention that, if preserved, would corrupt the SRT
+    # output (blank lines inside a cue body are parsed as cue separators by
+    # most SRT readers).
+    lines: list[str] = []
+    for line in text.split("\n"):
+        line = line.replace(" ", " ")
+        line = re.sub(r"[ \t]+", " ", line).strip()
+        if line:
+            lines.append(line)
+    return "\n".join(lines)
+
+
+_SAMI_SYNC_RE = re.compile(r"<\s*SYNC\b([^>]*)>", re.IGNORECASE)
+_SAMI_START_RE = re.compile(r"\bSTART\s*=\s*\"?(-?\d+)\"?", re.IGNORECASE)
+# Within a SYNC, P tags either run to the next P, the next SYNC, or EOF.
+_SAMI_P_RE = re.compile(
+    r"<\s*P\b([^>]*)>(.*?)(?=<\s*P\b|<\s*SYNC\b|$)",
+    re.IGNORECASE | re.DOTALL,
+)
+_SAMI_CLASS_RE = re.compile(r"\bCLASS\s*=\s*\"?([A-Za-z0-9_-]+)\"?", re.IGNORECASE)
+_SAMI_BODY_RE = re.compile(
+    r"<\s*BODY\b[^>]*>(.*?)(?:<\s*/\s*BODY\b|$)",
+    re.IGNORECASE | re.DOTALL,
+)
+
+
+def parse_sami(text: str) -> dict[str, list[tuple[int, int, str]]]:
+    """Parse SAMI body. Returns {lang_code: [(start_ms, end_ms, text), ...]}.
+
+    Cues are emitted in source order. Adjacent SYNCs determine duration; a
+    SYNC whose text is empty (or only &nbsp;) marks the end of the previous
+    cue and is not emitted itself. The final cue, if not closed by an empty
+    SYNC, gets a 3-second fallback duration."""
+    body_match = _SAMI_BODY_RE.search(text)
+    body = body_match.group(1) if body_match else text
+
+    syncs: list[tuple[int, str]] = []
+    matches = list(_SAMI_SYNC_RE.finditer(body))
+    for idx, m in enumerate(matches):
+        start_attr = _SAMI_START_RE.search(m.group(1))
+        if not start_attr:
+            continue
+        try:
+            start_ms = int(start_attr.group(1))
+        except ValueError:
+            continue
+        if start_ms < 0:
+            continue
+        end_pos = matches[idx + 1].start() if idx + 1 < len(matches) else len(body)
+        content = body[m.end():end_pos]
+        syncs.append((start_ms, content))
+
+    raw_cues: list[tuple[int, dict[str, str]]] = []
+    for start_ms, content in syncs:
+        lang_text: dict[str, str] = {}
+        p_matches = list(_SAMI_P_RE.finditer(content))
+        if p_matches:
+            for pm in p_matches:
+                cls_match = _SAMI_CLASS_RE.search(pm.group(1))
+                cls = cls_match.group(1).upper() if cls_match else ""
+                lang = _SAMI_CLASS_TO_LANG.get(cls, "ko")
+                normalized = _sami_normalize_text(pm.group(2))
+                # Multiple <P> tags for same lang in one SYNC: join with \n.
+                if lang in lang_text:
+                    combined = (lang_text[lang] + "\n" + normalized).strip("\n")
+                    lang_text[lang] = combined
+                else:
+                    lang_text[lang] = normalized
+        else:
+            # SAMI files without <P> tags do exist; treat whole content as ko.
+            lang_text["ko"] = _sami_normalize_text(content)
+        raw_cues.append((start_ms, lang_text))
+
+    by_lang: dict[str, list[tuple[int, int, str]]] = {}
+    for i, (start_ms, lang_text) in enumerate(raw_cues):
+        next_start = raw_cues[i + 1][0] if i + 1 < len(raw_cues) else start_ms + 3000
+        for lang, body_text in lang_text.items():
+            if not body_text:
+                # Empty-text SYNCs are end-markers; skip emission.
+                continue
+            by_lang.setdefault(lang, []).append((start_ms, next_start, body_text))
+
+    return by_lang
+
+
+def _format_srt_timestamp(ms: int) -> str:
+    if ms < 0:
+        ms = 0
+    h, rem = divmod(ms, 3600_000)
+    m, rem = divmod(rem, 60_000)
+    s, ms_part = divmod(rem, 1000)
+    return f"{h:02d}:{m:02d}:{s:02d},{ms_part:03d}"
+
+
+def sami_cues_to_srt(cues: list[tuple[int, int, str]]) -> str:
+    """Serialize (start_ms, end_ms, text) tuples to SRT text. Sorts by start
+    time and ensures end > start with a 1-second fallback."""
+    sorted_cues = sorted(cues, key=lambda c: (c[0], c[1]))
+    blocks: list[str] = []
+    for idx, (start_ms, end_ms, body) in enumerate(sorted_cues, start=1):
+        if end_ms <= start_ms:
+            end_ms = start_ms + 1000
+        blocks.append(
+            f"{idx}\n"
+            f"{_format_srt_timestamp(start_ms)} --> {_format_srt_timestamp(end_ms)}\n"
+            f"{body}"
+        )
+    return "\n\n".join(blocks) + ("\n" if blocks else "")
+
+
+def scan_smi_files(paths: list[Path]) -> list[Path]:
+    """Walk paths (files or directories) and return discovered .smi files,
+    sorted and deduplicated. Case-insensitive on the extension."""
+    discovered: list[Path] = []
+    for root in paths:
+        if root.is_file():
+            if root.suffix.lower() == ".smi":
+                discovered.append(root)
+        elif root.is_dir():
+            for p in root.rglob("*"):
+                if p.is_file() and p.suffix.lower() == ".smi":
+                    discovered.append(p)
+    return sorted(set(discovered))
+
+
+_SMI_KNOWN_LANG_INFIX_RE = re.compile(
+    r"\.(" + "|".join(sorted(set(_SAMI_CLASS_TO_LANG.values()))) + r")$",
+    re.IGNORECASE,
+)
+
+
+def _smi_output_stem(smi_path: Path) -> Path:
+    """Compute the SRT output stem for a .smi file. Strips any existing
+    .<lang> token from the filename so Show.ko.smi → Show (not Show.ko)."""
+    stem = smi_path.with_suffix("")
+    m = _SMI_KNOWN_LANG_INFIX_RE.search(stem.name)
+    if m:
+        return stem.with_name(stem.name[: m.start()])
+    return stem
+
+
+def convert_smi_file(smi_path: Path, *, force: bool = False) -> tuple[list[Path], list[Path]]:
+    """Convert one SMI file to one or more sibling .srt files.
+
+    Returns (written, skipped). `skipped` contains target paths that already
+    existed and would have been overwritten without --force. Raises CliError
+    if the file has no parseable cues at all."""
+    data = smi_path.read_bytes()
+    text = _sami_decode_bytes(data)
+    by_lang = parse_sami(text)
+    if not by_lang:
+        raise CliError(f"{smi_path.name}: no parseable SAMI cues")
+    stem = _smi_output_stem(smi_path)
+    written: list[Path] = []
+    skipped: list[Path] = []
+    for lang, cues in sorted(by_lang.items()):
+        out_path = stem.with_name(stem.name + f".{lang}.srt")
+        if out_path.exists() and not force:
+            skipped.append(out_path)
+            continue
+        out_path.write_text(sami_cues_to_srt(cues), encoding="utf-8")
+        written.append(out_path)
+    return written, skipped
 
 
 def furigana_suffix(mode: str, kind: str, single_line: bool) -> str:
@@ -3931,12 +4282,15 @@ _COMBINE_PENDING: dict[Path, tuple[list[SrtCue], list[str]]] = {}
 # the source (or to -o).
 
 def _apply_translate_config_defaults(parser: argparse.ArgumentParser) -> None:
+    """Push [translate] values into the translate parser as argparse
+    defaults. Merges BUILTIN_CONFIG_DEFAULTS under user overrides so the
+    default engine takes effect even without a user_settings.toml."""
     try:
         cfg = load_user_config()
     except CliError:
         cfg = {}
+    tr = {**BUILTIN_CONFIG_DEFAULTS["translate"], **cfg.get("translate", {})}
     overrides: dict[str, object] = {}
-    tr = cfg.get("translate", {})
     if tr.get("engine"):
         overrides["mt_engine"] = tr["engine"]
     if tr.get("model"):
@@ -3971,7 +4325,8 @@ def build_translate_parser() -> argparse.ArgumentParser:
     p.add_argument("-l", "--langs", "--lang", required=True, metavar="CODES", help="Target languages to ensure exist (e.g. ja,ko,en). Missing ones get MT'd from the best available source SRT.")
     p.add_argument("-s", "--season", default="all", metavar="N|all", help="Season filter. Default: all detected seasons.")
     p.add_argument("-e", "--episode", default="all", metavar="N|N-M|all", help="Episode filter. Accepts one episode, a range, a comma list, or all. Default: all detected episodes.")
-    p.add_argument("--mt-engine", choices=["argos", "ollama", "deepl"], help="Translation engine. Required (here or via [translate].engine in user_settings.toml).")
+    p.add_argument("--mt-engine", choices=["argos", "ollama", "deepl"], help="Translation engine. Default: argos (via [translate].engine in user_settings.toml).")
+    p.add_argument("--no-mt-engine", dest="mt_engine", action="store_const", const="", help="Disable machine translation for this run even when [translate].engine is set in user_settings.toml.")
     p.add_argument("--mt-model", metavar="NAME", help=f"Ollama model when --mt-engine ollama. Default: {DEFAULT_OLLAMA_MODEL}.")
     p.add_argument("--mt-source-lang", metavar="CODES", help="Force the source language(s). Single code (ja) applies to all targets; target:source pairs (ko:ja,es:en) map per target. Default: auto-pick.")
     p.add_argument("-o", "--output", metavar="DIR", help="Output directory. Default: beside each episode's source SRT.")
@@ -3992,6 +4347,14 @@ def translate_main(argv: list[str]) -> int:
     langs = split_csv(args.langs, "ja")
     if not langs:
         raise CliError("No target languages specified. Use -l ja,ko or similar.")
+    # [furigana].strip_before_mt: when true (default), strip inline 漢字（かんじ）
+    # readings from ja source cues before MT so the translator doesn't treat
+    # them as extra content. Read once here so per-cue translation stays fast.
+    try:
+        _cfg_furi = load_user_config().get("furigana", {})
+    except CliError:
+        _cfg_furi = {}
+    strip_furigana_before_mt = bool(_cfg_furi.get("strip_before_mt", True))
 
     # Parse --mt-source-lang once (so a bad value errors before the scan).
     source_overrides = parse_mt_source_lang(args.mt_source_lang, langs)
@@ -4139,6 +4502,7 @@ def translate_main(argv: list[str]) -> int:
             translate_srt_file(
                 src_path, dest_path, translator, src_lang, target,
                 on_progress=cue_progress,
+                strip_furigana=strip_furigana_before_mt,
             )
         except TranslatorError as e:
             grouped_failures.setdefault(str(e), []).append(f"{ep_label} {src_lang}->{target}")
@@ -4160,6 +4524,19 @@ def translate_main(argv: list[str]) -> int:
                     print(f"      - {t}")
                 if len(tasks) > len(preview):
                     print(f"      - ... and {len(tasks) - len(preview)} more")
+
+    # Auto-unload Ollama models from memory after the batch, if enabled.
+    # Default is true (set in BUILTIN_CONFIG_DEFAULTS) so the user's GPU/RAM
+    # is freed promptly. Best-effort: failures are silent because the actual
+    # MT work has already succeeded.
+    if args.mt_engine == "ollama" and _ollama_models_flag("auto_unload", True):
+        released: list[str] = []
+        for tr in translator_cache.values():
+            if tr.release_resources():
+                released.append(getattr(tr, "model", tr.name))
+        if released:
+            uniq = sorted(set(released))
+            print(f"Unloaded Ollama model(s) from memory: {', '.join(uniq)}")
 
     print(f"\nWrote {len(written)} machine-translated file(s).")
     if written:
@@ -4200,10 +4577,11 @@ def build_modify_parser() -> argparse.ArgumentParser:
         prog="getsubtitle modify",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         description=(
-            "Post-process existing SRT files on disk: strip broadcast-caption "
-            "noise, flatten multi-line cues, and/or generate Japanese furigana "
-            "variants. Same operations the download flow runs, but applied to "
-            "files you already have."
+            "Post-process existing subtitle files on disk: strip broadcast-caption "
+            "noise, flatten multi-line cues, generate Japanese furigana variants, "
+            "and convert formats (currently Microsoft SAMI .smi → .srt). Same "
+            "operations the download flow runs, but applied to files you already "
+            "have."
         ),
         epilog=textwrap.dedent(
             """
@@ -4213,15 +4591,19 @@ def build_modify_parser() -> argparse.ArgumentParser:
               getsubtitle modify FOLDER --strip-cc-noise --single-line
               getsubtitle modify FOLDER --furigana
               getsubtitle modify FOLDER --furigana romaji
+              getsubtitle modify FOLDER --convert smi-to-srt
+              getsubtitle modify FOLDER --convert smi-to-srt --force
               getsubtitle modify FOLDER --strip-cc-noise --single-line --furigana --dry-run
             """
         ),
     )
-    p.add_argument("paths", nargs="+", metavar="PATH", help="One or more SRT files or directories to scan (recursive).")
+    p.add_argument("paths", nargs="+", metavar="PATH", help="One or more subtitle files or directories to scan (recursive).")
     p.add_argument("--strip-cc-noise", action="store_true", help="Remove broadcast closed-caption noise (currently: Japanese ➡ continuation arrows) in place.")
     p.add_argument("--single-line", "--single", action="store_true", help="Flatten each SRT cue to one text line in place. Useful for asbplayer.")
     p.add_argument("-f", "--furigana", "-furigana", nargs="?", const="hiragana", choices=["hiragana", "romaji"], help="Generate Japanese reading variants from each .ja.srt file (creates new .furigana-*.srt/.vtt/.ass files; does not modify the source).")
     p.add_argument("--format", "--furigana-format", dest="furigana_format", metavar="CODES", help="Furigana output format(s) — comma list of srt, ass, vtt, or 'all'. Default: srt. Overrides [furigana].format from user_settings.toml.")
+    p.add_argument("--convert", choices=["smi-to-srt"], metavar="PAIR", help="Convert subtitle file format. Currently supports: smi-to-srt (Microsoft SAMI → one sibling .<lang>.srt per language found inside).")
+    p.add_argument("--force", action="store_true", help="With --convert: overwrite existing sibling .srt files. Without --force, conversion skips targets that already exist.")
     p.add_argument("--dry-run", action="store_true", help="Show what would be processed without writing anything.")
     _apply_modify_config_defaults(p)
     return p
@@ -4233,11 +4615,13 @@ def modify_main(argv: list[str]) -> int:
         bool(args.strip_cc_noise),
         bool(args.single_line),
         bool(args.furigana),
+        bool(args.convert),
     ]
     if not any(ops_selected):
         raise CliError(
             "modify needs at least one operation flag: "
-            "--strip-cc-noise, --single-line, and/or --furigana [hiragana|romaji]."
+            "--strip-cc-noise, --single-line, --furigana [hiragana|romaji], "
+            "and/or --convert smi-to-srt."
         )
     # Validate --furigana-format upfront so a bad value errors before the
     # plan is printed and any work happens. Cached so the inner loop reuses it.
@@ -4251,14 +4635,35 @@ def modify_main(argv: list[str]) -> int:
     if missing:
         raise CliError("Path not found: " + ", ".join(str(p) for p in missing))
 
-    scanned = scan_srt_files(paths)
-    print(f"Scanned: {len(scanned)} SRT file(s) across {len(paths)} path(s)")
-    if not scanned:
-        print("No single-language SRT files found. Nothing to process.")
+    # The in-place ops (strip-cc-noise, single-line, furigana) walk .srt files.
+    # The convert op walks .smi files. Both share PATH discovery but scan
+    # different extensions, so we run two separate scans here.
+    inplace_ops = bool(args.strip_cc_noise or args.single_line or args.furigana)
+    scanned: list[tuple[Path, int, int, str, bool]] = (
+        scan_srt_files(paths) if inplace_ops else []
+    )
+    convert_files: list[Path] = (
+        scan_smi_files(paths) if args.convert == "smi-to-srt" else []
+    )
+
+    if inplace_ops:
+        print(f"Scanned: {len(scanned)} SRT file(s) across {len(paths)} path(s)")
+    if args.convert == "smi-to-srt":
+        print(f"Scanned: {len(convert_files)} SMI file(s) across {len(paths)} path(s)")
+
+    if not scanned and not convert_files:
+        if args.convert and not inplace_ops:
+            print("No .smi files found. Nothing to convert.")
+        elif inplace_ops and not args.convert:
+            print("No single-language SRT files found. Nothing to process.")
+        else:
+            print("No SRT or SMI files found. Nothing to process.")
         return 1
 
     # Describe the plan up front so --dry-run is meaningful.
     ops_desc: list[str] = []
+    if args.convert == "smi-to-srt":
+        ops_desc.append("convert smi → srt")
     if args.strip_cc_noise:
         ops_desc.append("strip CC noise")
     if args.single_line:
@@ -4267,50 +4672,77 @@ def modify_main(argv: list[str]) -> int:
         ops_desc.append(f"furigana ({args.furigana})")
     print("Operations: " + ", ".join(ops_desc))
 
-    # Furigana applies only to .ja.srt files. Pre-compute the subset so the
-    # summary doesn't double-count or mislead.
-    ja_paths = [t[0] for t in scanned if t[3] == "ja"]
-    if args.furigana and not ja_paths:
-        print("(--furigana requested but no .ja.srt files found; that step will be a no-op.)")
+    if inplace_ops:
+        # Furigana applies only to .ja.srt files. Pre-compute the subset so the
+        # summary doesn't double-count or mislead.
+        ja_paths = [t[0] for t in scanned if t[3] == "ja"]
+        if args.furigana and not ja_paths:
+            print("(--furigana requested but no .ja.srt files found; that step will be a no-op.)")
 
-    print(f"\nPlanned: {len(scanned)} file(s)")
-    for path, _season, _episode, lang, _is_mt in scanned[:20]:
-        suffix = "  [ja → furigana variants]" if (args.furigana and lang == "ja") else ""
-        print(f"  {path.name}{suffix}")
-    if len(scanned) > 20:
-        print(f"  ... and {len(scanned) - 20} more")
+        print(f"\nPlanned in-place: {len(scanned)} file(s)")
+        for path, _season, _episode, lang, _is_mt in scanned[:20]:
+            suffix = "  [ja → furigana variants]" if (args.furigana and lang == "ja") else ""
+            print(f"  {path.name}{suffix}")
+        if len(scanned) > 20:
+            print(f"  ... and {len(scanned) - 20} more")
+
+    if convert_files:
+        print(f"\nPlanned convert: {len(convert_files)} .smi file(s)")
+        for path in convert_files[:20]:
+            print(f"  {path.name}")
+        if len(convert_files) > 20:
+            print(f"  ... and {len(convert_files) - 20} more")
 
     if args.dry_run:
         return 0
 
-    print("\nProcessing:")
     touched_in_place = 0
     furigana_generated: list[Path] = []
     grouped_errors: dict[str, list[str]] = {}
 
-    # Order matches the download flow: strip-cc-noise -> single-line -> furigana.
-    # First two are idempotent in-place rewrites; furigana writes side files.
-    for idx, (path, _season, _episode, lang, _is_mt) in enumerate(scanned, start=1):
-        progress_bar(idx, len(scanned), "processing", path.name, transient=True)
-        before = path.read_bytes() if path.exists() else b""
-        try:
-            if args.strip_cc_noise:
-                strip_cc_noise_in_place(path)
-            if args.single_line:
-                flatten_srt_in_place(path, separator=flatten_separator_for(path))
-            if args.furigana and lang == "ja":
-                furigana_generated.extend(
-                    generate_furigana(
-                        [path], args.furigana, bool(args.single_line),
-                        formats=furigana_formats,
+    if inplace_ops:
+        print("\nProcessing SRT:")
+        # Order matches the download flow: strip-cc-noise -> single-line -> furigana.
+        # First two are idempotent in-place rewrites; furigana writes side files.
+        for idx, (path, _season, _episode, lang, _is_mt) in enumerate(scanned, start=1):
+            progress_bar(idx, len(scanned), "processing", path.name, transient=True)
+            before = path.read_bytes() if path.exists() else b""
+            try:
+                if args.strip_cc_noise:
+                    strip_cc_noise_in_place(path)
+                if args.single_line:
+                    flatten_srt_in_place(path, separator=flatten_separator_for(path))
+                if args.furigana and lang == "ja":
+                    furigana_generated.extend(
+                        generate_furigana(
+                            [path], args.furigana, bool(args.single_line),
+                            formats=furigana_formats,
+                        )
                     )
-                )
-        except CliError as e:
-            grouped_errors.setdefault(str(e), []).append(path.name)
-            continue
-        after = path.read_bytes() if path.exists() else b""
-        if before != after:
-            touched_in_place += 1
+            except CliError as e:
+                grouped_errors.setdefault(str(e), []).append(path.name)
+                continue
+            after = path.read_bytes() if path.exists() else b""
+            if before != after:
+                touched_in_place += 1
+
+    convert_written: list[Path] = []
+    convert_skipped: list[Path] = []
+    if convert_files:
+        print("\nConverting SMI:")
+        for idx, smi in enumerate(convert_files, start=1):
+            progress_bar(idx, len(convert_files), "converting", smi.name, transient=True)
+            try:
+                written, skipped = convert_smi_file(smi, force=args.force)
+            except CliError as e:
+                # CliError carries "<name>: <reason>"; strip the name to group.
+                msg = str(e)
+                prefix = f"{smi.name}: "
+                key = msg[len(prefix):] if msg.startswith(prefix) else msg
+                grouped_errors.setdefault(key, []).append(smi.name)
+                continue
+            convert_written.extend(written)
+            convert_skipped.extend(skipped)
 
     if grouped_errors:
         print(f"\nErrors ({sum(len(v) for v in grouped_errors.values())}):")
@@ -4327,6 +4759,12 @@ def modify_main(argv: list[str]) -> int:
         print(f"In-place rewrites: {touched_in_place} file(s) changed.")
     if args.furigana:
         print(f"Furigana variants generated: {len(furigana_generated)}")
+    if args.convert == "smi-to-srt":
+        skipped_note = (
+            f" ({len(convert_skipped)} skipped — output exists, pass --force to overwrite)"
+            if convert_skipped else ""
+        )
+        print(f"SRT files written from SMI: {len(convert_written)}{skipped_note}")
     return 0
 
 
@@ -4414,9 +4852,11 @@ def build_parser() -> argparse.ArgumentParser:
     learning.add_argument("--no-furigana", dest="furigana", action="store_const", const=None, help="Disable furigana for this run even if enabled in user_settings.toml.")
     learning.add_argument("--format", "--furigana-format", dest="furigana_format", metavar="CODES", help="Furigana output format(s) — comma list of srt, ass, vtt, or 'all'. Default: srt (asbplayer-friendly; the other variants are experimental). Use this to override [furigana].format from user_settings.toml for a single run.")
     learning.add_argument("-furigana", dest="furigana", nargs="?", const="hiragana", choices=["hiragana", "romaji"], help=argparse.SUPPRESS)
-    learning.add_argument("--single-line", "--single", action="store_true", help="Flatten SRT cues to one text line for cleaner asbplayer display.")
+    learning.add_argument("--single-line", "--single", action="store_true", default=False, help="Flatten SRT cues to one text line for cleaner asbplayer display. On by default; this flag is kept as an explicit readability marker.")
+    learning.add_argument("--no-single-line", "--preserve-lines", dest="single_line", action="store_false", help="Keep each downloaded SRT's original line breaks (disables the default single-line flattening).")
     learning.add_argument("-single-line", "-single", dest="single_line", action="store_true", help=argparse.SUPPRESS)
-    learning.add_argument("--strip-cc-noise", action="store_true", help="Remove broadcast closed-caption noise from downloaded SRTs (currently: Japanese continuation arrows ➡; more categories may be added).")
+    learning.add_argument("--strip-cc-noise", action="store_true", default=False, help="Remove broadcast closed-caption noise from downloaded SRTs (currently: Japanese continuation arrows ➡). On by default; this flag is kept as an explicit readability marker.")
+    learning.add_argument("--no-strip-cc-noise", dest="strip_cc_noise", action="store_false", help="Keep broadcast closed-caption noise in downloaded SRTs (disables the default ➡ stripping).")
     # Deprecated aliases — kept silently so existing scripts keep working.
     learning.add_argument("--strip-cc-arrows", "--strip-arrows", "-strip-cc-noise", "-strip-cc-arrows", "-strip-arrows", dest="strip_cc_noise", action="store_true", help=argparse.SUPPRESS)
 
@@ -4427,7 +4867,8 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--set-jimaku-key", action="store_true", help=argparse.SUPPRESS)
 
     translation = p.add_argument_group("Machine Translation", description="Runs AFTER download. Requires at least one other requested language to download successfully so MT has a source SRT to translate from. Output saved as <name>.<lang>.mt.srt.")
-    translation.add_argument("--mt-engine", choices=["argos", "ollama", "deepl"], help="Translate missing requested languages from the best available SRT. Engines: argos (offline; pip install argostranslate), ollama (offline LLM; needs Ollama daemon), deepl (online; free tier, needs DEEPL_API_KEY).")
+    translation.add_argument("--mt-engine", choices=["argos", "ollama", "deepl"], help="Translate missing requested languages from the best available SRT. Engines: argos (offline; pip install argostranslate), ollama (offline LLM; needs Ollama daemon), deepl (online; free tier, needs DEEPL_API_KEY). Default: argos (via [translate].engine).")
+    translation.add_argument("--no-mt-engine", dest="mt_engine", action="store_const", const="", help="Disable machine translation for this run even when [translate].engine is set in user_settings.toml.")
     translation.add_argument("--mt-model", metavar="NAME", help=f"Ollama model for --mt-engine ollama. Default: {DEFAULT_OLLAMA_MODEL}")
     translation.add_argument("--mt-source-lang", metavar="CODES", help="Force the source language(s) for MT. Single code (ja) applies to all targets; target:source pairs (ko:ja,es:en) map per target.")
 
@@ -4749,8 +5190,12 @@ BUILTIN_CONFIG_DEFAULTS: dict[str, dict[str, object]] = {
         "layout": "archive",
         "release_source": "auto",
         "open_folder": False,
-        "single_line": False,
-        "strip_cc_noise": False,
+        # On by default: getsubtitle's primary downstream is asbplayer, which
+        # prefers single-line cues. Override per-run with --preserve-lines.
+        "single_line": True,
+        # On by default: Japanese broadcast SRTs are full of ➡ continuation
+        # arrows that have no value for language learning.
+        "strip_cc_noise": True,
     },
     "combine": {
         "langs": "ja,ko",
@@ -4760,16 +5205,26 @@ BUILTIN_CONFIG_DEFAULTS: dict[str, dict[str, object]] = {
         "priority": [],
     },
     "furigana": {
-        "enabled": False,
-        "combine": False,
+        # On by default: language-learning is getsubtitle's headline use case.
+        "enabled": True,
+        "combine": True,
         "mode": "hiragana",
         "format": "srt",
+        "strip_before_mt": True,
     },
     "translate": {
-        "engine": "",
+        # Default engine: argos (offline, free, no daemon). Users without
+        # argostranslate installed see a one-line setup hint, not a crash.
+        "engine": "argos",
         "model": DEFAULT_OLLAMA_MODEL,
         "source_lang": "auto",
-        "ollama_models": {},
+        "ollama_models": {
+            # Flags live alongside pair → model mappings in this nested table.
+            # auto_load: pull a missing Ollama model automatically before MT.
+            # auto_unload: free the model from RAM/VRAM after the MT pass.
+            "auto_load": True,
+            "auto_unload": True,
+        },
     },
     "experimental": {
         "debug_providers": False,
@@ -4807,21 +5262,38 @@ def _validate_str(value, key: str) -> str:
     return value
 
 
-def _validate_ollama_model_map(value, key: str = "translate.ollama_models") -> dict[str, str]:
+_OLLAMA_MODELS_FLAG_KEYS = {"auto_load", "auto_unload"}
+
+
+def _validate_ollama_model_map(value, key: str = "translate.ollama_models") -> dict:
+    """Validate the [translate.ollama_models] table. Returns a dict that
+    mixes two schemas:
+      - "auto_load" / "auto_unload" → bool (control flags)
+      - "<src>-<tgt>" → model name string (pair → model map)
+    Any other key shape is rejected. Callers split the two by value type
+    (use isinstance(v, str) to pick out pair entries)."""
     if not isinstance(value, dict):
         raise CliError(f"{key}: expected a table of language pairs to model names")
-    out: dict[str, str] = {}
+    out: dict[str, object] = {}
     pair_re = re.compile(r"^[a-z]{2,3}[:-][a-z]{2,3}$")
-    for raw_pair, raw_model in value.items():
-        pair = str(raw_pair).strip().lower().replace("_", "-").replace(":", "-")
+    for raw_key, raw_val in value.items():
+        # Flag keys first — they live alongside the pair mappings because the
+        # user explicitly asked for these controls under [translate.ollama_models].
+        if raw_key in _OLLAMA_MODELS_FLAG_KEYS:
+            out[raw_key] = _validate_bool(raw_val, f"{key}.{raw_key}")
+            continue
+        pair = str(raw_key).strip().lower().replace("_", "-").replace(":", "-")
         if not pair_re.match(pair):
-            raise CliError(f"{key}.{raw_pair}: expected source-target pair like ja-ko or ja:ko")
-        if not isinstance(raw_model, str) or not raw_model.strip():
-            raise CliError(f"{key}.{raw_pair}: expected non-empty model name string")
+            raise CliError(
+                f"{key}.{raw_key}: expected source-target pair like ja-ko or ja:ko, "
+                f"or one of: {', '.join(sorted(_OLLAMA_MODELS_FLAG_KEYS))}"
+            )
+        if not isinstance(raw_val, str) or not raw_val.strip():
+            raise CliError(f"{key}.{raw_key}: expected non-empty model name string")
         src, tgt = pair.split("-", 1)
         src = LANGUAGE_ALIASES.get(src, src)
         tgt = LANGUAGE_ALIASES.get(tgt, tgt)
-        out[f"{src}-{tgt}"] = raw_model.strip()
+        out[f"{src}-{tgt}"] = raw_val.strip()
     return out
 
 
@@ -4879,6 +5351,10 @@ def validate_user_config(raw: dict) -> dict:
         fur_out["combine"] = _validate_bool(fur["combine"], "furigana.combine")
     if "mode" in fur:
         fur_out["mode"] = _validate_enum(fur["mode"], "furigana.mode", {"hiragana", "romaji"})
+    if "strip_before_mt" in fur:
+        fur_out["strip_before_mt"] = _validate_bool(
+            fur["strip_before_mt"], "furigana.strip_before_mt"
+        )
     if "format" in fur:
         if not isinstance(fur["format"], str):
             raise CliError("furigana.format: expected string (srt, ass, vtt, or comma-list, or 'all')")
@@ -4953,48 +5429,50 @@ def _example_template_text() -> str:
 # user_settings.example.toml at the repo root is the authoritative copy and
 # preferred whenever it can be located.
 _EMBEDDED_EXAMPLE_TEMPLATE = """\
-# getsubtitle user settings. Anything you set here becomes the default for
-# the matching CLI flag. CLI flags always win.
-#
-# DO NOT put API keys here. Keys live in macOS Keychain or environment
-# variables (JIMAKU_API_KEY, WYZIE_API_KEY, DEEPL_API_KEY).
+# getsubtitle user settings — minimal embedded fallback.
+# Every value below is set to the current built-in default; edit to change.
+# Command-line flags always win. DO NOT put API keys here.
 
 [download]
-# langs = "ja"
-# output = "~/Movies/Subtitles"
-# layout = "archive"
-# release_source = "auto"
-# single_line = false
-# strip_cc_noise = false
-# open_folder = false
+langs = "ja"
+output = "~/Movies/Subtitles"
+layout = "archive"                # archive | flat | plex
+release_source = "auto"           # auto | any | netflix | crunchyroll
+open_folder = false
+single_line = true                # asbplayer-friendly one-line cues
+strip_cc_noise = true             # remove broadcast ➡ continuation arrows
 
 [combine]
-# langs = "ja,ko"
-# sync = "auto"
-# preserve_lines = false
-# force = false
-# priority = ["ja", "en", "ko", "es"]
+langs = "ja,ko"
+sync = "auto"                     # auto | strict | loose
+preserve_lines = false
+force = false
+priority = []                     # e.g. ["ja", "en", "ko", "es"]
 
 [furigana]
-# enabled = false
-# combine = false
-# mode = "hiragana"
+enabled = true                    # auto-generate furigana side files on download
+combine = true                    # inline furigana into combine outputs
+mode = "hiragana"                 # hiragana | romaji
+strip_before_mt = true            # strip 漢字（かんじ） readings before MT
+format = "srt"                    # srt | ass | vtt | all (or comma list)
 
 [translate]
-# engine = ""
-# model = "aya-expanse:8b"
-# source_lang = "auto"
+engine = "argos"                  # "" | argos | ollama | deepl
+model = "qwen3:4b"                # default Ollama model
+source_lang = "auto"
 
 [translate.ollama_models]
+auto_load = true                  # pull missing models on demand
+auto_unload = true                # free model from RAM/VRAM after MT
 # "ja:ko" = "qwen3:4b"
 # "ko:ja" = "qwen3:4b"
 # "en:es" = "llama3.2:3b"
 # "es:en" = "llama3.2:3b"
 
 [experimental]
-# debug_providers = false
-# subdivx = false
-# addic7ed = false
+debug_providers = false
+subdivx = false
+addic7ed = false
 """
 
 
@@ -5119,7 +5597,10 @@ def config_main(argv: list[str]) -> int:
 
 def _apply_download_config_defaults(parser: argparse.ArgumentParser) -> None:
     """Push user_settings.toml [download] / [furigana] / [translate] /
-    [experimental] values into the download parser as argparse defaults."""
+    [experimental] values into the download parser as argparse defaults.
+
+    Merges BUILTIN_CONFIG_DEFAULTS under any user_settings.toml overrides,
+    so flips like single_line=true take effect even without a user TOML."""
     try:
         cfg = load_user_config()
     except CliError:
@@ -5128,30 +5609,32 @@ def _apply_download_config_defaults(parser: argparse.ArgumentParser) -> None:
         # path the error will fire again at parse time below.
         cfg = {}
 
+    dl = {**BUILTIN_CONFIG_DEFAULTS["download"], **cfg.get("download", {})}
+    fur = {**BUILTIN_CONFIG_DEFAULTS["furigana"], **cfg.get("furigana", {})}
+    tr = {**BUILTIN_CONFIG_DEFAULTS["translate"], **cfg.get("translate", {})}
+    exp = {**BUILTIN_CONFIG_DEFAULTS["experimental"], **cfg.get("experimental", {})}
+
     overrides: dict[str, object] = {}
-    dl = cfg.get("download", {})
-    if "langs" in dl:
+    if dl.get("langs"):
         overrides["langs"] = dl["langs"]
-    if "output" in dl:
+    if dl.get("output"):
         overrides["output"] = str(Path(str(dl["output"])).expanduser())
-    if "layout" in dl:
+    if dl.get("layout"):
         overrides["layout"] = dl["layout"]
-    if "release_source" in dl:
+    if dl.get("release_source"):
         overrides["release_source"] = dl["release_source"]
     if dl.get("open_folder"):
         overrides["open_folder"] = True
-    if dl.get("single_line"):
-        overrides["single_line"] = True
-    if dl.get("strip_cc_noise"):
-        overrides["strip_cc_noise"] = True
+    # Booleans below: explicit set in either direction so the BUILTIN flip
+    # actually reaches argparse (store_true defaults to False otherwise).
+    overrides["single_line"] = bool(dl.get("single_line", False))
+    overrides["strip_cc_noise"] = bool(dl.get("strip_cc_noise", False))
 
-    fur = cfg.get("furigana", {})
     if fur.get("enabled"):
         overrides["furigana"] = fur.get("mode", "hiragana")
     if fur.get("format"):
         overrides["furigana_format"] = fur["format"]
 
-    tr = cfg.get("translate", {})
     if tr.get("engine"):
         overrides["mt_engine"] = tr["engine"]
     if tr.get("model"):
@@ -5160,7 +5643,6 @@ def _apply_download_config_defaults(parser: argparse.ArgumentParser) -> None:
     if src and src != "auto":
         overrides["mt_source_lang"] = src
 
-    exp = cfg.get("experimental", {})
     if exp.get("debug_providers"):
         overrides["debug_providers"] = True
     if exp.get("subdivx"):
@@ -5387,9 +5869,21 @@ Set defaults in user_settings.toml:
   combine = true         # inline readings into getsubtitle combine outputs
   mode = "hiragana"      # or "romaji"
   format = "srt"          # or "srt,ass" / "all"
+  strip_before_mt = true # strip 漢字（かんじ） readings from ja before MT
+                          # (on by default; turn off only if you want the
+                          # translator to see the parentheticals)
 
 Use --no-furigana to disable a configured default for one command.
 Use --format to override side-file formats for download/modify runs.
+
+MT-source notes:
+  When a .ja.srt has inline 漢字（かんじ） readings and is used as an MT
+  source (translate or download --mt-engine), strip_before_mt=true (the
+  default) removes the parentheticals before sending to the engine. This
+  prevents output like "Specifically (especially) the legs (legs) ..."
+  caused by the engine translating the readings as extra content. The
+  normal pipeline keeps furigana in side files only, so this is a defence
+  for third-party or hand-edited Japanese sources.
 
 Output notes:
   SRT is the safest fallback across players.
@@ -5441,8 +5935,11 @@ Engines:
 Translation options:
   -s, --season N|all       (translate subcommand) season filter
   -e, --episode N|N-M|all  (translate subcommand) episode filter
-  --mt-engine ENGINE       argos, ollama, or deepl
-  --mt-model NAME          Ollama model. Default: aya-expanse:8b
+  --mt-engine ENGINE       argos, ollama, or deepl. Default: argos
+                           (via [translate].engine in user_settings.toml).
+  --no-mt-engine           Disable MT for this run even when the config
+                           has an engine set. Equivalent to engine = "".
+  --mt-model NAME          Ollama model. Default: qwen3:4b
   --mt-source-lang CODE    Force translation source language (default: auto)
   -o DIR                   (translate subcommand) output directory
   --dry-run                (translate subcommand) show plan, write nothing
@@ -5461,14 +5958,15 @@ Notes:
   --mt-model NAME overrides pair-specific config for one command.
 """,
     "modify": """\
-Post-process existing SRT files on disk.
+Post-process existing subtitle files on disk.
 
 Usage:
   getsubtitle modify PATH [PATH ...] [options]
 
 The same cleanup operations that run after a download — but applied to
-files you already have. Pick any combination of flags; they run in the
-same order the download flow uses.
+files you already have. Plus format conversion for legacy containers
+like Microsoft SAMI (.smi). Pick any combination of flags; they run in
+the same order the download flow uses.
 
 Examples:
   getsubtitle modify FOLDER --strip-cc-noise
@@ -5476,9 +5974,17 @@ Examples:
   getsubtitle modify FOLDER --strip-cc-noise --single-line
   getsubtitle modify FOLDER --furigana
   getsubtitle modify FOLDER --furigana romaji
+  getsubtitle modify FOLDER --convert smi-to-srt
+  getsubtitle modify FOLDER --convert smi-to-srt --force
   getsubtitle modify FOLDER --strip-cc-noise --single-line --furigana --dry-run
 
 Operations (run in this order; pick at least one):
+  --convert PAIR           Convert subtitle file format. Currently supports:
+                             smi-to-srt — Microsoft SAMI .smi → one sibling
+                             .<lang>.srt per language found inside the file.
+                             SAMI Class attributes (KRCC, ENCC, JPCC, ...) map
+                             to ko/en/ja/etc.; unknown classes default to ko.
+                             Encoding is auto-detected (UTF-8/UTF-16/CP949).
   --strip-cc-noise         Remove broadcast CC noise (➡ continuation arrows)
                            in place. Idempotent.
   --single-line, --single  Flatten each cue to one text line in place.
@@ -5492,11 +5998,15 @@ Operations (run in this order; pick at least one):
                            (Also accepts --furigana-format.)
 
 Other:
+  --force                  With --convert: overwrite existing sibling .srt files.
+                           Without --force, conversion skips targets that
+                           already exist (protects human-quality .ko.srt etc.).
   --dry-run                Show what would change; write nothing.
 
 Composes with the other subcommands:
+  getsubtitle modify    FOLDER --convert smi-to-srt
   getsubtitle translate FOLDER -l ja,ko --mt-engine argos
-  getsubtitle modify   FOLDER --strip-cc-noise --single-line --furigana
+  getsubtitle modify    FOLDER --strip-cc-noise --single-line --furigana
   getsubtitle combine   FOLDER -l ja,ko
 """,
     "config": """\
@@ -5520,7 +6030,7 @@ Sections (see the example template):
   [download]      langs, output, layout, release_source, open_folder,
                   single_line, strip_cc_noise
   [combine]       langs, sync, preserve_lines, force, priority
-  [furigana]      enabled, combine, mode, format
+  [furigana]      enabled, combine, mode, format, strip_before_mt
   [translate]     engine, model, source_lang
   [experimental]  debug_providers, subdivx, addic7ed
 
@@ -5922,6 +6432,13 @@ def main(argv: list[str] | None = None) -> int:
     if args.mt_engine:
         explicit_mt_model = args.mt_model if option_was_passed(raw_argv, "--mt-model") else None
         translator_cache: dict[tuple[str, str | None], _BaseTranslator] = {}
+        # [furigana].strip_before_mt: same defense as translate_main. Default
+        # true; only meaningful when an MT source is ja.
+        try:
+            _cfg_furi = load_user_config().get("furigana", {})
+        except CliError:
+            _cfg_furi = {}
+        strip_furigana_before_mt = bool(_cfg_furi.get("strip_before_mt", True))
 
         def translator_for(src_lang: str, target_lang: str) -> _BaseTranslator:
             model = ollama_model_for_pair(src_lang, target_lang, explicit_mt_model) if args.mt_engine == "ollama" else args.mt_model
@@ -6004,6 +6521,7 @@ def main(argv: list[str] | None = None) -> int:
                     translate_srt_file(
                         src_path, target_path, translator, src_lang, target,
                         on_progress=cue_progress,
+                        strip_furigana=strip_furigana_before_mt,
                     )
                 except TranslatorError as e:
                     grouped_mt_failures.setdefault(str(e), []).append(
@@ -6023,6 +6541,17 @@ def main(argv: list[str] | None = None) -> int:
                     sample = ", ".join(tasks[:3])
                     more = f" (+{len(tasks) - 3} more)" if len(tasks) > 3 else ""
                     warnings.append(f"MT failed for {len(tasks)} task(s) [{sample}{more}]: {msg}")
+
+        # Auto-unload Ollama models from memory after the MT pass, if enabled.
+        # Default true; failures are silent because the user's MT already ran.
+        if args.mt_engine == "ollama" and _ollama_models_flag("auto_unload", True):
+            released: list[str] = []
+            for tr in translator_cache.values():
+                if tr.release_resources():
+                    released.append(getattr(tr, "model", tr.name))
+            if released:
+                uniq = sorted(set(released))
+                print(f"Unloaded Ollama model(s) from memory: {', '.join(uniq)}")
 
     generated: list[Path] = []
     if args.furigana:

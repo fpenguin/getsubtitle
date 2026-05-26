@@ -40,6 +40,7 @@ machine-translated subtitles.
 
 Requirements: Python 3.10 or newer.
 
+
 ### macOS and Linux
 
 ```sh
@@ -80,28 +81,39 @@ combine, and machine-translation workflows still work.
 
 ## Quickstart
 
-Five commands that cover most language-learning subtitle workflows:
+Five commands that cover most language-learning subtitle workflows. Defaults are tuned for Japanese learners using asbplayer, so furigana, single-line cues, broadcast-noise stripping, and offline `argos` MT are already on out of the box.
 
 ```sh
-# 1. Download Japanese and English subtitles for a Japanese movie
-getsubtitle "https://www.imdb.com/title/tt0096283/" -l ja,en
+# 1. Download Japanese subtitles for a Japanese movie
+#    (furigana + single-line + ➡ stripping all happen by default)
+getsubtitle "https://www.imdb.com/title/tt0096283/" -l ja
 
-# 2. Preview availability before downloading all episodes of season 1
+# 2. Preview availability for a full season in multiple languages
 getsubtitle "https://www.imdb.com/title/tt28299608/" -s 1 -e all -l ja,ko,en,es --dry-run
 
-# 3. Download a full season with Japanese furigana and subtitle cleanup
-getsubtitle "https://www.imdb.com/title/tt28299608/" -s 1 -e all -l ja,en --furigana --strip-cc-noise
+# 3. Download a full season; missing languages get MT'd from the closest
+#    available source automatically (default engine: argos)
+getsubtitle "https://www.imdb.com/title/tt28299608/" -s 1 -e all -l ja,en
 
-# 4. AI-translate missing languages from online results or an existing folder
-getsubtitle "https://www.imdb.com/title/tt28299608/" -s 1 -e all -l ko,es --mt-engine deepl --mt-source-lang ko:ja,es:en
-getsubtitle translate ~/Movies/Subtitles/... -l es,fr --mt-engine argos
+# 4. Standalone MT on an existing folder; swap engines via flag or config
+getsubtitle translate ~/Movies/Subtitles/... -l es,fr
 getsubtitle translate ~/Movies/Subtitles/... -l ko,zh --mt-engine ollama
+getsubtitle "URL" -s 1 -e all -l ko,es --mt-engine deepl --mt-source-lang ko:ja,es:en
 
-# 5. Combine subtitles into a study stack
-getsubtitle combine ~/Movies/Subtitles/... -s 1 -e 1-3 -l ja,ko,en,es --furigana --format vtt
+# 5. Combine 4 subtitles into one stacked study file
+#    (furigana is inlined by default for ja)
+getsubtitle combine ~/Movies/Subtitles/... -s 1 -e 1-3 -l ja,ko,en,es --format vtt
 ```
 
 Run `getsubtitle` with no arguments (or `getsubtitle --help`) for a short overview and a list of topic pages.
+
+Want raw `.srt` with no learning helpers? Either run with the opt-out flags:
+
+```sh
+getsubtitle "URL" -l ja --no-furigana --no-single-line --no-strip-cc-noise --no-mt-engine
+```
+
+…or flip them off once in `user_settings.toml` (see Configuration below).
 
 ## Topic help
 
@@ -120,6 +132,25 @@ getsubtitle --help advanced   # Troubleshooting, experimental flags
 ```
 
 `getsubtitle combine --help`, `getsubtitle translate --help`, and `getsubtitle modify --help` (or each with no args) all route to the matching topic page.
+
+## Configuration
+
+Defaults live in `user_settings.toml`. The built-in defaults are language-learner-friendly: furigana on, single-line cues, ➡ noise stripped, offline `argos` MT, default Ollama model `qwen3:4b`, automatic Ollama auto-load/auto-unload. You can override any of them per-run with CLI flags (flags always win), or once-and-done by editing the TOML.
+
+```sh
+getsubtitle config --init    # write a fully-commented template
+getsubtitle config --path    # print where it lives
+getsubtitle config --open    # open it in your default editor
+getsubtitle config --show    # show the effective merged config
+```
+
+The template at the top of `user_settings.example.toml` includes quickstart recipes for:
+
+- "I just want raw `.srt` downloads, no learning helpers" — turn off the four learner defaults
+- Switch MT to Ollama (offline LLM) or DeepL (online, with free tier)
+- Per-language-pair Ollama model overrides (e.g. `qwen3:4b` for CJK, `llama3.2:3b` for European pairs)
+
+API keys are never read from this file — they live in macOS Keychain or environment variables.
 
 ## API keys
 
@@ -187,15 +218,23 @@ Output is `MF Ghost - S01E07.ja-ko.srt` (language order in `-l` is preserved top
 ### Fill missing languages with machine translation
 
 ```sh
-# Translate whichever languages weren't found, picking the closest source SRT
-getsubtitle "https://www.imdb.com/title/..." -l ja,ko,en,es --mt-engine argos
+# Translate whichever languages weren't found, picking the closest source SRT.
+# argos is the default engine, so this works without any flags:
+getsubtitle "https://www.imdb.com/title/..." -l ja,ko,en,es
+
+# Switch engines per-run when you want better quality:
+getsubtitle "URL" -l ja,ko,en,es --mt-engine ollama
+getsubtitle "URL" -l ja,ko,en,es --mt-engine deepl
+
+# Or disable MT entirely for one run:
+getsubtitle "URL" -l ja,ko --no-mt-engine
 ```
 
-| Engine | Offline? | Setup | Quality |
-|---|---|---|---|
-| `argos` | Yes | `pip install argostranslate` + per-pair model | Gist-level |
-| `ollama` | Yes | Open the Ollama desktop app, or `brew services start ollama`; missing models are pulled automatically | Good |
-| `deepl` | No | `getsubtitle --set-key deepl` (500K chars/mo free) | Best |
+| Engine | Default? | Offline? | Setup | Quality |
+|---|---|---|---|---|
+| `argos` | **yes** | Yes | `pip install argostranslate` + per-pair model | Gist-level |
+| `ollama` | no | Yes | Open the Ollama desktop app, or `brew services start ollama`; missing models are pulled automatically (auto_load=true) and unloaded after the MT pass (auto_unload=true) | Good |
+| `deepl` | no | No | `getsubtitle --set-key deepl` (500K chars/mo free) | Best |
 
 For Ollama, avoid running `ollama serve` in the same terminal you want to keep using; it is a foreground server. Use the desktop app or `brew services start ollama` for the normal background-daemon flow. `ollama serve` is only a temporary fallback for a separate terminal.
 
@@ -204,27 +243,35 @@ You can choose Ollama models per language pair in `user_settings.toml`:
 ```toml
 [translate]
 engine = "ollama"
-model = "aya-expanse:8b"   # generic fallback
+model = "qwen3:4b"   # default; small, fast, strong on CJK
 
 [translate.ollama_models]
+auto_load = true                # pull missing models on demand
+auto_unload = true              # free model from RAM/VRAM after the MT pass
 "ja:ko" = "qwen3:4b"
 "ko:ja" = "qwen3:4b"
-"en:es" = "llama3.2:3b"
+"en:es" = "llama3.2:3b"         # smaller for European pairs
 "es:en" = "llama3.2:3b"
+# Bigger/slower alternatives: qwen3:8b, aya-expanse:8b, translategemma:12b
 ```
 
-These model keys are `source:target` and need quotes because TOML bare keys cannot contain `:`. Dash form like `ja-ko` also works without quotes. For one command, `--mt-model NAME` overrides both the pair-specific and generic config.
+Pair keys are `source:target` and need quotes because TOML bare keys cannot contain `:`. Dash form like `ja-ko` also works without quotes. For one command, `--mt-model NAME` overrides both the pair-specific and generic config.
 
-MT output is suffixed `.lang.mt.srt` so it never gets confused with human-quality files.
+When the source language is `ja`, `getsubtitle` strips inline `漢字（かんじ）` readings from the cues before MT so the translator doesn't treat them as extra content. Controlled by `[furigana].strip_before_mt` (default `true`).
+
+MT output is suffixed `.<lang>.mt.srt` so it never gets confused with human-quality files.
 
 ### Generate Japanese furigana
 
+Furigana is on by default — `getsubtitle "URL" -l ja` already produces a hiragana side file. Use the flags only to change mode or opt out:
+
 ```sh
-getsubtitle "URL" -l ja -furigana          # hiragana (default)
-getsubtitle "URL" -l ja -furigana romaji
+getsubtitle "URL" -l ja                       # hiragana side file (default)
+getsubtitle "URL" -l ja --furigana romaji     # switch to romaji
+getsubtitle "URL" -l ja --no-furigana         # disable for this run
 ```
 
-Produces several variants: SRT with inline `漢字（かんじ）`, ruby VTT with real `<ruby><rt>` markup, and stacked-line ASS.
+Produces several variants: SRT with inline `漢字（かんじ）`, ruby VTT with real `<ruby><rt>` markup, and stacked-line ASS. Choose with `--format srt|vtt|ass|all`.
 
 SRT remains the safest fallback across players. VTT gives the cleanest true furigana in asbplayer once HTML rendering is enabled.
 
@@ -240,28 +287,22 @@ For ruby VTT furigana in asbplayer:
 
 ![asbplayer rendering Japanese ruby furigana from WebVTT](examples/asbplayer-ruby-vtt-preview.png)
 
-Recommended commands for asbplayer:
+Recommended commands for asbplayer (furigana, single-line, and ➡ stripping are all on by default — these examples only override the format):
 
 ```sh
 # True ruby furigana in WebVTT
-getsubtitle "URL" -l ja --furigana --format vtt --single-line
+getsubtitle "URL" -l ja --format vtt
 
 # Multi-language study stack with Japanese ruby VTT
-getsubtitle combine ~/Movies/Subtitles/... -l ja,ko,en --furigana --format vtt
+getsubtitle combine ~/Movies/Subtitles/... -l ja,ko,en --format vtt
 
-# Broad compatibility fallback when VTT is not wanted
-getsubtitle combine ~/Movies/Subtitles/... -l ja,ko,en --furigana --format srt
+# Broad-compatibility fallback when VTT is not wanted
+getsubtitle combine ~/Movies/Subtitles/... -l ja,ko,en --format srt
 ```
 
-### Clean broadcast-caption noise
+### Broadcast-caption noise
 
-Some Japanese SRTs (especially ANIMAX/NHK rips) include continuation-arrow markers like `➡`. Strip them:
-
-```sh
-getsubtitle "URL" -l ja --strip-cc-noise --single-line
-```
-
-`--single-line` also flattens multi-line cues so each cue is one visual line — useful for asbplayer.
+Japanese SRTs from ANIMAX/NHK and similar broadcasters include continuation-arrow markers like `➡`. Stripping is on by default. Opt out per-run with `--no-strip-cc-noise`, or per-system with `[download].strip_cc_noise = false` in `user_settings.toml`.
 
 ## When things don't work
 

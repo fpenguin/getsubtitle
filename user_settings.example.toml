@@ -5,74 +5,139 @@
 #   Windows:     %APPDATA%\getsubtitle\user_settings.toml
 # Or run:        getsubtitle config --init
 #
-# Anything you set here becomes the default for the corresponding flag.
-# Command-line flags ALWAYS win, so config is just a way to skip typing the
-# same flags every run.
+# Every value below is set to the current built-in default. Edit any line
+# to change the corresponding behavior. Command-line flags ALWAYS win, so
+# this file just sets defaults for when no flag is passed.
 #
 # DO NOT put API keys here. Keys live in macOS Keychain or in environment
 # variables (JIMAKU_API_KEY, WYZIE_API_KEY, DEEPL_API_KEY).
+#
+# ─────────────────────────────────────────────────────────────────────────
+# Quickstart recipes
+#
+# The defaults below target Japanese language learners using asbplayer:
+# furigana on, single-line cues, broadcast noise stripped, offline MT via
+# argos. Drop or change anything that doesn't fit your workflow.
+#
+# (1) "I just want raw .srt downloads, no learning helpers":
+#       [furigana]
+#       enabled = false
+#       combine = false
+#       [download]
+#       single_line = false
+#       strip_cc_noise = false
+#
+# (2) "Use Ollama for higher-quality MT" (needs Ollama daemon + a model):
+#       [translate]
+#       engine = "ollama"
+#       # qwen3:4b is already the default model below
+#
+# (3) "Use DeepL for cloud MT" (needs a key set via
+#     `getsubtitle --set-key deepl` or DEEPL_API_KEY env var):
+#       [translate]
+#       engine = "deepl"
+# ─────────────────────────────────────────────────────────────────────────
+
 
 [download]
-# Default languages for the download flow. String or array.
-# langs = "ja"
-# langs = ["ja", "ko", "en", "es"]
 
-# Output folder for downloaded subtitles.
-# output = "~/Movies/Subtitles"
+# Default language(s) to fetch. String or array. Default: "ja".
+langs = "ja"
 
-# Folder layout: archive | flat | plex
-# layout = "archive"
+# Output folder for downloaded subtitles. Default: "~/Movies/Subtitles".
+output = "~/Movies/Subtitles"
 
-# Release-source preference: auto | any | netflix | crunchyroll
-# release_source = "auto"
+# Folder layout: archive | flat | plex. Default: archive.
+# archive  Title/Season 01/files
+# flat     all files in one folder, no per-season subdir
+# plex     Plex-style layout for direct library inclusion
+layout = "archive"
 
-# Open the output folder after each download.
-# open_folder = false
+# Release-source preference: auto | any | netflix | crunchyroll. Default: auto.
+# auto prefers the URL source when useful; any disables source preference.
+release_source = "auto"
+
+# Open the output folder after each download. Default: false.
+open_folder = false
 
 # Flatten every downloaded .srt to one line per cue (asbplayer-friendly).
-# single_line = false
+# Disable for cleaner mpv / browser <track> rendering. Default: true.
+single_line = true
 
-# Strip broadcast-caption noise (currently the Japanese ➡ continuation arrow).
-# strip_cc_noise = false
+# Strip broadcast-caption noise from downloaded SRTs (currently the
+# Japanese ➡ continuation arrow). Default: true.
+strip_cc_noise = true
 
 
 [combine]
+
 # Default language order for `getsubtitle combine`. First language is the
 # timing master unless --master or [combine].priority overrides.
-# langs = "ja,ko"
-# langs = ["ja", "ko"]
+# Default: "ja,ko".
+langs = "ja,ko"
 
-# Sync strictness preset: auto | strict | loose
-# sync = "auto"
+# Sync strictness preset: auto | strict | loose. Default: auto.
+# auto    matches each language to the master with a default-tolerant window.
+# strict  requires near-exact time overlap; more cues are skipped.
+# loose   matches looser windows; better when timings drift across releases.
+sync = "auto"
 
-# Keep each source language's original line breaks instead of flattening to one line.
-# preserve_lines = false
+# Keep each source language's original line breaks instead of flattening
+# to one line per language in the combined output. Default: false.
+preserve_lines = false
 
-# Overwrite existing combined files and bypass the episode match-rate threshold.
-# force = false
+# Overwrite existing combined files and bypass the episode match-rate
+# threshold. Default: false.
+force = false
 
-# Master-language priority list. If set, the first language in this list that
-# is also in -l becomes the timing master (overrides the "first in -l" default
-# but is still beaten by --master on the command line).
-# priority = ["ja", "en", "ko", "es"]
+# Master-language priority list.
+#
+# When combining cues from multiple languages, ONE language is the "timing
+# master" — its cue boundaries define when each combined cue starts and
+# ends; the other languages get aligned to it via time-overlap matching.
+#
+# Resolution order (first match wins):
+#   1. --master LANG on the command line
+#   2. First language in this priority list that's also in -l
+#   3. First language in -l
+#
+# Example: if you usually want ja as the master when available (because
+# your Japanese SRTs come from broadcast and are well-timed) but fall back
+# to en (Netflix/Crunchyroll, also well-timed) when ja isn't on disk:
+#   priority = ["ja", "en", "ko", "es"]
+# Then `getsubtitle combine FOLDER -l ko,ja` automatically uses ja as
+# master even though ko came first in -l, because ja outranks ko here.
+#
+# Default: [] (no priority override — uses first language in -l).
+priority = []
 
 
 [furigana]
-# Apply Japanese readings automatically during downloads when ja is requested.
-# This creates extra .furigana-*.srt side files from downloaded Japanese SRTs.
-# enabled = false
 
-# Inline Japanese readings automatically into combined subtitles when ja is
-# part of `getsubtitle combine -l ...`. This is often the most useful default
-# for Japanese study files because the combined output itself gets furigana.
+# Apply Japanese readings automatically during downloads when ja is
+# requested. Creates extra .furigana-*.srt side files from downloaded
+# Japanese SRTs without modifying the source. Default: true.
+enabled = true
+
+# Inline Japanese readings automatically into combined subtitles when ja
+# is part of `getsubtitle combine -l ...`. The combined output itself
+# gets furigana — usually the most useful study file format.
 # CLI override for one run: --no-furigana
-# combine = false
+# Default: true.
+combine = true
 
-# Reading style: hiragana | romaji
-# mode = "hiragana"
+# Reading style: hiragana | romaji. Default: hiragana.
+mode = "hiragana"
+
+# Strip inline 漢字（かんじ） readings from Japanese cues BEFORE machine
+# translation. Only meaningful when the MT source is ja (no-op for
+# ko/en/es sources, no-op for clean .ja.srt without readings).
+# Turn this off only if you specifically want the translator to see the
+# parenthesised readings as part of the source text. Default: true.
+strip_before_mt = true
 
 # Output format(s) for furigana side files. Comma list of any combination
-# of srt, ass, vtt — or "all" for every variant.
+# of srt, ass, vtt — or "all" for every variant. Default: "srt".
 #
 # Recommended choices:
 #   srt   asbplayer-friendly SRT with inline 漢字（かんじ） readings.
@@ -81,31 +146,56 @@
 #   vtt   Ruby VTT with real <ruby><rt> markup. Renders correctly in
 #         browser <track> tags and in asbplayer when:
 #           Settings > Misc > Subtitles > Subtitle HTML = Render
-#         Detect and Display Ruby is optional for mouseover/auto-pause behavior.
+#         Detect and Display Ruby is optional for mouseover/auto-pause.
 #   all   Same as "srt,ass,vtt".
 #
 # CLI override for any single run:  --format srt   (or --format vtt, etc.)
-#
-# format = "srt"
-# format = "srt,vtt"
-# format = "srt,ass,vtt"
-# format = "all"
+format = "srt"
 
 
 [translate]
-# MT engine to use when languages are missing. "" disables auto-MT.
-# Valid: "", "argos", "ollama", "deepl"
-# engine = ""
 
-# Ollama model name (only used when engine = "ollama").
-# Used when no language-pair model below matches.
-# model = "aya-expanse:8b"
+# Default engine for auto-translation (download fallback + the translate
+# subcommand). Set to "" to disable auto-MT entirely.
+# Valid: "" (disable), "argos" (offline; pip install argostranslate),
+# "ollama" (offline LLM; needs Ollama daemon + a model),
+# "deepl" (online; free tier 500K chars/month; needs DEEPL_API_KEY).
+# Default: argos.
+engine = "argos"
+
+# Default Ollama model when no [translate.ollama_models] pair-specific
+# model matches. Pick a single workhorse here; override per-pair below.
+#
+# Suggested models for popular workflows:
+#   qwen3:4b              CJK general-purpose, ~2.5GB. Good JA↔KO, JA↔EN.  (default)
+#   qwen3:8b              Same family, higher quality, ~5GB. Slower.
+#   aya-expanse:8b        Cohere multilingual, ~5GB. Strong on 23 languages.
+#   llama3.2:3b           European pairs (EN↔ES, EN↔FR, etc.). Small + fast.
+#   translategemma:12b    Google translation-specialised. Largest, best quality.
+#
+# Use `ollama pull <name>` to install before relying on a model.
+# Default: "qwen3:4b".
+model = "qwen3:4b"
 
 # Force a source language for MT, e.g. "en" or "ja". Use "auto" to let
-# getsubtitle pick the closest available source per target.
-# source_lang = "auto"
+# getsubtitle pick the closest available source per target. Default: auto.
+source_lang = "auto"
+
 
 [translate.ollama_models]
+
+# Auto-pull the Ollama model if it isn't installed locally. Default: true.
+# When false and the model is missing, getsubtitle raises an actionable
+# error instead of running `ollama pull` automatically — useful on metered
+# connections or when you want strict control over what's installed.
+auto_load = true
+
+# Free the Ollama model from RAM/VRAM as soon as the MT pass finishes
+# (we send keep_alive=0 instead of waiting for Ollama's 5-minute default).
+# Turn off if you'll keep running getsubtitle back-to-back and want the
+# model to stay warm between invocations. Default: true.
+auto_unload = true
+
 # Optional per-language-pair Ollama model choices. Keys are source:target
 # (source-target with a dash is also accepted).
 # Command-line --mt-model still wins for a single run.
@@ -126,11 +216,15 @@
 
 
 [experimental]
-# Always-on diagnostics for missing-subtitle debugging.
-# debug_providers = false
 
-# Enable Spanish Subdivx fallback by default.
-# subdivx = false
+# Per-call provider diagnostics (raw counts, language tags) printed to
+# stdout. Useful for distinguishing a code bug from a provider coverage
+# gap. Default: false.
+debug_providers = false
 
-# Enable Korean Addic7ed fallback by default. May rate-limit.
-# addic7ed = false
+# Enable Spanish Subdivx fallback by default. Experimental. Default: false.
+subdivx = false
+
+# Enable Korean Addic7ed fallback by default. Experimental; may rate-limit.
+# Default: false.
+addic7ed = false

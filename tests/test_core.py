@@ -1412,8 +1412,26 @@ def test_config_furigana_enabled_with_romaji_mode():
         assert args.furigana == "romaji"
 
 
-def test_config_furigana_combine_applies_to_combine_parser_only():
+def test_config_furigana_combine_carries_mode_to_combine_parser():
+    # [furigana].combine controls whether combine inlines furigana. With the
+    # new defaults, enabled=true is already on by default — so download also
+    # picks up the mode from config. Verify both parsers see the user's mode
+    # override.
     toml = '[furigana]\ncombine = true\nmode = "romaji"\n'
+    with _isolated_config(toml):
+        download_parser = MODULE["build_parser"]()
+        download_args = download_parser.parse_args(["URL"])
+        assert download_args.furigana == "romaji"
+
+        combine_parser = MODULE["build_combine_parser"]()
+        combine_args = combine_parser.parse_args(["/tmp/x"])
+        assert combine_args.furigana == "romaji"
+
+
+def test_config_furigana_disabled_explicitly_skips_download():
+    # If the user opts out via [furigana].enabled = false, download no longer
+    # auto-applies furigana (regardless of BUILTIN default).
+    toml = '[furigana]\nenabled = false\ncombine = false\n'
     with _isolated_config(toml):
         download_parser = MODULE["build_parser"]()
         download_args = download_parser.parse_args(["URL"])
@@ -1421,7 +1439,7 @@ def test_config_furigana_combine_applies_to_combine_parser_only():
 
         combine_parser = MODULE["build_combine_parser"]()
         combine_args = combine_parser.parse_args(["/tmp/x"])
-        assert combine_args.furigana == "romaji"
+        assert combine_args.furigana is None
 
 
 def test_no_furigana_overrides_config_default():
@@ -1567,18 +1585,22 @@ def test_help_topic_config_describes_file_and_precedence():
     assert "API keys are NEVER" in text or "API keys" in text
 
 
-def test_existing_behavior_unchanged_when_no_config_present():
-    # The whole point: removing config support entirely must produce identical
-    # parser defaults to the pre-config behavior. Without a config file:
+def test_builtin_defaults_applied_when_no_config_present():
+    # Without a user config file, the parser still picks up the BUILTIN
+    # defaults so the documented "out-of-the-box" behavior matches what
+    # `config --show` advertises.
     with _isolated_config(None):
         parser = MODULE["build_parser"]()
         args = parser.parse_args(["URL"])
-    assert args.langs == "ja"          # original default
-    assert args.layout == "archive"    # original default
+    assert args.langs == "ja"
+    assert args.layout == "archive"
     assert args.release_source == "auto"
-    assert args.single_line is False
-    assert args.strip_cc_noise is False
-    assert args.furigana is None
+    # The four flips: language-learner-friendly defaults on by default.
+    assert args.single_line is True
+    assert args.strip_cc_noise is True
+    assert args.furigana == "hiragana"
+    assert args.mt_engine == "argos"
+    # Experimental opt-ins stay off by default.
     assert args.experimental_subdivx is False
     assert args.experimental_addic7ed is False
 
@@ -1782,6 +1804,365 @@ def test_translate_main_writes_mt_files_using_fake_translator():
         scope["select_translator"] = saved_select
 
 
+def test_strip_inline_furigana_removes_parenthetical_readings():
+    s = MODULE["strip_inline_furigana"]
+    # Real-world shape produced by text_with_readings: pykakasi splits each
+    # chunk so kanji surfaces are annotated separately from okurigana.
+    assert s("特（とく）に足回（あしまわ）りの仕上（しあ）げ") == "特に足回りの仕上げ"
+    # Kanji-only surface with hiragana reading.
+    assert s("漢字（かんじ）です") == "漢字です"
+    # Romaji reading.
+    assert s("漢字（kanji）です") == "漢字です"
+    # Half-width parens also work.
+    assert s("特(とく)に") == "特に"
+
+
+def test_strip_inline_furigana_is_noop_on_plain_text():
+    s = MODULE["strip_inline_furigana"]
+    # Plain Japanese without readings is untouched.
+    assert s("こんにちは") == "こんにちは"
+    assert s("特に足回りの仕上げ") == "特に足回りの仕上げ"
+    # Non-Japanese text is untouched.
+    assert s("Just plain English") == "Just plain English"
+    # Parens around non-reading content (e.g. dialogue) survive.
+    assert s("(player shouts)") == "(player shouts)"
+
+
+def test_furigana_config_validates_strip_before_mt_as_bool():
+    # The validator should accept true/false and reject non-bool.
+    v = MODULE["validate_user_config"]
+    out = v({"furigana": {"strip_before_mt": True}})
+    assert out["furigana"]["strip_before_mt"] is True
+    out = v({"furigana": {"strip_before_mt": False}})
+    assert out["furigana"]["strip_before_mt"] is False
+    # Bad value → CliError mentioning the key path.
+    err = None
+    try:
+        v({"furigana": {"strip_before_mt": "yes"}})
+    except MODULE["CliError"] as e:
+        err = str(e)
+    assert err is not None and "furigana.strip_before_mt" in err
+
+
+def test_translate_srt_file_strips_furigana_when_source_is_ja():
+    # Cues with inline 漢字（かんじ） readings should reach the translator
+    # already cleaned when source_lang is "ja".
+    import tempfile
+    from pathlib import Path
+
+    seen_payloads: list[list[str]] = []
+
+    class _CapturingTranslator(MODULE["_BaseTranslator"]):
+        name = "capture"
+        def is_available(self): return True
+        def translate_batch(self, texts, source, target, on_progress=None):
+            seen_payloads.append(list(texts))
+            return [f"[{target}] {t}" for t in texts]
+
+    with tempfile.TemporaryDirectory() as d:
+        src = Path(d) / "Show.S01E01.ja.srt"
+        src.write_text(
+            "1\n00:00:01,000 --> 00:00:02,000\n"
+            "特（とく）に足回（あしまわ）りの仕上（しあ）げ\n",
+            encoding="utf-8",
+        )
+        dst = Path(d) / "Show.S01E01.ko.mt.srt"
+        n = MODULE["translate_srt_file"](src, dst, _CapturingTranslator(), "ja", "ko")
+    assert n == 1
+    assert len(seen_payloads) == 1
+    # The translator should NOT have seen the parenthetical readings.
+    assert seen_payloads[0] == ["特に足回りの仕上げ"]
+
+
+def test_translate_srt_file_does_not_strip_when_source_is_not_ja():
+    # The same parenthetical-looking pattern in a non-ja source must reach
+    # the translator unchanged — we only want this behavior for ja sources.
+    import tempfile
+    from pathlib import Path
+
+    seen: list[list[str]] = []
+
+    class _CapturingTranslator(MODULE["_BaseTranslator"]):
+        name = "capture"
+        def is_available(self): return True
+        def translate_batch(self, texts, source, target, on_progress=None):
+            seen.append(list(texts))
+            return [t for t in texts]
+
+    with tempfile.TemporaryDirectory() as d:
+        # Source is ko; even if the cue happens to contain kanji + parens
+        # (legal in Korean text), we must not strip them when source != ja.
+        src = Path(d) / "Show.S01E01.ko.srt"
+        src.write_text(
+            "1\n00:00:01,000 --> 00:00:02,000\n특히（とくに）\n",
+            encoding="utf-8",
+        )
+        dst = Path(d) / "Show.S01E01.ja.mt.srt"
+        MODULE["translate_srt_file"](src, dst, _CapturingTranslator(), "ko", "ja")
+    assert seen[0] == ["특히（とくに）"]
+
+
+def test_translate_srt_file_respects_strip_furigana_false_flag():
+    # Caller can explicitly disable the strip even when source is ja.
+    import tempfile
+    from pathlib import Path
+
+    seen: list[list[str]] = []
+
+    class _CapturingTranslator(MODULE["_BaseTranslator"]):
+        name = "capture"
+        def is_available(self): return True
+        def translate_batch(self, texts, source, target, on_progress=None):
+            seen.append(list(texts))
+            return list(texts)
+
+    with tempfile.TemporaryDirectory() as d:
+        src = Path(d) / "Show.S01E01.ja.srt"
+        src.write_text(
+            "1\n00:00:01,000 --> 00:00:02,000\n特（とく）に\n",
+            encoding="utf-8",
+        )
+        dst = Path(d) / "Show.S01E01.ko.mt.srt"
+        MODULE["translate_srt_file"](
+            src, dst, _CapturingTranslator(), "ja", "ko", strip_furigana=False,
+        )
+    assert seen[0] == ["特（とく）に"]
+
+
+def test_translate_main_strip_before_mt_config_false_passes_through():
+    # When [furigana].strip_before_mt = false, the ja source should reach
+    # the translator with readings intact.
+    import tempfile
+    from pathlib import Path
+
+    seen: list[list[str]] = []
+
+    class _CapturingTranslator(MODULE["_BaseTranslator"]):
+        name = "fake"
+        def is_available(self): return True
+        def translate_batch(self, texts, source, target, on_progress=None):
+            seen.append(list(texts))
+            return [f"[{target}] {t}" for t in texts]
+
+    scope = MODULE["translate_main"].__globals__
+    saved_select = scope["select_translator"]
+    try:
+        scope["select_translator"] = lambda engine, model: _CapturingTranslator()
+        toml = "[furigana]\nstrip_before_mt = false\n"
+        with _isolated_config(toml):
+            with tempfile.TemporaryDirectory() as d:
+                root = Path(d)
+                (root / "Show.S01E01.ja.srt").write_text(
+                    "1\n00:00:01,000 --> 00:00:02,000\n特（とく）に足回り\n",
+                    encoding="utf-8",
+                )
+                rc = MODULE["translate_main"]([
+                    str(root), "-l", "ja,ko", "--mt-engine", "argos",
+                ])
+        assert rc == 0
+        assert seen and seen[0] == ["特（とく）に足回り"]
+    finally:
+        scope["select_translator"] = saved_select
+
+
+def test_validate_ollama_models_accepts_flags_and_pair_mappings():
+    v = MODULE["validate_user_config"]
+    out = v({"translate": {"ollama_models": {
+        "auto_load": True,
+        "auto_unload": False,
+        "ja:ko": "qwen3:4b",
+        "en-es": "llama3.2:3b",
+    }}})
+    om = out["translate"]["ollama_models"]
+    assert om["auto_load"] is True
+    assert om["auto_unload"] is False
+    # Pair keys are normalised to hyphen form with alias resolution.
+    assert om["ja-ko"] == "qwen3:4b"
+    assert om["en-es"] == "llama3.2:3b"
+
+
+def test_validate_ollama_models_rejects_non_bool_flag_and_bad_pair():
+    v = MODULE["validate_user_config"]
+    for bad in ("yes", 1, "true"):
+        err = None
+        try:
+            v({"translate": {"ollama_models": {"auto_load": bad}}})
+        except MODULE["CliError"] as e:
+            err = str(e)
+        assert err is not None and "auto_load" in err
+    # Unknown non-pair key should produce a helpful error listing valid flags.
+    err = None
+    try:
+        v({"translate": {"ollama_models": {"weird_key": "x"}}})
+    except MODULE["CliError"] as e:
+        err = str(e)
+    assert err is not None and "auto_load" in err and "auto_unload" in err
+
+
+def test_ollama_translator_release_resources_sends_keep_alive_zero():
+    # Mock urlopen so the test doesn't need a real Ollama daemon.
+    import io, json
+    captured = {}
+
+    class _FakeResp:
+        def __enter__(self): return self
+        def __exit__(self, *a): return False
+        def read(self): return b""
+
+    def fake_urlopen(req, timeout=10):
+        captured["url"] = req.full_url
+        captured["body"] = json.loads(req.data.decode("utf-8"))
+        return _FakeResp()
+
+    tr = MODULE["OllamaTranslator"](model="qwen3:4b")
+    scope = MODULE["OllamaTranslator"].release_resources.__globals__
+    saved = scope["urllib"].request.urlopen
+    try:
+        scope["urllib"].request.urlopen = fake_urlopen
+        ok = tr.release_resources()
+    finally:
+        scope["urllib"].request.urlopen = saved
+    assert ok is True
+    assert captured["url"].endswith("/api/generate")
+    assert captured["body"]["model"] == "qwen3:4b"
+    assert captured["body"]["keep_alive"] == 0
+    assert captured["body"]["prompt"] == ""
+
+
+def test_ollama_translator_release_resources_swallows_network_errors():
+    # Ollama unreachable shouldn't propagate — best-effort unload.
+    import urllib.error
+
+    def fake_urlopen(req, timeout=10):
+        raise urllib.error.URLError("connection refused")
+
+    tr = MODULE["OllamaTranslator"](model="qwen3:4b")
+    scope = MODULE["OllamaTranslator"].release_resources.__globals__
+    saved = scope["urllib"].request.urlopen
+    try:
+        scope["urllib"].request.urlopen = fake_urlopen
+        ok = tr.release_resources()
+    finally:
+        scope["urllib"].request.urlopen = saved
+    assert ok is False  # quietly returned False, did not raise
+
+
+def test_base_translator_release_resources_is_noop():
+    # Argos / DeepL inherit the no-op so callers can be polymorphic.
+    argos = MODULE["ArgosTranslator"]()
+    deepl = MODULE["DeepLTranslator"](api_key=None)
+    assert argos.release_resources() is False
+    assert deepl.release_resources() is False
+
+
+def test_ollama_translator_auto_load_false_raises_on_missing_model():
+    # When auto_load=False and the model is missing, we should surface a
+    # CLI-friendly error mentioning the manual `ollama pull` workaround.
+    tr = MODULE["OllamaTranslator"](model="phantom:99", auto_load=False)
+    # Mock installed_models to report the model is missing.
+    tr.installed_models = lambda: set()  # type: ignore[method-assign]
+    err = None
+    try:
+        tr.ensure_model_available()
+    except MODULE["TranslatorError"] as e:
+        err = str(e)
+    assert err is not None
+    assert "phantom:99" in err
+    assert "ollama pull" in err
+    assert "auto_load" in err
+
+
+def test_translate_main_unloads_ollama_when_auto_unload_true():
+    # End-to-end: when [translate.ollama_models].auto_unload is true (default),
+    # release_resources() is called once per cached translator.
+    import tempfile
+    from pathlib import Path
+
+    released_models: list[str] = []
+
+    class _FakeOllama(MODULE["_BaseTranslator"]):
+        name = "ollama"
+        def __init__(self, model):
+            self.model = model
+        def is_available(self): return True
+        def translate_batch(self, texts, source, target, on_progress=None):
+            return [f"[{target}] {t}" for t in texts]
+        def release_resources(self):
+            released_models.append(self.model)
+            return True
+
+    scope = MODULE["translate_main"].__globals__
+    saved_select = scope["select_translator"]
+    try:
+        scope["select_translator"] = lambda engine, model: _FakeOllama(model or "default")
+        # Default config (no override) → auto_unload defaults to True.
+        with _isolated_config(None):
+            with tempfile.TemporaryDirectory() as d:
+                root = Path(d)
+                (root / "Show.S01E01.ja.srt").write_text(
+                    "1\n00:00:01,000 --> 00:00:02,000\nこんにちは\n", encoding="utf-8"
+                )
+                rc = MODULE["translate_main"]([
+                    str(root), "-l", "ja,ko", "--mt-engine", "ollama",
+                ])
+        assert rc == 0
+        assert released_models  # at least one model was unloaded
+    finally:
+        scope["select_translator"] = saved_select
+
+
+def test_translate_main_skips_unload_when_auto_unload_false():
+    # When the user sets auto_unload = false in the config, no release call.
+    import tempfile
+    from pathlib import Path
+
+    released_models: list[str] = []
+
+    class _FakeOllama(MODULE["_BaseTranslator"]):
+        name = "ollama"
+        def __init__(self, model):
+            self.model = model
+        def is_available(self): return True
+        def translate_batch(self, texts, source, target, on_progress=None):
+            return [f"[{target}] {t}" for t in texts]
+        def release_resources(self):
+            released_models.append(self.model)
+            return True
+
+    scope = MODULE["translate_main"].__globals__
+    saved_select = scope["select_translator"]
+    try:
+        scope["select_translator"] = lambda engine, model: _FakeOllama(model or "default")
+        toml = "[translate.ollama_models]\nauto_unload = false\n"
+        with _isolated_config(toml):
+            with tempfile.TemporaryDirectory() as d:
+                root = Path(d)
+                (root / "Show.S01E01.ja.srt").write_text(
+                    "1\n00:00:01,000 --> 00:00:02,000\nこんにちは\n", encoding="utf-8"
+                )
+                rc = MODULE["translate_main"]([
+                    str(root), "-l", "ja,ko", "--mt-engine", "ollama",
+                ])
+        assert rc == 0
+        assert released_models == []  # nothing was unloaded
+    finally:
+        scope["select_translator"] = saved_select
+
+
+def test_select_translator_passes_auto_load_from_config():
+    # The factory must thread the config flag into the OllamaTranslator
+    # constructor — otherwise auto_load=false in config wouldn't take effect.
+    toml = "[translate.ollama_models]\nauto_load = false\n"
+    with _isolated_config(toml):
+        tr = MODULE["select_translator"]("ollama", "qwen3:4b")
+    assert isinstance(tr, MODULE["OllamaTranslator"])
+    assert tr.auto_load is False
+    # Default config → auto_load True.
+    with _isolated_config(None):
+        tr = MODULE["select_translator"]("ollama", "qwen3:4b")
+    assert tr.auto_load is True
+
+
 def test_translate_main_uses_pair_specific_ollama_model_from_config():
     import tempfile
     from pathlib import Path
@@ -1861,14 +2242,31 @@ def test_translate_main_refuses_overwrite_without_force():
         scope["select_translator"] = saved_select
 
 
-def test_translate_main_errors_when_mt_engine_missing():
-    with _isolated_config(None):
+def test_translate_main_errors_when_engine_explicitly_disabled():
+    # The default engine is now "argos" (BUILTIN). To trigger the missing-
+    # engine path the user has to opt out — either by setting engine = ""
+    # in user_settings.toml or by passing --no-mt-engine at the CLI.
+    toml = '[translate]\nengine = ""\n'
+    with _isolated_config(toml):
         try:
             MODULE["translate_main"](["/tmp/nowhere", "-l", "ja,ko"])
         except MODULE["CliError"] as e:
-            assert "mt-engine" in str(e)
+            assert "engine" in str(e).lower()
         else:
-            raise AssertionError("expected CliError when --mt-engine omitted")
+            raise AssertionError("expected CliError when engine = '' in config")
+
+
+def test_translate_main_errors_when_no_mt_engine_flag_used():
+    # --no-mt-engine wins over the BUILTIN argos default.
+    with _isolated_config(None):
+        try:
+            MODULE["translate_main"]([
+                "/tmp/nowhere", "-l", "ja,ko", "--no-mt-engine",
+            ])
+        except MODULE["CliError"] as e:
+            assert "engine" in str(e).lower()
+        else:
+            raise AssertionError("expected CliError when --no-mt-engine passed")
 
 
 def test_translate_main_errors_when_path_missing():
@@ -2322,13 +2720,13 @@ def test_modify_main_dispatches_via_main_and_help_routes():
     with contextlib.redirect_stdout(out), _isolated_config(None):
         rc = MODULE["main"](["modify", "--help"])
     assert rc == 0
-    assert "Post-process existing SRT files" in out.getvalue()
+    assert "Post-process existing subtitle files" in out.getvalue()
 
     out = io.StringIO()
     with contextlib.redirect_stdout(out), _isolated_config(None):
         rc = MODULE["main"](["modify"])
     assert rc == 0
-    assert "Post-process existing SRT files" in out.getvalue()
+    assert "Post-process existing subtitle files" in out.getvalue()
 
 
 def test_main_help_lists_modify_subcommand():
@@ -2484,6 +2882,356 @@ def test_modify_main_validates_format_upfront_before_progress_bar():
     text = out.getvalue()
     assert "Planned:" not in text
     assert "Processing:" not in text
+
+
+# ---------------------------------------------------------------------------
+# SAMI (.smi) → SRT conversion
+# ---------------------------------------------------------------------------
+
+_SAMI_BASIC_KO = """\
+<SAMI>
+<HEAD><STYLE TYPE="text/css"><!--
+.KRCC {Name: Korean; lang: ko-KR; SAMI_Type: CC;}
+--></STYLE></HEAD>
+<BODY>
+<SYNC Start=1000><P Class=KRCC>안녕하세요<br>반갑습니다</P></SYNC>
+<SYNC Start=3500><P Class=KRCC>&nbsp;</P></SYNC>
+<SYNC Start=4000><P Class=KRCC>두 번째 줄</P></SYNC>
+<SYNC Start=6500><P Class=KRCC>&nbsp;</P></SYNC>
+</BODY>
+</SAMI>
+"""
+
+
+def test_parse_sami_basic_single_language():
+    by_lang = MODULE["parse_sami"](_SAMI_BASIC_KO)
+    assert list(by_lang) == ["ko"]
+    assert by_lang["ko"] == [
+        (1000, 3500, "안녕하세요\n반갑습니다"),
+        (4000, 6500, "두 번째 줄"),
+    ]
+
+
+def test_parse_sami_multi_language_emits_one_stream_per_class():
+    sami = (
+        "<SAMI><BODY>"
+        "<SYNC Start=1000><P Class=KRCC>한국어</P><P Class=ENCC>English</P></SYNC>"
+        "<SYNC Start=4000><P Class=KRCC>&nbsp;</P><P Class=ENCC>&nbsp;</P></SYNC>"
+        "</BODY></SAMI>"
+    )
+    by_lang = MODULE["parse_sami"](sami)
+    assert sorted(by_lang) == ["en", "ko"]
+    assert by_lang["ko"] == [(1000, 4000, "한국어")]
+    assert by_lang["en"] == [(1000, 4000, "English")]
+
+
+def test_parse_sami_decodes_entities_and_br_tags():
+    sami = (
+        "<SAMI><BODY>"
+        "<SYNC Start=1000><P Class=KRCC>A &amp; B<br/>line 2 &#65; &#x42;</P></SYNC>"
+        "<SYNC Start=3000><P Class=KRCC>&nbsp;</P></SYNC>"
+        "</BODY></SAMI>"
+    )
+    by_lang = MODULE["parse_sami"](sami)
+    assert by_lang["ko"] == [(1000, 3000, "A & B\nline 2 A B")]
+
+
+def test_parse_sami_collapses_multi_br_to_avoid_blank_lines_inside_srt():
+    # SAMI files commonly use <br><br> as vertical spacing. If we preserve
+    # the empty line, the rendered SRT body contains a blank line, which
+    # most SRT readers (and our own parse_srt) treat as a cue separator.
+    # Regression: real Dimension W files had 78 cues with this pattern.
+    sami = (
+        "<SAMI><BODY>"
+        "<SYNC Start=1000><P Class=KRCC>윗줄<br><br><br>아랫줄</P></SYNC>"
+        "<SYNC Start=4000><P Class=KRCC>&nbsp;</P></SYNC>"
+        "</BODY></SAMI>"
+    )
+    by_lang = MODULE["parse_sami"](sami)
+    # Multi-<br> should collapse to a single newline between the two real lines.
+    assert by_lang["ko"] == [(1000, 4000, "윗줄\n아랫줄")]
+    # And the rendered SRT must parse round-trip with no ghost blocks.
+    srt = MODULE["sami_cues_to_srt"](by_lang["ko"])
+    cues = MODULE["parse_srt"](srt)
+    assert len(cues) == 1, f"expected 1 cue, got {len(cues)}; srt={srt!r}"
+    # Body must NOT contain a blank line (would split the cue in two for
+    # most SRT readers).
+    body_lines = "\n".join(cues[0].text_lines)
+    assert "\n\n" not in body_lines
+    assert body_lines == "윗줄\n아랫줄"
+
+
+def test_parse_sami_kokrcc_class_maps_to_ko():
+    # Real-world variant seen on Mashle .smi files.
+    sami = (
+        "<SAMI><BODY>"
+        "<SYNC Start=1000><P Class=KOKRCC>한국어</P></SYNC>"
+        "<SYNC Start=3000><P Class=KOKRCC>&nbsp;</P></SYNC>"
+        "</BODY></SAMI>"
+    )
+    by_lang = MODULE["parse_sami"](sami)
+    assert list(by_lang) == ["ko"]
+    assert by_lang["ko"] == [(1000, 3000, "한국어")]
+
+
+def test_parse_sami_unknown_class_defaults_to_ko():
+    sami = (
+        "<SAMI><BODY>"
+        "<SYNC Start=1000><P Class=WEIRDCC>unrecognised class</P></SYNC>"
+        "<SYNC Start=3000><P Class=WEIRDCC>&nbsp;</P></SYNC>"
+        "</BODY></SAMI>"
+    )
+    by_lang = MODULE["parse_sami"](sami)
+    # Korean SMI files in the wild use many bespoke class names; default to ko.
+    assert list(by_lang) == ["ko"]
+
+
+def test_parse_sami_handles_missing_p_tag():
+    sami = (
+        "<SAMI><BODY>"
+        "<SYNC Start=1000>그냥 텍스트</SYNC>"
+        "<SYNC Start=3000>&nbsp;</SYNC>"
+        "</BODY></SAMI>"
+    )
+    by_lang = MODULE["parse_sami"](sami)
+    assert by_lang["ko"] == [(1000, 3000, "그냥 텍스트")]
+
+
+def test_parse_sami_trailing_cue_gets_three_second_fallback():
+    sami = (
+        "<SAMI><BODY>"
+        "<SYNC Start=1000><P Class=KRCC>마지막 자막</P></SYNC>"
+        "</BODY></SAMI>"
+    )
+    by_lang = MODULE["parse_sami"](sami)
+    # No closing SYNC, so duration falls back to 3 seconds.
+    assert by_lang["ko"] == [(1000, 4000, "마지막 자막")]
+
+
+def test_parse_sami_quoted_attribute_values():
+    sami = (
+        "<SAMI><BODY>"
+        '<SYNC Start="1000"><P Class="KRCC">따옴표</P></SYNC>'
+        '<SYNC Start="3000"><P Class="KRCC">&nbsp;</P></SYNC>'
+        "</BODY></SAMI>"
+    )
+    by_lang = MODULE["parse_sami"](sami)
+    assert by_lang["ko"] == [(1000, 3000, "따옴표")]
+
+
+def test_parse_sami_returns_empty_for_no_syncs():
+    assert MODULE["parse_sami"]("") == {}
+    assert MODULE["parse_sami"]("<SAMI><BODY>nothing here</BODY></SAMI>") == {}
+
+
+def test_sami_cues_to_srt_format_and_fallback_duration():
+    srt = MODULE["sami_cues_to_srt"]([(0, 0, "zero-length"), (1000, 2500, "abc")])
+    # Zero-length cue should be padded to 1 second.
+    assert "00:00:00,000 --> 00:00:01,000" in srt
+    assert "00:00:01,000 --> 00:00:02,500" in srt
+    # SRT indices are 1-based and contiguous.
+    assert srt.startswith("1\n")
+    assert "\n\n2\n" in srt
+
+
+def test_sami_decode_bytes_handles_utf8_cp949_and_utf16_bom():
+    text = "<SAMI><BODY><SYNC Start=1000><P Class=KRCC>한국어</P></SYNC></BODY></SAMI>"
+    dec = MODULE["_sami_decode_bytes"]
+    assert "한국어" in dec(text.encode("utf-8"))
+    assert "한국어" in dec(b"\xef\xbb\xbf" + text.encode("utf-8"))   # UTF-8 BOM
+    assert "한국어" in dec(text.encode("cp949"))
+    assert "한국어" in dec(b"\xff\xfe" + text.encode("utf-16-le"))    # UTF-16 LE BOM
+
+
+def test_scan_smi_files_is_case_insensitive_and_dedupes():
+    import tempfile
+    from pathlib import Path
+    with tempfile.TemporaryDirectory() as d:
+        root = Path(d)
+        (root / "a.smi").write_text("x", encoding="utf-8")
+        (root / "b.SMI").write_text("x", encoding="utf-8")
+        (root / "c.txt").write_text("x", encoding="utf-8")  # ignored
+        sub = root / "sub"
+        sub.mkdir()
+        (sub / "d.smi").write_text("x", encoding="utf-8")
+        found = MODULE["scan_smi_files"]([root])
+    names = sorted(p.name for p in found)
+    assert names == ["a.smi", "b.SMI", "d.smi"]
+
+
+def test_convert_smi_file_writes_sibling_srt():
+    import tempfile
+    from pathlib import Path
+    with tempfile.TemporaryDirectory() as d:
+        smi = Path(d) / "Show.S01E01.smi"
+        smi.write_text(_SAMI_BASIC_KO, encoding="utf-8")
+        written, skipped = MODULE["convert_smi_file"](smi)
+        assert skipped == []
+        assert len(written) == 1
+        out = written[0]
+        assert out.name == "Show.S01E01.ko.srt"
+        body = out.read_text(encoding="utf-8")
+    assert "00:00:01,000 --> 00:00:03,500" in body
+    assert "안녕하세요" in body and "반갑습니다" in body
+    assert "00:00:04,000 --> 00:00:06,500" in body
+
+
+def test_convert_smi_file_skips_existing_output_without_force():
+    import tempfile
+    from pathlib import Path
+    with tempfile.TemporaryDirectory() as d:
+        smi = Path(d) / "Show.S01E01.smi"
+        smi.write_text(_SAMI_BASIC_KO, encoding="utf-8")
+        target = Path(d) / "Show.S01E01.ko.srt"
+        target.write_text("PRE-EXISTING\n", encoding="utf-8")
+
+        written, skipped = MODULE["convert_smi_file"](smi)
+        assert written == []
+        assert skipped == [target]
+        # Existing file is untouched.
+        assert target.read_text(encoding="utf-8") == "PRE-EXISTING\n"
+
+        # --force overwrites.
+        written, skipped = MODULE["convert_smi_file"](smi, force=True)
+        assert skipped == []
+        assert written == [target]
+        assert "안녕하세요" in target.read_text(encoding="utf-8")
+
+
+def test_convert_smi_file_raises_on_unparseable_sami():
+    import tempfile
+    from pathlib import Path
+    with tempfile.TemporaryDirectory() as d:
+        smi = Path(d) / "empty.smi"
+        smi.write_text("<SAMI><BODY></BODY></SAMI>", encoding="utf-8")
+        err = None
+        try:
+            MODULE["convert_smi_file"](smi)
+        except MODULE["CliError"] as e:
+            err = str(e)
+    assert err is not None and "no parseable SAMI cues" in err
+
+
+def test_smi_output_stem_strips_known_lang_infix():
+    from pathlib import Path
+    stem = MODULE["_smi_output_stem"]
+    # Plain stem unchanged.
+    assert stem(Path("Show.S01E01.smi")).name == "Show.S01E01"
+    # Known lang infix stripped so we don't get Show.ko.ko.srt.
+    assert stem(Path("Show.S01E01.ko.smi")).name == "Show.S01E01"
+    assert stem(Path("Show.S01E01.en.smi")).name == "Show.S01E01"
+    # Non-language tokens preserved.
+    assert stem(Path("Show.S01E01.WEB-DL.smi")).name == "Show.S01E01.WEB-DL"
+    assert stem(Path("Show.S01E01.x264.smi")).name == "Show.S01E01.x264"
+
+
+def test_modify_main_convert_smi_to_srt_end_to_end():
+    import tempfile, io, contextlib
+    from pathlib import Path
+    with _isolated_config(None):
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            (root / "Show.S01E01.smi").write_bytes(_SAMI_BASIC_KO.encode("cp949"))
+            (root / "Show.S01E02.smi").write_bytes(_SAMI_BASIC_KO.encode("utf-8"))
+            out = io.StringIO()
+            with contextlib.redirect_stdout(out):
+                rc = MODULE["modify_main"]([str(root), "--convert", "smi-to-srt"])
+            text = out.getvalue()
+            ko1 = (root / "Show.S01E01.ko.srt").read_text(encoding="utf-8")
+            ko2 = (root / "Show.S01E02.ko.srt").read_text(encoding="utf-8")
+    assert rc == 0
+    assert (root.name)  # path was usable during the with-block
+    assert "SRT files written from SMI: 2" in text
+    assert "안녕하세요" in ko1 and "안녕하세요" in ko2
+    assert "00:00:01,000 --> 00:00:03,500" in ko1
+
+
+def test_modify_main_convert_smi_dry_run_writes_nothing():
+    import tempfile, io, contextlib
+    from pathlib import Path
+    with _isolated_config(None):
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            (root / "Show.S01E01.smi").write_text(_SAMI_BASIC_KO, encoding="utf-8")
+            out = io.StringIO()
+            with contextlib.redirect_stdout(out):
+                rc = MODULE["modify_main"]([
+                    str(root), "--convert", "smi-to-srt", "--dry-run",
+                ])
+            text = out.getvalue()
+            srt_exists = (root / "Show.S01E01.ko.srt").exists()
+    assert rc == 0
+    assert "Planned convert: 1 .smi file(s)" in text
+    assert not srt_exists
+
+
+def test_modify_main_convert_smi_no_files_reports_nothing_to_convert():
+    import tempfile, io, contextlib
+    from pathlib import Path
+    with _isolated_config(None):
+        with tempfile.TemporaryDirectory() as d:
+            out = io.StringIO()
+            with contextlib.redirect_stdout(out):
+                rc = MODULE["modify_main"]([d, "--convert", "smi-to-srt"])
+            text = out.getvalue()
+    assert rc == 1
+    assert "No .smi files found" in text
+
+
+def test_modify_main_convert_combined_with_strip_cc_noise():
+    # Both ops can run in one invocation. Convert produces .ko.srt; strip
+    # touches any pre-existing .ja.srt with arrows.
+    import tempfile, io, contextlib
+    from pathlib import Path
+    with _isolated_config(None):
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            (root / "Show.S01E01.smi").write_text(_SAMI_BASIC_KO, encoding="utf-8")
+            (root / "Show.S01E01.ja.srt").write_text(
+                "1\n00:00:01,000 --> 00:00:02,000\nこんにちは➡\n",
+                encoding="utf-8",
+            )
+            out = io.StringIO()
+            with contextlib.redirect_stdout(out):
+                rc = MODULE["modify_main"]([
+                    str(root), "--convert", "smi-to-srt", "--strip-cc-noise",
+                ])
+            text = out.getvalue()
+            ja_body = (root / "Show.S01E01.ja.srt").read_text(encoding="utf-8")
+            ko_body = (root / "Show.S01E01.ko.srt").read_text(encoding="utf-8")
+    assert rc == 0
+    assert "convert smi → srt" in text and "strip CC noise" in text
+    assert "➡" not in ja_body
+    assert "안녕하세요" in ko_body
+
+
+def test_modify_main_convert_skips_existing_without_force_via_cli():
+    import tempfile, io, contextlib
+    from pathlib import Path
+    with _isolated_config(None):
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            (root / "Show.S01E01.smi").write_text(_SAMI_BASIC_KO, encoding="utf-8")
+            (root / "Show.S01E01.ko.srt").write_text("HUMAN\n", encoding="utf-8")
+
+            out = io.StringIO()
+            with contextlib.redirect_stdout(out):
+                rc = MODULE["modify_main"]([str(root), "--convert", "smi-to-srt"])
+            text_skip = out.getvalue()
+            still_human = (root / "Show.S01E01.ko.srt").read_text(encoding="utf-8")
+
+            out = io.StringIO()
+            with contextlib.redirect_stdout(out):
+                rc2 = MODULE["modify_main"]([
+                    str(root), "--convert", "smi-to-srt", "--force",
+                ])
+            text_force = out.getvalue()
+            forced = (root / "Show.S01E01.ko.srt").read_text(encoding="utf-8")
+    assert rc == 0 and rc2 == 0
+    assert "SRT files written from SMI: 0 (1 skipped" in text_skip
+    assert still_human == "HUMAN\n"
+    assert "SRT files written from SMI: 1" in text_force
+    assert "안녕하세요" in forced
 
 
 def test_translator_setup_help_messages_are_specific():
