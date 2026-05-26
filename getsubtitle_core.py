@@ -5930,6 +5930,7 @@ More help:
   getsubtitle --help config
   getsubtitle --help keys
   getsubtitle --help furigana
+  getsubtitle --help batch
   getsubtitle --help advanced
 """
 
@@ -6241,8 +6242,90 @@ Sections (see the example template):
 
 Notes:
   API keys are NEVER read from this file — keep them in macOS Keychain or
-  environment variables (JIMAKU_API_KEY, WYZIE_API_KEY, DEEPL_API_KEY).
+  environment variables (JIMAKU_API_KEY, WYZIE_API_KEY, DEEPL_API_KEY,
+  TMDB_API_KEY).
   Run `getsubtitle config --show` to see what's currently active.
+""",
+    "batch": """\
+Bulk subtitle workflows over a whole library (batch/ scripts).
+
+The batch/ directory ships three companion Python scripts that walk a
+Plex-style library, match each show/movie folder against a reference
+map, and shell out to the regular `getsubtitle` CLI in bulk. They're
+not subcommands of `getsubtitle` itself — run them with Python
+directly. All of getsubtitle's own defaults (engine, model, auto-load,
+furigana, etc.) apply to the shelled-out calls.
+
+Files:
+  batch/reference.json    Folder name -> {title, profile, IDs, season,
+                          notes}. The single source of truth that drives
+                          all three scripts. Edit by hand or have
+                          lookup.py fill in IDs.
+  batch/fetch.py          Walk CWD, fetch missing subtitles per the
+                          entry's profile.
+  batch/merge.py          Walk CWD, convert any .smi to .ko.srt, then
+                          combine language stacks per the profile.
+  batch/lookup.py         Backfill empty anilist_id / imdb_id / tmdb_id
+                          in reference.json from AniList + TMDB.
+  batch/README.md         User-facing docs (longer than this topic).
+
+Profiles (set per entry in reference.json):
+  ja                       Japanese-origin. fetch.py grabs ko first; if
+                           missing, MTs ja->ko via Ollama. merge.py
+                           combines ja+ko with --master ja --furigana.
+  ko                       Korean-origin. fetch.py grabs ja first; if
+                           missing, MTs ko->ja. merge.py combines
+                           ko+ja (and a ko+ja+en+es quad if those
+                           sidefiles exist), --master ko --furigana.
+  en                       English / Western / other. fetch.py grabs
+                           es and ko; MTs from en when missing.
+                           merge.py produces both en+es dual and
+                           ja+ko+en+es quad, --master en.
+
+Quickstart:
+  # 1. Backfill missing IDs in reference.json (free TMDB key needed for
+  #    live-action). getsubtitle --set-key tmdb works too.
+  python3 /path/to/getsubtitle/batch/lookup.py
+
+  # 2. Walk your library, see what would be fetched (default: dry-run).
+  cd /path/to/your/plex/library
+  python3 /path/to/getsubtitle/batch/fetch.py
+
+  # 3. If the plan looks right, run for real.
+  python3 /path/to/getsubtitle/batch/fetch.py --run
+
+  # 4. Build combined study files.
+  python3 /path/to/getsubtitle/batch/merge.py --run --format vtt
+
+Each script accepts --help for its own flags:
+  python3 batch/fetch.py --help
+  python3 batch/merge.py --help
+  python3 batch/lookup.py --help
+
+Matching rules (how a folder on disk lines up with a reference entry):
+  1. Exact path relative to CWD              (e.g. "유포니움/1기")
+  2. Walk up parents until one matches       (Plex Season XX -> Show key)
+  3. Bare filename for loose top-level files (e.g. "Kill Boksoon ...mkv")
+
+Unmatched targets are listed at the end of each run with a hint to add
+them to reference.json.
+
+Adding a new entry to reference.json:
+
+  "New Show (2026)": {
+    "title": "New Show",
+    "year": 2026,
+    "type": "show",          // or "movie"
+    "profile": "en",          // ja | ko | en
+    "needs_lookup": true      // lookup.py will fill IDs on next run
+  }
+
+Notes:
+  - Both fetch.py and merge.py are dry-run by default. Add --run.
+  - merge.py runs `getsubtitle modify --convert smi-to-srt --force` on
+    each folder first, so legacy Korean .smi files become .ko.srt
+    automatically before combine.
+  - lookup.py is idempotent and never overwrites a manually-set ID.
 """,
     "advanced": """\
 Advanced and experimental options.

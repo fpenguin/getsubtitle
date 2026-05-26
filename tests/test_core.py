@@ -3003,6 +3003,37 @@ def test_main_help_lists_modify_subcommand():
     assert "getsubtitle --help modify" in text
 
 
+def test_main_help_lists_batch_topic():
+    import io, contextlib
+    out = io.StringIO()
+    with contextlib.redirect_stdout(out), _isolated_config(None):
+        MODULE["main"](["--help"])
+    text = out.getvalue()
+    assert "getsubtitle --help batch" in text
+
+
+def test_batch_topic_help_renders_with_expected_content():
+    import io, contextlib
+    out = io.StringIO()
+    with contextlib.redirect_stdout(out), _isolated_config(None):
+        rc = MODULE["main"](["--help", "batch"])
+    text = out.getvalue()
+    assert rc == 0
+    # Anchor on the most identifying lines so unrelated copy edits don't
+    # flap the test, but core structure is asserted.
+    assert "batch/reference.json" in text
+    assert "batch/fetch.py" in text
+    assert "batch/merge.py" in text
+    assert "batch/lookup.py" in text
+    assert "Profiles" in text
+    assert "Quickstart" in text
+    # The three profile names should be documented.
+    for tag in ("ja", "ko", "en"):
+        # Each appears as a profile label; a simple substring search is
+        # fine because the topic prose mentions them in multiple places.
+        assert tag in text
+
+
 def test_parse_furigana_formats_default_is_srt_only():
     p = MODULE["parse_furigana_formats"]
     assert p(None) == {"srt"}
