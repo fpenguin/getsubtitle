@@ -670,6 +670,25 @@ def test_parse_srt_filename_extracts_language_and_mt_flag():
     assert p("Show.txt") is None         # wrong extension
 
 
+def test_parse_srt_filename_strips_sonarr_hi_cc_sdh_forced_tags():
+    # Sonarr-style hearing-impaired / closed-caption / SDH / forced markers
+    # sit between the lang code and .srt. Without stripping, the regex would
+    # misread `.ja.hi.srt` as lang=hi. Real-world impact: most of the
+    # user's Midnight Diner / Witcher / Couples Therapy files.
+    p = MODULE["parse_srt_filename"]
+    assert p("Show.S01E07.ja.hi.srt") == (1, 7, "ja", False)
+    assert p("Show.S01E07.en.cc.srt") == (1, 7, "en", False)
+    assert p("Show.S01E07.es.sdh.srt") == (1, 7, "es", False)
+    assert p("Show.S01E07.fr.forced.srt") == (1, 7, "fr", False)
+    # Stacks with .mt too.
+    assert p("Show.S01E07.ko.mt.hi.srt") == (1, 7, "ko", True)
+    # Real-world fixtures from the user's library.
+    assert p("Midnight.Diner.S01E03.1080p.NF.WEB-DL.DDP2.0.H.264-DUSKLiGHT.ja.hi.srt") == (1, 3, "ja", False)
+    assert p("Couples Therapy (2019) - S01E01 - 101 WEBDL-1080p.en.hi.srt") == (1, 1, "en", False)
+    assert p("The Witcher - S02E05 - Turn Your Back WEBRip-1080p Proper.es.hi.srt") == (2, 5, "es", False)
+    assert p("Moving (2023) - S01E16 - The Man Between WEBDL-1080p.ko.hi.srt") == (1, 16, "ko", False)
+
+
 def test_scan_srt_files_ignores_combined_and_furigana_outputs():
     import tempfile
     from pathlib import Path

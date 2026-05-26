@@ -1,0 +1,1148 @@
+{
+  "version": 1,
+  "description": "Show/movie reference map for getsubtitle batch processing. Folder name → metadata. Edit freely; lookup.py can backfill empty *_id fields by searching AniList / IMDb / TMDB.",
+  "schema": {
+    "key": "Folder path relative to the script's CWD (or just the leaf folder name). The script tries the exact key first, then the parent folder.",
+    "entry": {
+      "title": "Romanized / English title used in --title fallback.",
+      "title_native": "Native-script title (optional, informational).",
+      "title_localized": "Korean/local title as it appears on disk (optional, informational).",
+      "year": "Release year (optional).",
+      "type": "show | movie",
+      "profile": "ja | ko | en — drives fetch/merge rules. ja=fetch ko first, MT ko if missing. ko=fetch ja first, MT ja if missing. en=fetch es+ko first, MT from en if missing. Non-ja/ko origins (zh, fr, es, ...) default to en profile.",
+      "anilist_id": "AniList ID for anime; used by Jimaku.",
+      "imdb_id": "IMDb tt-id for live-action; used by Wyzie.",
+      "tmdb_id": "TMDB integer ID; secondary lookup for Wyzie.",
+      "season": "Season number (1-indexed) for shows; null for movies.",
+      "episode_count": "Optional total episode count for `-e all` short-circuiting.",
+      "episode_range": "Optional explicit range like \"13-24\" for partial seasons (Mashle S2 cours 2 etc).",
+      "needs_lookup": "true when *_id fields are empty pending research. lookup.py uses this to find work.",
+      "notes": "Free-form maintainer notes."
+    },
+    "profiles": {
+      "ja": "Japanese-origin (anime + Japanese live-action). Master=ja. Fetch Korean subs first; MT ja→ko fallback. Combine: ja+ko with master=ja, furigana on.",
+      "ko": "Korean-origin (K-drama, K-variety). Master=ko. Fetch Japanese subs first (Wyzie); MT ko→ja fallback. Combine: ko+ja (+en+es if available) with master=ko.",
+      "en": "English / Western / Other-origin. Master=en. Fetch Spanish + Korean first; MT from en fallback. Combine: en+es dual AND ja+ko+en+es quad."
+    }
+  },
+  "entries": {
+    "유녀전기/1.5기   극장판": {
+      "title": "Youjo Senki Movie",
+      "title_native": "幼女戦記 劇場版",
+      "title_localized": "유녀전기 극장판",
+      "year": 2019,
+      "type": "movie",
+      "profile": "ja",
+      "anilist_id": 100876,
+      "imdb_id": "tt9764362",
+      "tmdb_id": 552524,
+      "notes": "Saga of Tanya the Evil: The Movie"
+    },
+    "유포니움/1기": {
+      "title": "Hibike! Euphonium",
+      "title_native": "響け！ユーフォニアム",
+      "title_localized": "유포니움 1기",
+      "type": "show",
+      "profile": "ja",
+      "anilist_id": 20509,
+      "imdb_id": "tt4574334",
+      "tmdb_id": 62881,
+      "season": 1,
+      "episode_count": 13,
+      "needs_lookup": false
+    },
+    "유포니움/울려라! 유포니엄 2기 [Leopard-Raws]": {
+      "title": "Hibike! Euphonium 2",
+      "title_native": "響け！ユーフォニアム2",
+      "title_localized": "울려라! 유포니엄 2기",
+      "type": "show",
+      "profile": "ja",
+      "anilist_id": 21376,
+      "season": 2,
+      "episode_count": 13,
+      "needs_lookup": true,
+      "notes": "Verify AniList ID before bulk use."
+    },
+    "태어난김에 세계일주": {
+      "title": "Adventure by Accident",
+      "title_native": "태어난 김에 세계일주",
+      "title_localized": "태어난김에 세계일주 시즌2",
+      "type": "show",
+      "profile": "ko",
+      "season": 2,
+      "episode_count": 11,
+      "needs_lookup": true,
+      "notes": "Korean variety / travel show. Coverage in international DBs is thin. MT from ko likely the only path."
+    },
+    "니아 오토마타": {
+      "title": "NieR:Automata Ver1.1a",
+      "title_native": "NieR:Automata Ver1.1a",
+      "title_localized": "니아 오토마타",
+      "type": "show",
+      "profile": "ja",
+      "anilist_id": 137822,
+      "season": 1,
+      "episode_count": 12,
+      "needs_lookup": true,
+      "notes": "Existing .srt files for ep1-4 have no language infix — scanner will skip them."
+    },
+    "예스터데이를 노래하며": {
+      "title": "Yesterday wo Utatte",
+      "title_native": "イエスタデイをうたって",
+      "title_localized": "예스터데이를 노래하며",
+      "type": "show",
+      "profile": "ja",
+      "anilist_id": 108317,
+      "season": 1,
+      "episode_count": 12,
+      "needs_lookup": true
+    },
+    "장난을 잘 치는 타카기 양 [Leopard-Raws]/1기": {
+      "title": "Karakai Jouzu no Takagi-san",
+      "title_native": "からかい上手の高木さん",
+      "title_localized": "장난을 잘 치는 타카기 양",
+      "type": "show",
+      "profile": "ja",
+      "anilist_id": 99423,
+      "season": 1,
+      "episode_count": 12,
+      "needs_lookup": true
+    },
+    "장난을 잘 치는 타카기 양 [Leopard-Raws]/2기": {
+      "title": "Karakai Jouzu no Takagi-san 2",
+      "title_native": "からかい上手の高木さん2",
+      "type": "show",
+      "profile": "ja",
+      "anilist_id": 103890,
+      "season": 2,
+      "episode_count": 12,
+      "needs_lookup": true
+    },
+    "장난을 잘 치는 타카기 양 [Leopard-Raws]/3기": {
+      "title": "Karakai Jouzu no Takagi-san 3",
+      "title_native": "からかい上手の高木さん3",
+      "type": "show",
+      "profile": "ja",
+      "anilist_id": 107660,
+      "season": 3,
+      "episode_count": 12,
+      "needs_lookup": true
+    },
+    "기생수 - the gray": {
+      "title": "Parasyte: The Grey",
+      "title_native": "기생수: 더 그레이",
+      "type": "show",
+      "profile": "ko",
+      "imdb_id": "tt30330572",
+      "tmdb_id": 235100,
+      "season": 1,
+      "episode_count": 6,
+      "needs_lookup": true,
+      "notes": "Netflix Korean live-action. Folder has no subs on disk."
+    },
+    "디멘션 W [Leopard-Raws]": {
+      "title": "Dimension W",
+      "title_native": "ディメンションW",
+      "type": "show",
+      "profile": "ja",
+      "anilist_id": 21311,
+      "season": 1,
+      "episode_count": 12,
+      "needs_lookup": true
+    },
+    "지-지구의 운동에 관하여": {
+      "title": "Chi: Chikyuu no Undou ni Tsuite",
+      "title_native": "チ。―地球の運動について―",
+      "title_localized": "지-지구의 운동에 관하여",
+      "type": "show",
+      "profile": "ja",
+      "anilist_id": 173752,
+      "season": 1,
+      "episode_count": 25,
+      "needs_lookup": true
+    },
+    "Couples Therapy (2019)": {
+      "title": "Couples Therapy",
+      "year": 2019,
+      "type": "show",
+      "profile": "en",
+      "imdb_id": "tt9344820",
+      "tmdb_id": 85801,
+      "notes": "Documentary series, 4 seasons on disk. Each Season XX subdir handled by walk."
+    },
+    "Fena - Pirate Princess": {
+      "title": "Fena: Pirate Princess",
+      "title_native": "海賊王女",
+      "year": 2021,
+      "type": "show",
+      "profile": "ja",
+      "anilist_id": 132442,
+      "imdb_id": "tt15163102",
+      "tmdb_id": 130413,
+      "season": 1,
+      "episode_count": 12,
+      "needs_lookup": true,
+      "notes": "Japan-US co-production. Origin=ja for our purposes (dub aside)."
+    },
+    "MASHLE - MAGIC AND MUSCLES": {
+      "title": "Mashle",
+      "title_native": "マッシュル-MASHLE-",
+      "type": "show",
+      "profile": "ja",
+      "anilist_id": 163132,
+      "season": 2,
+      "episode_range": "13-24",
+      "needs_lookup": true,
+      "notes": "On disk: S2 cours 2 only (ep13-24). Verify AniList ID for S2."
+    },
+    "Midnight Diner": {
+      "title": "Midnight Diner",
+      "title_native": "深夜食堂",
+      "type": "show",
+      "profile": "ja",
+      "imdb_id": "tt1410659",
+      "tmdb_id": 39423,
+      "needs_lookup": true,
+      "notes": "Live-action JP. 3 seasons on disk. Has .ja.hi.srt for most eps — now parsed correctly after .hi regex fix."
+    },
+    "Moving (2023)": {
+      "title": "Moving",
+      "title_native": "무빙",
+      "year": 2023,
+      "type": "show",
+      "profile": "ko",
+      "imdb_id": "tt21401170",
+      "tmdb_id": 207457,
+      "season": 1,
+      "episode_count": 20,
+      "needs_lookup": true,
+      "notes": "Disney+ Korean drama. Already has human .ja.srt + .ko.hi.srt + .en/.es. Combine-only workflow."
+    },
+    "The Last of Us": {
+      "title": "The Last of Us",
+      "type": "show",
+      "profile": "en",
+      "imdb_id": "tt3581920",
+      "tmdb_id": 100088,
+      "needs_lookup": true,
+      "notes": "HBO. 2 seasons on disk."
+    },
+    "The Witcher": {
+      "title": "The Witcher",
+      "type": "show",
+      "profile": "en",
+      "imdb_id": "tt5180504",
+      "tmdb_id": 71912,
+      "needs_lookup": true,
+      "notes": "Netflix. 3 seasons on disk."
+    },
+
+    "목소리의 형태": {
+      "title": "A Silent Voice",
+      "title_native": "聲の形",
+      "title_localized": "목소리의 형태",
+      "year": 2016,
+      "type": "movie",
+      "profile": "ja",
+      "anilist_id": 20954,
+      "imdb_id": "tt5323662",
+      "tmdb_id": 378064,
+      "needs_lookup": false
+    },
+    "초속 5센티": {
+      "title": "5 Centimeters per Second",
+      "title_native": "秒速5センチメートル",
+      "title_localized": "초속 5센티미터",
+      "year": 2007,
+      "type": "movie",
+      "profile": "ja",
+      "anilist_id": 1689,
+      "imdb_id": "tt0983213",
+      "tmdb_id": 14948
+    },
+    "(종동)주성치의 식신 (God Of Cookery, 1996년)-TiNyHD 1080p": {
+      "title": "The God of Cookery",
+      "title_native": "食神",
+      "year": 1996,
+      "type": "movie",
+      "profile": "en",
+      "imdb_id": "tt0116878",
+      "tmdb_id": 11645,
+      "notes": "Stephen Chow HK Cantonese film. Treating as en profile (fetch es+ko)."
+    },
+    "12 Angry Men (1957)": {
+      "title": "12 Angry Men",
+      "year": 1957,
+      "type": "movie",
+      "profile": "en",
+      "imdb_id": "tt0050083",
+      "tmdb_id": 389
+    },
+    "A Dog's Will (2000)": {
+      "title": "A Dog's Will",
+      "title_native": "O Auto da Compadecida",
+      "year": 2000,
+      "type": "movie",
+      "profile": "en",
+      "imdb_id": "tt0245888",
+      "tmdb_id": 9779,
+      "notes": "Brazilian Portuguese."
+    },
+    "Aftersun (2022)": {
+      "title": "Aftersun",
+      "year": 2022,
+      "type": "movie",
+      "profile": "en",
+      "imdb_id": "tt19770238",
+      "tmdb_id": 814776
+    },
+    "Akira ()": {
+      "title": "Akira",
+      "title_native": "アキラ",
+      "year": 1988,
+      "type": "movie",
+      "profile": "ja",
+      "anilist_id": 477,
+      "imdb_id": "tt0094625",
+      "tmdb_id": 149
+    },
+    "American History X (1998)": {
+      "title": "American History X",
+      "year": 1998,
+      "type": "movie",
+      "profile": "en",
+      "imdb_id": "tt0120586",
+      "tmdb_id": 73
+    },
+    "Attack.on.Titan.Crimson.Arrows.[SUB][2014].[1080p.BluRay.x264].[10bit].[DHD]-Obfuscated": {
+      "title": "Attack on Titan: Part 1 - Crimson Bow and Arrow",
+      "title_native": "進撃の巨人 紅蓮の弓矢",
+      "year": 2014,
+      "type": "movie",
+      "profile": "ja",
+      "anilist_id": 20764,
+      "needs_lookup": true,
+      "notes": "Compilation film recap of S1 first half."
+    },
+    "Ayrton.Senna.Beyond.the.Speed.of.Sound.2010.1080p.Blu-ray.VC-1.DD5.1-DON": {
+      "title": "Ayrton Senna: Beyond the Speed of Sound",
+      "year": 2010,
+      "type": "movie",
+      "profile": "en",
+      "needs_lookup": true,
+      "notes": "BluRay disc structure (BDMV/). Not directly playable — extract main playlist first."
+    },
+    "Before Sunrise (1995)": {
+      "title": "Before Sunrise",
+      "year": 1995,
+      "type": "movie",
+      "profile": "en",
+      "imdb_id": "tt0112471",
+      "tmdb_id": 76
+    },
+    "Before Sunset (2004)": {
+      "title": "Before Sunset",
+      "year": 2004,
+      "type": "movie",
+      "profile": "en",
+      "imdb_id": "tt0381681",
+      "tmdb_id": 80
+    },
+    "Better Days (2019)": {
+      "title": "Better Days",
+      "title_native": "少年的你",
+      "year": 2019,
+      "type": "movie",
+      "profile": "en",
+      "imdb_id": "tt9586294",
+      "tmdb_id": 638503,
+      "notes": "Chinese-language film, treated under en profile."
+    },
+    "Black Panther Wakanda Forever (2022)": {
+      "title": "Black Panther: Wakanda Forever",
+      "year": 2022,
+      "type": "movie",
+      "profile": "en",
+      "imdb_id": "tt9114286",
+      "tmdb_id": 505642
+    },
+    "Blade Runner (1982)": {
+      "title": "Blade Runner",
+      "year": 1982,
+      "type": "movie",
+      "profile": "en",
+      "imdb_id": "tt0083658",
+      "tmdb_id": 78
+    },
+    "Causeway (2022)": {
+      "title": "Causeway",
+      "year": 2022,
+      "type": "movie",
+      "profile": "en",
+      "imdb_id": "tt5599200",
+      "tmdb_id": 768362
+    },
+    "Chainsaw Man - The Movie Reze Arc (2025)": {
+      "title": "Chainsaw Man: The Movie - Reze Arc",
+      "title_native": "劇場版 チェンソーマン レゼ篇",
+      "year": 2025,
+      "type": "movie",
+      "profile": "ja",
+      "anilist_id": 166873,
+      "needs_lookup": true
+    },
+    "City Lights (1931)": {
+      "title": "City Lights",
+      "year": 1931,
+      "type": "movie",
+      "profile": "en",
+      "imdb_id": "tt0021749",
+      "tmdb_id": 901
+    },
+    "Close (2022)": {
+      "title": "Close",
+      "year": 2022,
+      "type": "movie",
+      "profile": "en",
+      "imdb_id": "tt15013174",
+      "tmdb_id": 893725,
+      "notes": "Belgian/French."
+    },
+    "Deadpool and Wolverine 2024 TA Multi 1080p.x264-AMC": {
+      "title": "Deadpool & Wolverine",
+      "year": 2024,
+      "type": "movie",
+      "profile": "en",
+      "imdb_id": "tt6263850",
+      "tmdb_id": 533535
+    },
+    "Dear Zachary A Letter to a Son About His Father (2008)": {
+      "title": "Dear Zachary: A Letter to a Son About His Father",
+      "year": 2008,
+      "type": "movie",
+      "profile": "en",
+      "imdb_id": "tt1152821",
+      "tmdb_id": 11815
+    },
+    "Devotion (2022)": {
+      "title": "Devotion",
+      "year": 2022,
+      "type": "movie",
+      "profile": "en",
+      "imdb_id": "tt8769138",
+      "tmdb_id": 758009
+    },
+    "Django Unchained (2012)": {
+      "title": "Django Unchained",
+      "year": 2012,
+      "type": "movie",
+      "profile": "en",
+      "imdb_id": "tt1853728",
+      "tmdb_id": 68718
+    },
+    "Dr. Strangelove or How I Learned to Stop Worrying and Love the Bomb (1964)": {
+      "title": "Dr. Strangelove or: How I Learned to Stop Worrying and Love the Bomb",
+      "year": 1964,
+      "type": "movie",
+      "profile": "en",
+      "imdb_id": "tt0057012",
+      "tmdb_id": 935
+    },
+    "Evangelion 2.0 You Can (Not) Advance (2009)": {
+      "title": "Evangelion: 2.0 You Can (Not) Advance",
+      "title_native": "ヱヴァンゲリヲン新劇場版：破",
+      "year": 2009,
+      "type": "movie",
+      "profile": "ja",
+      "anilist_id": 3784,
+      "imdb_id": "tt1313104",
+      "tmdb_id": 31433
+    },
+    "EVANGELION.3.33.YOU.CAN.REDO.2012.1080p.AMZN.WEB-DL.DDP5.1.H.264.2Audio-HDSWEB": {
+      "title": "Evangelion: 3.0 You Can (Not) Redo",
+      "title_native": "ヱヴァンゲリヲン新劇場版：Q",
+      "year": 2012,
+      "type": "movie",
+      "profile": "ja",
+      "anilist_id": 3785,
+      "imdb_id": "tt1467304",
+      "tmdb_id": 84048
+    },
+    "Exit.2019.KOREAN.1080p.BluRay.H264.AAC-VXT.mp4": {
+      "title": "Exit",
+      "title_native": "엑시트",
+      "year": 2019,
+      "type": "movie",
+      "profile": "ko",
+      "imdb_id": "tt9742794",
+      "tmdb_id": 595275
+    },
+    "Fight Club (1999)": {
+      "title": "Fight Club",
+      "year": 1999,
+      "type": "movie",
+      "profile": "en",
+      "imdb_id": "tt0137523",
+      "tmdb_id": 550
+    },
+    "Flow (2024)": {
+      "title": "Flow",
+      "year": 2024,
+      "type": "movie",
+      "profile": "en",
+      "imdb_id": "tt28209884",
+      "tmdb_id": 823219,
+      "notes": "Latvian dialogue-free animation. Subtitles arguably unnecessary but Wyzie may have descriptive/SDH variants."
+    },
+    "For a Few Dollars More (1965)": {
+      "title": "For a Few Dollars More",
+      "title_native": "Per qualche dollaro in più",
+      "year": 1965,
+      "type": "movie",
+      "profile": "en",
+      "imdb_id": "tt0059578",
+      "tmdb_id": 271
+    },
+    "Glass Onion A Knives Out Mystery (2022)": {
+      "title": "Glass Onion: A Knives Out Mystery",
+      "year": 2022,
+      "type": "movie",
+      "profile": "en",
+      "imdb_id": "tt11564570",
+      "tmdb_id": 661374
+    },
+    "GOAT (2026)": {
+      "title": "GOAT",
+      "year": 2026,
+      "type": "movie",
+      "profile": "en",
+      "needs_lookup": true
+    },
+    "Gone Girl (2014)": {
+      "title": "Gone Girl",
+      "year": 2014,
+      "type": "movie",
+      "profile": "en",
+      "imdb_id": "tt2267998",
+      "tmdb_id": 210577
+    },
+    "Gone with the Wind (1939)": {
+      "title": "Gone with the Wind",
+      "year": 1939,
+      "type": "movie",
+      "profile": "en",
+      "imdb_id": "tt0031381",
+      "tmdb_id": 770
+    },
+    "Gran Torino (2008)": {
+      "title": "Gran Torino",
+      "year": 2008,
+      "type": "movie",
+      "profile": "en",
+      "imdb_id": "tt1205489",
+      "tmdb_id": 13223
+    },
+    "Guillermo del Toro's Pinocchio (2022)": {
+      "title": "Guillermo del Toro's Pinocchio",
+      "year": 2022,
+      "type": "movie",
+      "profile": "en",
+      "imdb_id": "tt1488589",
+      "tmdb_id": 555604
+    },
+    "Hacksaw Ridge (2016)": {
+      "title": "Hacksaw Ridge",
+      "year": 2016,
+      "type": "movie",
+      "profile": "en",
+      "imdb_id": "tt2119532",
+      "tmdb_id": 324786
+    },
+    "Heat (1995)": {
+      "title": "Heat",
+      "year": 1995,
+      "type": "movie",
+      "profile": "en",
+      "imdb_id": "tt0113277",
+      "tmdb_id": 949
+    },
+    "Hello World (2019)": {
+      "title": "Hello World",
+      "title_native": "ハロー・ワールド",
+      "year": 2019,
+      "type": "movie",
+      "profile": "ja",
+      "anilist_id": 105698,
+      "imdb_id": "tt9430706",
+      "tmdb_id": 570368
+    },
+    "Hope (2013)": {
+      "title": "Hope",
+      "title_native": "소원",
+      "year": 2013,
+      "type": "movie",
+      "profile": "ko",
+      "imdb_id": "tt3134084",
+      "tmdb_id": 215129
+    },
+    "Hotarubi no Mori e (2011)": {
+      "title": "Hotarubi no Mori e",
+      "title_native": "蛍火の杜へ",
+      "year": 2011,
+      "type": "movie",
+      "profile": "ja",
+      "anilist_id": 10519,
+      "imdb_id": "tt2034944",
+      "tmdb_id": 99966
+    },
+    "I Want to Eat Your Pancreas (2018)": {
+      "title": "I Want to Eat Your Pancreas",
+      "title_native": "君の膵臓をたべたい",
+      "year": 2018,
+      "type": "movie",
+      "profile": "ja",
+      "anilist_id": 100929,
+      "imdb_id": "tt8503618",
+      "tmdb_id": 519446
+    },
+    "In Our Prime (2022)": {
+      "title": "In Our Prime",
+      "title_native": "이상한 나라의 수학자",
+      "year": 2022,
+      "type": "movie",
+      "profile": "ko",
+      "imdb_id": "tt14403504",
+      "tmdb_id": 798544
+    },
+    "Incendies (2010)": {
+      "title": "Incendies",
+      "year": 2010,
+      "type": "movie",
+      "profile": "en",
+      "imdb_id": "tt1255953",
+      "tmdb_id": 45269,
+      "notes": "Quebec French-language."
+    },
+    "Inside Out (2015)": {
+      "title": "Inside Out",
+      "year": 2015,
+      "type": "movie",
+      "profile": "en",
+      "imdb_id": "tt2096673",
+      "tmdb_id": 150540
+    },
+    "It's a Wonderful Life (1946)": {
+      "title": "It's a Wonderful Life",
+      "year": 1946,
+      "type": "movie",
+      "profile": "en",
+      "imdb_id": "tt0038650",
+      "tmdb_id": 1585
+    },
+    "Jujutsu Kaisen 0 (2021)": {
+      "title": "Jujutsu Kaisen 0",
+      "title_native": "劇場版 呪術廻戦 0",
+      "year": 2021,
+      "type": "movie",
+      "profile": "ja",
+      "anilist_id": 142329,
+      "imdb_id": "tt15765544",
+      "tmdb_id": 736790
+    },
+    "Jules (2023)": {
+      "title": "Jules",
+      "year": 2023,
+      "type": "movie",
+      "profile": "en",
+      "imdb_id": "tt15744298",
+      "tmdb_id": 884605
+    },
+    "Justice League Dark Apokolips War (2020)": {
+      "title": "Justice League Dark: Apokolips War",
+      "year": 2020,
+      "type": "movie",
+      "profile": "en",
+      "imdb_id": "tt11079116",
+      "tmdb_id": 619264
+    },
+    "Kill Bill The Whole Bloody Affair (2011)": {
+      "title": "Kill Bill: The Whole Bloody Affair",
+      "year": 2011,
+      "type": "movie",
+      "profile": "en",
+      "needs_lookup": true,
+      "notes": "Special edition cut combining Vol. 1 + Vol. 2. No standalone IMDb entry; may resolve as Vol. 1 (tt0266697)."
+    },
+    "Klaus (2019)": {
+      "title": "Klaus",
+      "year": 2019,
+      "type": "movie",
+      "profile": "en",
+      "imdb_id": "tt4729430",
+      "tmdb_id": 508965,
+      "notes": "Spanish-produced English-language animation."
+    },
+    "KPop Demon Hunters (2025)": {
+      "title": "KPop Demon Hunters",
+      "year": 2025,
+      "type": "movie",
+      "profile": "en",
+      "imdb_id": "tt14205554",
+      "tmdb_id": 803796,
+      "notes": "Sony Pictures animation, English-language."
+    },
+    "Lawrence of Arabia (1962)": {
+      "title": "Lawrence of Arabia",
+      "year": 1962,
+      "type": "movie",
+      "profile": "en",
+      "imdb_id": "tt0056172",
+      "tmdb_id": 947
+    },
+    "Logan (2017)": {
+      "title": "Logan",
+      "year": 2017,
+      "type": "movie",
+      "profile": "en",
+      "imdb_id": "tt3315342",
+      "tmdb_id": 263115
+    },
+    "Look Back (2024)": {
+      "title": "Look Back",
+      "title_native": "ルックバック",
+      "year": 2024,
+      "type": "movie",
+      "profile": "ja",
+      "anilist_id": 169491,
+      "imdb_id": "tt28253435",
+      "tmdb_id": 1207856
+    },
+    "Memento (2000)": {
+      "title": "Memento",
+      "year": 2000,
+      "type": "movie",
+      "profile": "en",
+      "imdb_id": "tt0209144",
+      "tmdb_id": 77
+    },
+    "Metropolis (1927)": {
+      "title": "Metropolis",
+      "year": 1927,
+      "type": "movie",
+      "profile": "en",
+      "imdb_id": "tt0017136",
+      "tmdb_id": 19
+    },
+    "Ne Zha 2 (2025)": {
+      "title": "Ne Zha 2",
+      "title_native": "哪吒之魔童闹海",
+      "year": 2025,
+      "type": "movie",
+      "profile": "en",
+      "imdb_id": "tt34956443",
+      "needs_lookup": true,
+      "notes": "Chinese animation; treated under en profile."
+    },
+    "Network (1976)": {
+      "title": "Network",
+      "year": 1976,
+      "type": "movie",
+      "profile": "en",
+      "imdb_id": "tt0074958",
+      "tmdb_id": 10428
+    },
+    "No Country for Old Men (2007)": {
+      "title": "No Country for Old Men",
+      "year": 2007,
+      "type": "movie",
+      "profile": "en",
+      "imdb_id": "tt0477348",
+      "tmdb_id": 6977
+    },
+    "On My Skin (2018)": {
+      "title": "On My Skin",
+      "title_native": "Sulla mia pelle",
+      "year": 2018,
+      "type": "movie",
+      "profile": "en",
+      "imdb_id": "tt8101076",
+      "tmdb_id": 526428,
+      "notes": "Italian. Treated under en profile."
+    },
+    "Once Upon a Time in America (1984)": {
+      "title": "Once Upon a Time in America",
+      "year": 1984,
+      "type": "movie",
+      "profile": "en",
+      "imdb_id": "tt0087843",
+      "tmdb_id": 311
+    },
+    "Once Upon a Time. in Hollywood (2019)": {
+      "title": "Once Upon a Time in Hollywood",
+      "year": 2019,
+      "type": "movie",
+      "profile": "en",
+      "imdb_id": "tt7131622",
+      "tmdb_id": 466272
+    },
+    "One Flew Over the Cuckoo's Nest (1975)": {
+      "title": "One Flew Over the Cuckoo's Nest",
+      "year": 1975,
+      "type": "movie",
+      "profile": "en",
+      "imdb_id": "tt0073486",
+      "tmdb_id": 510
+    },
+    "Prayers.For.Bobby.2009.LiMiTED.MULTi.1080p.BluRay.x264-Ryotox": {
+      "title": "Prayers for Bobby",
+      "year": 2009,
+      "type": "movie",
+      "profile": "en",
+      "imdb_id": "tt1288755",
+      "tmdb_id": 22538
+    },
+    "Pride.And.Prejudice.2005.1080p.BluRay.x264-FLHD": {
+      "title": "Pride & Prejudice",
+      "year": 2005,
+      "type": "movie",
+      "profile": "en",
+      "imdb_id": "tt0414387",
+      "tmdb_id": 4348
+    },
+    "Prisoners (2013)": {
+      "title": "Prisoners",
+      "year": 2013,
+      "type": "movie",
+      "profile": "en",
+      "imdb_id": "tt1392214",
+      "tmdb_id": 146233
+    },
+    "Project Hail Mary (2026)": {
+      "title": "Project Hail Mary",
+      "year": 2026,
+      "type": "movie",
+      "profile": "en",
+      "needs_lookup": true
+    },
+    "Radical (2023)": {
+      "title": "Radical",
+      "year": 2023,
+      "type": "movie",
+      "profile": "en",
+      "imdb_id": "tt15268244",
+      "tmdb_id": 1010819,
+      "notes": "Spanish-language Mexican film."
+    },
+    "Ran (1985)": {
+      "title": "Ran",
+      "title_native": "乱",
+      "year": 1985,
+      "type": "movie",
+      "profile": "ja",
+      "imdb_id": "tt0089881",
+      "tmdb_id": 11645
+    },
+    "Red.White.and.Royal.Blue.2023.HDR.2160p.WEB.H265-HUZZAH": {
+      "title": "Red, White & Royal Blue",
+      "year": 2023,
+      "type": "movie",
+      "profile": "en",
+      "imdb_id": "tt10168670",
+      "tmdb_id": 968051
+    },
+    "Requiem for a Dream (2000)": {
+      "title": "Requiem for a Dream",
+      "year": 2000,
+      "type": "movie",
+      "profile": "en",
+      "imdb_id": "tt0180093",
+      "tmdb_id": 641
+    },
+    "Reservoir Dogs (1992)": {
+      "title": "Reservoir Dogs",
+      "year": 1992,
+      "type": "movie",
+      "profile": "en",
+      "imdb_id": "tt0105236",
+      "tmdb_id": 500
+    },
+    "Se7en (1995)": {
+      "title": "Se7en",
+      "year": 1995,
+      "type": "movie",
+      "profile": "en",
+      "imdb_id": "tt0114369",
+      "tmdb_id": 807
+    },
+    "Sherlock Jr. (1924)": {
+      "title": "Sherlock Jr.",
+      "year": 1924,
+      "type": "movie",
+      "profile": "en",
+      "imdb_id": "tt0015324",
+      "tmdb_id": 992
+    },
+    "Singin' in the Rain (1952)": {
+      "title": "Singin' in the Rain",
+      "year": 1952,
+      "type": "movie",
+      "profile": "en",
+      "imdb_id": "tt0045152",
+      "tmdb_id": 872
+    },
+    "Society of the Snow (2023)": {
+      "title": "Society of the Snow",
+      "title_native": "La sociedad de la nieve",
+      "year": 2023,
+      "type": "movie",
+      "profile": "en",
+      "imdb_id": "tt16277242",
+      "tmdb_id": 906126,
+      "notes": "Spanish-language."
+    },
+    "Spotlight (2015)": {
+      "title": "Spotlight",
+      "year": 2015,
+      "type": "movie",
+      "profile": "en",
+      "imdb_id": "tt1895587",
+      "tmdb_id": 314365
+    },
+    "Stand by Me (1986)": {
+      "title": "Stand by Me",
+      "year": 1986,
+      "type": "movie",
+      "profile": "en",
+      "imdb_id": "tt0092005",
+      "tmdb_id": 235
+    },
+    "Swapped (2026)": {
+      "title": "Swapped",
+      "year": 2026,
+      "type": "movie",
+      "profile": "en",
+      "needs_lookup": true
+    },
+    "TAYLOR SWIFT THE ERAS TOUR (2023)": {
+      "title": "Taylor Swift: The Eras Tour",
+      "year": 2023,
+      "type": "movie",
+      "profile": "en",
+      "imdb_id": "tt29623480",
+      "tmdb_id": 1166896
+    },
+    "The Big Lebowski (1998)": {
+      "title": "The Big Lebowski",
+      "year": 1998,
+      "type": "movie",
+      "profile": "en",
+      "imdb_id": "tt0118715",
+      "tmdb_id": 115
+    },
+    "The Boy, the Mole, the Fox and the Horse (2022)": {
+      "title": "The Boy, the Mole, the Fox and the Horse",
+      "year": 2022,
+      "type": "movie",
+      "profile": "en",
+      "imdb_id": "tt22875700",
+      "tmdb_id": 1029955
+    },
+    "The Departed (2006)": {
+      "title": "The Departed",
+      "year": 2006,
+      "type": "movie",
+      "profile": "en",
+      "imdb_id": "tt0407887",
+      "tmdb_id": 1422
+    },
+    "The Elephant Man (1980)": {
+      "title": "The Elephant Man",
+      "year": 1980,
+      "type": "movie",
+      "profile": "en",
+      "imdb_id": "tt0080678",
+      "tmdb_id": 1955
+    },
+    "The Fabelmans (2022)": {
+      "title": "The Fabelmans",
+      "year": 2022,
+      "type": "movie",
+      "profile": "en",
+      "imdb_id": "tt14208870",
+      "tmdb_id": 661539
+    },
+    "The Fallout (2021)": {
+      "title": "The Fallout",
+      "year": 2021,
+      "type": "movie",
+      "profile": "en",
+      "imdb_id": "tt13320622",
+      "tmdb_id": 822837
+    },
+    "The Father (2020)": {
+      "title": "The Father",
+      "year": 2020,
+      "type": "movie",
+      "profile": "en",
+      "imdb_id": "tt10272386",
+      "tmdb_id": 614917
+    },
+    "The Great Dictator (1940)": {
+      "title": "The Great Dictator",
+      "year": 1940,
+      "type": "movie",
+      "profile": "en",
+      "imdb_id": "tt0032553",
+      "tmdb_id": 914
+    },
+    "The Mitchells vs. the Machines (2021)": {
+      "title": "The Mitchells vs. the Machines",
+      "year": 2021,
+      "type": "movie",
+      "profile": "en",
+      "imdb_id": "tt7979580",
+      "tmdb_id": 501170
+    },
+    "The Place Promised in Our Early Days (2004)": {
+      "title": "The Place Promised in Our Early Days",
+      "title_native": "雲のむこう、約束の場所",
+      "year": 2004,
+      "type": "movie",
+      "profile": "ja",
+      "anilist_id": 1623,
+      "imdb_id": "tt0455296",
+      "tmdb_id": 13373
+    },
+    "The Punisher One Last Kill (2026)": {
+      "title": "The Punisher: One Last Kill",
+      "year": 2026,
+      "type": "movie",
+      "profile": "en",
+      "needs_lookup": true
+    },
+    "The Shawshank Redemption (1994)": {
+      "title": "The Shawshank Redemption",
+      "year": 1994,
+      "type": "movie",
+      "profile": "en",
+      "imdb_id": "tt0111161",
+      "tmdb_id": 278
+    },
+    "The Sixth Sense (1999)": {
+      "title": "The Sixth Sense",
+      "year": 1999,
+      "type": "movie",
+      "profile": "en",
+      "imdb_id": "tt0167404",
+      "tmdb_id": 745
+    },
+    "The Sting (1973)": {
+      "title": "The Sting",
+      "year": 1973,
+      "type": "movie",
+      "profile": "en",
+      "imdb_id": "tt0070735",
+      "tmdb_id": 9277
+    },
+    "The Super Mario Galaxy Movie (2026)": {
+      "title": "The Super Mario Galaxy Movie",
+      "year": 2026,
+      "type": "movie",
+      "profile": "en",
+      "needs_lookup": true
+    },
+    "The Usual Suspects (1995)": {
+      "title": "The Usual Suspects",
+      "year": 1995,
+      "type": "movie",
+      "profile": "en",
+      "imdb_id": "tt0114814",
+      "tmdb_id": 629
+    },
+    "The Wandering Earth II (2023)": {
+      "title": "The Wandering Earth II",
+      "title_native": "流浪地球2",
+      "year": 2023,
+      "type": "movie",
+      "profile": "en",
+      "imdb_id": "tt15400972",
+      "tmdb_id": 858025,
+      "notes": "Chinese sci-fi; en profile."
+    },
+    "Thirteen Lives (2022)": {
+      "title": "Thirteen Lives",
+      "year": 2022,
+      "type": "movie",
+      "profile": "en",
+      "imdb_id": "tt11271038",
+      "tmdb_id": 758330
+    },
+    "Triangle of Sadness (2022)": {
+      "title": "Triangle of Sadness",
+      "year": 2022,
+      "type": "movie",
+      "profile": "en",
+      "imdb_id": "tt7322224",
+      "tmdb_id": 823754
+    },
+    "V for Vendetta (2006)": {
+      "title": "V for Vendetta",
+      "year": 2006,
+      "type": "movie",
+      "profile": "en",
+      "imdb_id": "tt0434409",
+      "tmdb_id": 752
+    },
+    "Violet Evergarden The Movie (2020)": {
+      "title": "Violet Evergarden: The Movie",
+      "title_native": "劇場版 ヴァイオレット・エヴァーガーデン",
+      "year": 2020,
+      "type": "movie",
+      "profile": "ja",
+      "anilist_id": 103047,
+      "imdb_id": "tt8503618",
+      "tmdb_id": 635256,
+      "needs_lookup": true,
+      "notes": "Verify IMDb ID — collision risk with Pancreas tt."
+    },
+    "Your Name. (2016)": {
+      "title": "Your Name.",
+      "title_native": "君の名は。",
+      "year": 2016,
+      "type": "movie",
+      "profile": "ja",
+      "anilist_id": 21519,
+      "imdb_id": "tt5311514",
+      "tmdb_id": 372058
+    },
+
+    "길복순 Kill Boksoon 2023.E00.230331.WEB-DL.HDR-H265.1080p.WDYM.mkv": {
+      "title": "Kill Boksoon",
+      "title_native": "길복순",
+      "year": 2023,
+      "type": "movie",
+      "profile": "ko",
+      "imdb_id": "tt22041054",
+      "tmdb_id": 935553,
+      "notes": "Bare .mkv file at root, not in a folder. Script handles bare files via filename match."
+    },
+    "#살아있다 #ALIVE 2020.E00.200624.HDRip.H264.1080p-Unknown.mp4": {
+      "title": "#Alive",
+      "title_native": "#살아있다",
+      "year": 2020,
+      "type": "movie",
+      "profile": "ko",
+      "imdb_id": "tt11697274",
+      "tmdb_id": 728254
+    },
+    "범죄도시2 The Roundup 2022.E00.220518.HDRip.H264.720p.LAON.mp4": {
+      "title": "The Roundup",
+      "title_native": "범죄도시2",
+      "year": 2022,
+      "type": "movie",
+      "profile": "ko",
+      "imdb_id": "tt15514498",
+      "tmdb_id": 893760
+    }
+  }
+}

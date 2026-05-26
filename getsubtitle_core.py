@@ -3611,10 +3611,19 @@ _EPISODE_PATTERNS = (
     re.compile(r"\b(\d{1,2})x(\d{1,3})\b", re.I),
 )
 # Single-language token before .srt, with optional ".mt" suffix for
-# machine-translated files. Examples:
-#   "Show.S01E07.ja.srt"      -> ("ja", "")
-#   "Show.S01E07.ko.mt.srt"   -> ("ko", ".mt")
-_LANG_FILENAME_PATTERN = re.compile(r"\.([a-z]{2,3})(\.mt)?\.srt$", re.I)
+# machine-translated files. Sonarr-style HI/CC/SDH/forced tags between the
+# language code and `.srt` are stripped so .ja.hi.srt parses as lang=ja, not
+# lang=hi. Examples:
+#   "Show.S01E07.ja.srt"          -> ("ja", "")
+#   "Show.S01E07.ko.mt.srt"       -> ("ko", ".mt")
+#   "Show.S01E07.ja.hi.srt"       -> ("ja", "")
+#   "Show.S01E07.en.cc.srt"       -> ("en", "")
+#   "Show.S01E07.es.sdh.srt"      -> ("es", "")
+#   "Show.S01E07.fr.forced.srt"   -> ("fr", "")
+_LANG_FILENAME_PATTERN = re.compile(
+    r"\.([a-z]{2,3})(\.mt)?(?:\.(?:hi|cc|sdh|forced))?\.srt$",
+    re.I,
+)
 # Combined output: hyphen-joined language token before .srt.
 # Examples: ".ja-ko.srt", ".en-es-ko.srt", ".ja-furigana-ko.srt"
 _COMBINED_OUTPUT_PATTERN = re.compile(
