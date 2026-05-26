@@ -6,6 +6,7 @@ What's shipped, what's experimental, what's planned next, and what's intentional
 
 Highlights from the most recent round of work:
 
+- **`batch` subcommand absorbed into the main CLI; standalone `/batch/` folder removed.** `getsubtitle batch fetch [PATH]` and `getsubtitle batch merge [PATH]` walk the CWD, auto-detect each show's origin language via TMDB (`original_language`) with a character-set fallback when no key is configured, and shell out to the regular `getsubtitle` commands per profile. No `reference.json` required — title parsing, profile detection, and ID resolution all happen at runtime. Same `--run` (dry-run by default), `--mt-engine`, `--format`, and `--profile ja|ko|en` override flags. Both `getsubtitle batch --help` and `getsubtitle --help batch` route to the new topic page.
 - **Hulu / Max (HBO) / Disney+ / Apple TV+ / Paramount+ / Peacock / Prime Video URL recognition.** Single generic handler that pulls a title from the URL slug and (where available) scrapes `og:title` from the page. The TMDB enrichment hook then resolves the title to IMDb/TMDB IDs so the existing Wyzie path lights up. Auth-wall boilerplate ("Sign in to Hulu" etc.) is filtered out — never used as a show title.
 - **`--release-source` understands the new services.** `normalized_release_source()` now detects HULU / HMAX / MAX / DSNP / ATVP / PMTP / PCOK release tags. `--release-source auto` (the default) infers from the URL host, so pasting a `hulu.com` URL automatically prefers HULU-tagged subs over generic web-dl rips.
 - **TMDB title-resolution support in the main app.** `getsubtitle --set-key tmdb` adds TMDB to the keyring alongside Jimaku/Wyzie/DeepL. When you pass `--title "..."` without a URL or IDs, the main flow auto-resolves IMDb/TMDB IDs from TMDB so Wyzie has solid IDs to search. Japanese-origin results are skipped when `ja` is requested, preserving the AniList → Jimaku path for anime.
@@ -37,7 +38,7 @@ Highlights from the most recent round of work:
 ### CLI
 
 - Cross-platform Python CLI with editable install support
-- Subcommands: `combine` (with internal dispatch; existing `getsubtitle URL ...` shape unchanged)
+- Subcommands: `combine`, `translate`, `modify`, `batch fetch`/`batch merge`, `config` (existing `getsubtitle URL ...` shape unchanged)
 - Topic-based help: `--help`, `--help download|combine|translate|modify|config|keys|furigana|batch|advanced`
 - Guided API key setup/reset for Jimaku, Wyzie, DeepL, TMDB (`--set-key`, `--reset-key`)
 - macOS Keychain for API keys; env-var fallback on Linux/Windows

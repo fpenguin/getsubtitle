@@ -125,13 +125,14 @@ getsubtitle --help download   # URL-based download flow
 getsubtitle --help combine    # Combine subcommand
 getsubtitle --help translate  # Machine translation (also: getsubtitle translate PATH)
 getsubtitle --help modify     # Post-process existing SRTs on disk
+getsubtitle --help batch      # Bulk fetch/merge over a whole library
 getsubtitle --help config     # user_settings.toml defaults
 getsubtitle --help keys       # API key setup
 getsubtitle --help furigana   # Japanese readings
 getsubtitle --help advanced   # Troubleshooting, experimental flags
 ```
 
-`getsubtitle combine --help`, `getsubtitle translate --help`, and `getsubtitle modify --help` (or each with no args) all route to the matching topic page.
+`getsubtitle combine --help`, `getsubtitle translate --help`, `getsubtitle modify --help`, and `getsubtitle batch --help` (or each with no args) all route to the matching topic page.
 
 ## Configuration
 
@@ -327,6 +328,35 @@ getsubtitle combine ~/Movies/Subtitles/... -l ja,ko,en --format vtt
 # Broad-compatibility fallback when VTT is not wanted
 getsubtitle combine ~/Movies/Subtitles/... -l ja,ko,en --format srt
 ```
+
+### Bulk over a whole library
+
+For Plex-style libraries with many shows, the `batch` subcommand walks
+the current directory, auto-detects each show's origin language via
+TMDB, and runs the right fetch / combine chain per profile:
+
+```sh
+cd /path/to/your/plex/library
+
+# Dry-run plan (default)
+getsubtitle batch fetch
+
+# Actually fetch
+getsubtitle batch fetch --run
+
+# Build combined study files (smi-to-srt + combine per profile)
+getsubtitle batch merge --run --format vtt
+```
+
+Profiles are auto-detected:
+
+- **ja** (Japanese-origin): fetch `ko`, then MT `ja→ko` if missing; merge → `ja+ko` master ja with furigana
+- **ko** (Korean-origin): fetch `ja`, then MT `ko→ja` if missing; merge → `ko+ja` and `ko+ja+en+es` quad
+- **en** (English / Western / other): fetch `es,ko`, MT from `en` if missing; merge → `en+es` dual AND `ja+ko+en+es` quad
+
+Detection works via TMDB's `original_language` field (set up the key once with `getsubtitle --set-key tmdb`). Without a TMDB key, falls back to character-set heuristics — works for Japanese titles in any folder language, falls back to "hangul-only → ko, otherwise en" for the rest. Override per-run with `--profile ja|ko|en`.
+
+See `getsubtitle --help batch` for the full subcommand documentation.
 
 ### Broadcast-caption noise
 

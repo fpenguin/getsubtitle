@@ -3265,19 +3265,281 @@ def test_batch_topic_help_renders_with_expected_content():
         rc = MODULE["main"](["--help", "batch"])
     text = out.getvalue()
     assert rc == 0
-    # Anchor on the most identifying lines so unrelated copy edits don't
-    # flap the test, but core structure is asserted.
-    assert "batch/reference.json" in text
-    assert "batch/fetch.py" in text
-    assert "batch/merge.py" in text
-    assert "batch/lookup.py" in text
+    # Subcommand shape, sub-actions, profile labels, quickstart.
+    assert "getsubtitle batch fetch" in text
+    assert "getsubtitle batch merge" in text
     assert "Profiles" in text
     assert "Quickstart" in text
+    assert "--set-key tmdb" in text  # recommended setup is surfaced
     # The three profile names should be documented.
     for tag in ("ja", "ko", "en"):
-        # Each appears as a profile label; a simple substring search is
-        # fine because the topic prose mentions them in multiple places.
         assert tag in text
+
+
+# ---------------------------------------------------------------------------
+# batch subcommand: helpers + dispatch
+# ---------------------------------------------------------------------------
+
+
+def test_parse_season_from_folder_name_recognises_common_forms():
+    p = MODULE["parse_season_from_folder_name"]
+    # English Plex / Sonarr forms
+    assert p("Season 01") == 1
+    assert p("Season 1") == 1
+    assert p("Season 5") == 5
+    # Korean form
+    assert p("1기") == 1
+    assert p("2기") == 2
+    assert p("3기") == 3
+    # Compact form
+    assert p("S01") == 1
+    assert p("s2") == 2
+    # Non-season folder names return None.
+    assert p("MF Ghost") is None
+    assert p("Moving (2023)") is None
+    assert p("") is None
+
+
+def test_detect_show_and_season_handles_three_layouts():
+    import tempfile
+    from pathlib import Path
+    d = MODULE["detect_show_and_season"]
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        # Layout 1: Show/Season 01/video.mkv
+        s1 = root / "Show" / "Season 01"
+        s1.mkdir(parents=True)
+        show, season = d(s1, root)
+        assert show.name == "Show"
+        assert season == 1
+        # Layout 2: Show/1기/video.mkv (Korean form)
+        s2 = root / "Show2" / "1기"
+        s2.mkdir(parents=True)
+        show, season = d(s2, root)
+        assert show.name == "Show2"
+        assert season == 1
+        # Layout 3: Show/video.mkv (no season subdir)
+        s3 = root / "FlatShow"
+        s3.mkdir(parents=True)
+        show, season = d(s3, root)
+        assert show.name == "FlatShow"
+        assert season is None
+
+
+def test_detect_profile_from_title_kana_fast_path():
+    # Japanese kana → ja regardless of TMDB. Fast path; no key needed.
+    MODULE["_PROFILE_CACHE"].clear()
+    assert MODULE["detect_profile_from_title"]("響け！ユーフォニアム") == "ja"
+    assert MODULE["detect_profile_from_title"]("チ。") == "ja"
+
+
+def test_detect_profile_from_title_no_tmdb_falls_back_to_charset():
+    # No TMDB key configured → fall back to Hangul / Latin heuristics.
+    import os
+    MODULE["_PROFILE_CACHE"].clear()
+    saved = os.environ.pop("TMDB_API_KEY", None)
+    try:
+        assert MODULE["detect_profile_from_title"]("기생수") == "ko"
+        assert MODULE["detect_profile_from_title"]("Moving (2023)") == "en"
+        assert MODULE["detect_profile_from_title"]("The Witcher") == "en"
+    finally:
+        if saved is not None:
+            os.environ["TMDB_API_KEY"] = saved
+
+
+def test_detect_profile_from_title_uses_tmdb_original_language():
+    # When TMDB returns original_language=ja for a Korean folder name, we
+    # should classify it as ja (this is the whole point of TMDB lookup —
+    # Korean folder names of Japanese anime get the right profile).
+    import os
+    MODULE["_PROFILE_CACHE"].clear()
+    os.environ["TMDB_API_KEY"] = "dummy"
+    try:
+        # Patch tmdb_search_tv to simulate "Japanese anime, Korean folder name".
+        scope = MODULE["detect_profile_from_title"].__globals__
+        saved_tv = scope["tmdb_search_tv"]
+        scope["tmdb_search_tv"] = lambda title, api_key=None: {
+            "tmdb_id": "1", "imdb_id": "tt1", "title": "Hibike",
+            "year": 2015, "original_language": "ja",
+        }
+        try:
+            assert MODULE["detect_profile_from_title"]("유포니움") == "ja"
+        finally:
+            scope["tmdb_search_tv"] = saved_tv
+    finally:
+        del os.environ["TMDB_API_KEY"]
+        MODULE["_PROFILE_CACHE"].clear()
+
+
+def test_detect_profile_from_title_caches_per_title():
+    # Second call for the same title must not re-hit TMDB.
+    import os
+    MODULE["_PROFILE_CACHE"].clear()
+    os.environ["TMDB_API_KEY"] = "dummy"
+    call_count = [0]
+    scope = MODULE["detect_profile_from_title"].__globals__
+    saved_tv = scope["tmdb_search_tv"]
+    saved_movie = scope["tmdb_search_movie"]
+    def fake_tv(*a, **kw):
+        call_count[0] += 1
+        return {"tmdb_id": "1", "imdb_id": "tt1", "title": "X", "year": 2020, "original_language": "en"}
+    scope["tmdb_search_tv"] = fake_tv
+    scope["tmdb_search_movie"] = lambda *a, **kw: None
+    try:
+        MODULE["detect_profile_from_title"]("Some Show")
+        MODULE["detect_profile_from_title"]("Some Show")
+        MODULE["detect_profile_from_title"]("Some Show")
+        assert call_count[0] == 1, "expected cache to short-circuit subsequent calls"
+    finally:
+        scope["tmdb_search_tv"] = saved_tv
+        scope["tmdb_search_movie"] = saved_movie
+        del os.environ["TMDB_API_KEY"]
+        MODULE["_PROFILE_CACHE"].clear()
+
+
+def test_batch_walk_targets_finds_folders_and_bare_files():
+    import tempfile
+    from pathlib import Path
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        # A Plex-style show with a Season subdir
+        (root / "Show A" / "Season 01").mkdir(parents=True)
+        (root / "Show A" / "Season 01" / "ep01.mkv").touch()
+        # A flat show
+        (root / "Show B").mkdir()
+        (root / "Show B" / "ep01.mkv").touch()
+        # A bare movie at root
+        (root / "movie.mkv").touch()
+        # A folder with no videos — should be ignored
+        (root / "no-videos").mkdir()
+        (root / "no-videos" / "readme.txt").touch()
+
+        targets = MODULE["_batch_walk_targets"](root)
+        names = sorted((t[0].name, t[1].name, t[2]) for t in targets)
+    # Three targets: the two video folders + the bare file.
+    assert len(names) == 3
+    # Find each by its leaf path component.
+    folder_a, show_a, season_a = next(t for t in names if t[0] == "Season 01")
+    folder_b, show_b, season_b = next(t for t in names if t[0] == "Show B")
+    bare_name, bare_show, bare_season = next(t for t in names if t[0] == "movie.mkv")
+    assert show_a == "Show A" and season_a == 1
+    assert show_b == "Show B" and season_b is None
+    assert bare_show == "movie.mkv" and bare_season is None
+
+
+def test_batch_main_dispatches_to_fetch_or_merge():
+    # We don't run real subprocess calls — patch subprocess.run to capture.
+    import tempfile, io, contextlib
+    from pathlib import Path
+    scope = MODULE["batch_main"].__globals__
+    saved_run = scope["subprocess"].run
+
+    captured: list[list[str]] = []
+    class _FakeResult:
+        returncode = 0
+    def fake_run(args, **kwargs):
+        captured.append(args)
+        return _FakeResult()
+    scope["subprocess"].run = fake_run
+
+    # Also patch profile detection to a known value so the test doesn't
+    # depend on TMDB.
+    saved_detect = scope["detect_profile_from_title"]
+    scope["detect_profile_from_title"] = lambda title, year=None: "en"
+
+    try:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "Show A").mkdir()
+            (root / "Show A" / "ep01.mkv").touch()
+            with _isolated_config(None):
+                # fetch path
+                with contextlib.redirect_stdout(io.StringIO()):
+                    rc = MODULE["main"](["batch", "fetch", str(root), "--mt-engine", ""])
+                assert rc == 0
+                fetch_calls = [c for c in captured if "modify" not in c and "translate" not in c]
+                assert any("Show A" in " ".join(c) for c in fetch_calls), captured
+                captured.clear()
+                # merge path
+                with contextlib.redirect_stdout(io.StringIO()):
+                    rc = MODULE["main"](["batch", "merge", str(root)])
+                assert rc == 0
+                assert any("combine" in c for c in captured), captured
+    finally:
+        scope["subprocess"].run = saved_run
+        scope["detect_profile_from_title"] = saved_detect
+
+
+def test_batch_main_profile_override_applies_to_all_folders():
+    import tempfile, io, contextlib
+    from pathlib import Path
+    scope = MODULE["batch_main"].__globals__
+    saved_run = scope["subprocess"].run
+    captured_langs: list[str] = []
+    class _FakeResult:
+        returncode = 0
+    def fake_run(args, **kwargs):
+        # Pull the -l value so we can verify the profile actually drove it.
+        for i, a in enumerate(args):
+            if a == "-l" and i + 1 < len(args):
+                captured_langs.append(args[i + 1])
+        return _FakeResult()
+    scope["subprocess"].run = fake_run
+
+    # Force the detector to ja so we'd normally get -l ko fetches, but
+    # --profile en should override and give us -l es,ko fetches.
+    saved_detect = scope["detect_profile_from_title"]
+    scope["detect_profile_from_title"] = lambda title, year=None: "ja"
+    try:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "Show A").mkdir()
+            (root / "Show A" / "ep01.mkv").touch()
+            with _isolated_config(None):
+                with contextlib.redirect_stdout(io.StringIO()):
+                    MODULE["main"]([
+                        "batch", "fetch", str(root),
+                        "--profile", "en", "--mt-engine", "",
+                    ])
+    finally:
+        scope["subprocess"].run = saved_run
+        scope["detect_profile_from_title"] = saved_detect
+    # en profile fetches es+ko, not ko alone.
+    assert any("es,ko" in lv for lv in captured_langs), captured_langs
+
+
+def test_batch_main_dry_run_appends_dry_run_to_every_call():
+    import tempfile, io, contextlib
+    from pathlib import Path
+    scope = MODULE["batch_main"].__globals__
+    saved_run = scope["subprocess"].run
+    all_args: list[list[str]] = []
+    class _FakeResult:
+        returncode = 0
+    def fake_run(args, **kwargs):
+        all_args.append(args)
+        return _FakeResult()
+    scope["subprocess"].run = fake_run
+
+    saved_detect = scope["detect_profile_from_title"]
+    scope["detect_profile_from_title"] = lambda title, year=None: "ja"
+    try:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "Show A").mkdir()
+            (root / "Show A" / "ep01.mkv").touch()
+            with _isolated_config(None):
+                with contextlib.redirect_stdout(io.StringIO()):
+                    # No --run flag → dry-run default.
+                    MODULE["main"]([
+                        "batch", "fetch", str(root), "--mt-engine", "",
+                    ])
+    finally:
+        scope["subprocess"].run = saved_run
+        scope["detect_profile_from_title"] = saved_detect
+    assert all_args  # at least one call happened
+    for args in all_args:
+        assert "--dry-run" in args, f"expected --dry-run in {args}"
 
 
 def test_parse_furigana_formats_default_is_srt_only():

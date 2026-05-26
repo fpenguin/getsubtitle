@@ -8,6 +8,7 @@ import json
 import os
 import getpass
 import re
+import shlex
 import shutil
 import subprocess
 import sys
@@ -5209,6 +5210,383 @@ def modify_main(argv: list[str]) -> int:
     return 0
 
 
+# ===========================================================================
+# batch subcommand — walk a library, fetch / merge per auto-detected profile
+# ===========================================================================
+# Two sub-actions:
+#   batch fetch  — walks CWD (or --root), per show folder: derive title,
+#                  detect origin language via TMDB original_language,
+#                  shell out to `getsubtitle URL=None --title <T> -l <L>` with
+#                  the right language set, optionally MT fallback via Ollama.
+#   batch merge  — walks CWD, per show folder: smi-to-srt convert, then
+#                  combine per profile (ja/ko master + furigana; en master
+#                  produces both en+es dual and ja+ko+en+es quad).
+#
+# Profile detection is fully runtime — no reference.json needed. TMDB key is
+# strongly recommended; without it, batch falls back to a char-set heuristic
+# (Japanese kana → ja; Hangul-only → ko; otherwise → en). The heuristic
+# correctly handles the common "Japanese anime stored in a Korean folder"
+# case via the TMDB lookup, which knows the show's true origin language.
+
+_BATCH_VIDEO_EXTS = {".mp4", ".mkv", ".avi", ".webm", ".m2ts", ".ts", ".wmv", ".mov", ".m4v"}
+_BATCH_SUBTITLE_EXTS = {".srt", ".smi", ".ass", ".vtt", ".ssa"}
+
+
+def _has_kana(text: str) -> bool:
+    """True if text contains Hiragana or Katakana — a strong signal that the
+    show is Japanese-origin (Korean / English titles never use these)."""
+    return any("぀" <= c <= "ゟ" or "゠" <= c <= "ヿ" for c in text)
+
+
+def _has_hangul(text: str) -> bool:
+    """True if text contains Hangul syllables."""
+    return any("가" <= c <= "힯" for c in text)
+
+
+_PROFILE_CACHE: dict[str, str] = {}
+
+
+def detect_profile_from_title(title: str, year: int | None = None) -> str:
+    """Return 'ja' | 'ko' | 'en' based on TMDB's original_language for the
+    show, with a quick character-set shortcut and fallback when no TMDB
+    key is configured.
+
+    Cached per title for the lifetime of the process."""
+    cache_key = f"{title}|{year or ''}"
+    if cache_key in _PROFILE_CACHE:
+        return _PROFILE_CACHE[cache_key]
+
+    # Fast path: native Japanese characters → definitely ja-origin.
+    if _has_kana(title):
+        _PROFILE_CACHE[cache_key] = "ja"
+        return "ja"
+
+    # Try TMDB if available — it knows the true origin language even when
+    # the folder name is in Korean / English for a Japanese show.
+    api_key = get_provider_api_key("tmdb")
+    if api_key:
+        hit = (tmdb_search_tv(title, api_key=api_key)
+               or tmdb_search_movie(title, year=year, api_key=api_key))
+        if hit:
+            lang = (hit.get("original_language") or "").lower()
+            if lang == "ja":
+                _PROFILE_CACHE[cache_key] = "ja"
+                return "ja"
+            if lang == "ko":
+                _PROFILE_CACHE[cache_key] = "ko"
+                return "ko"
+            _PROFILE_CACHE[cache_key] = "en"
+            return "en"
+
+    # No TMDB / no hit → guess from character set. Korean folder names are
+    # common in the project's primary use case, so Hangul-only → ko is a
+    # reasonable last-resort default.
+    if _has_hangul(title):
+        _PROFILE_CACHE[cache_key] = "ko"
+        return "ko"
+    _PROFILE_CACHE[cache_key] = "en"
+    return "en"
+
+
+_SEASON_FOLDER_PATTERNS = (
+    # English: "Season 01", "Season 1", "Season 5"
+    re.compile(r"^season\s*0*(\d+)$", re.I),
+    # Korean: "1기", "2기" (literally "N-th season")
+    re.compile(r"^(\d+)\s*기$"),
+    # Compact: "S01", "S1", "s02"
+    re.compile(r"^s\s*0*(\d+)$", re.I),
+)
+
+
+def parse_season_from_folder_name(name: str) -> int | None:
+    """Pull a season number out of a Plex-style season subfolder name.
+    Returns None when the folder name doesn't match a known season pattern
+    (i.e. when the folder IS the show, not a season subdir)."""
+    stripped = name.strip()
+    for pat in _SEASON_FOLDER_PATTERNS:
+        m = pat.match(stripped)
+        if m:
+            return int(m.group(1))
+    return None
+
+
+def detect_show_and_season(folder: "Path", root: "Path") -> tuple["Path", int | None]:
+    """Given a leaf folder containing video files, decide which folder is
+    the SHOW and what season number this is. Handles three layouts:
+      Show/Season 01/        → show=Show, season=1
+      Show/1기/              → show=Show, season=1 (Korean form)
+      Show/                  → show=Show, season=None (single-folder shows)
+    """
+    season = parse_season_from_folder_name(folder.name)
+    if season is not None and folder.parent != root and folder.parent.exists():
+        return folder.parent, season
+    return folder, None
+
+
+def _batch_find_video_folders(root: "Path") -> list["Path"]:
+    """Return SUB-folders under root that directly contain video files.
+
+    Skips `root` itself — videos sitting at the top level are handled by
+    `_batch_find_bare_video_files` so they don't get double-counted (and
+    so the library root isn't treated as a show folder)."""
+    folders: set["Path"] = set()
+    for p in root.rglob("*"):
+        if p.is_file() and p.suffix.lower() in _BATCH_VIDEO_EXTS:
+            if p.parent == root:
+                continue
+            folders.add(p.parent)
+    return sorted(folders)
+
+
+def _batch_find_bare_video_files(root: "Path") -> list["Path"]:
+    """Top-level loose video files (e.g. one-off movies dumped at root)."""
+    if not root.is_dir():
+        return []
+    return sorted(
+        p for p in root.iterdir()
+        if p.is_file() and p.suffix.lower() in _BATCH_VIDEO_EXTS
+    )
+
+
+def _batch_list_smi_files(folder: "Path") -> list["Path"]:
+    if not folder.is_dir():
+        return []
+    return sorted(p for p in folder.iterdir()
+                  if p.is_file() and p.suffix.lower() == ".smi")
+
+
+def _batch_run(cmd: list[str], dry_run: bool) -> int:
+    """Run a getsubtitle subprocess, printing the shell-quoted command first.
+    Used so the user can copy-paste any single line if something looks off."""
+    args = list(cmd)
+    if dry_run and "--dry-run" not in args:
+        args.append("--dry-run")
+    print("  $ " + " ".join(shlex.quote(a) for a in args))
+    return subprocess.run(args, check=False).returncode
+
+
+def _batch_heading(text: str) -> None:
+    bar = "─" * max(40, len(text))
+    print()
+    print(bar)
+    print(text)
+    print(bar)
+
+
+# Per-profile fetch language preference. Order matters — first to succeed
+# is what providers return; MT fallback fills any that come back empty.
+_BATCH_FETCH_LANGS = {
+    "ja": ["ko"],          # JP master → fetch Korean
+    "ko": ["ja"],          # KR master → fetch Japanese
+    "en": ["es", "ko"],    # EN master → fetch Spanish + Korean
+}
+_BATCH_MT_SOURCE = {"ja": "ja", "ko": "ko", "en": "en"}
+
+
+def build_batch_parser() -> argparse.ArgumentParser:
+    p = argparse.ArgumentParser(
+        prog="getsubtitle batch",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        description=(
+            "Bulk subtitle workflows over a library. Walk the current "
+            "directory, auto-detect each show's origin language via TMDB, "
+            "and run the right `getsubtitle` commands per profile."
+        ),
+        epilog=textwrap.dedent(
+            """
+            Examples:
+              cd /path/to/your/plex/library
+              getsubtitle batch fetch                  # dry-run (default)
+              getsubtitle batch fetch --run            # actually fetch
+              getsubtitle batch merge --run --format vtt
+              getsubtitle batch fetch --root ~/Movies/Subtitles --run
+
+            Profiles (auto-detected from TMDB original_language):
+              ja  Japanese-origin → fetch ko; MT ja→ko fallback
+              ko  Korean-origin   → fetch ja; MT ko→ja fallback
+              en  English / other → fetch es+ko; MT from en fallback
+            """
+        ),
+    )
+    p.add_argument("action", choices=["fetch", "merge"],
+                   help="fetch: download missing subs. merge: smi→srt convert + combine.")
+    p.add_argument("paths", nargs="*", metavar="PATH",
+                   help="Library root(s) to walk. Defaults to CWD if omitted.")
+    p.add_argument("--run", action="store_true",
+                   help="Actually run. Default is dry-run (every getsubtitle call gets --dry-run appended).")
+    p.add_argument("--root", default=None,
+                   help="Alternative spelling of the positional PATH argument.")
+    p.add_argument("--mt-engine", default="ollama",
+                   choices=["", "argos", "ollama", "deepl"],
+                   help="(fetch only) Engine for the MT fallback pass. Use '' to skip MT. Default: ollama.")
+    p.add_argument("--format", default=None, choices=["srt", "vtt"],
+                   help="(merge only) Combined output format. Default: getsubtitle's default (srt).")
+    p.add_argument("--profile", default=None, choices=["ja", "ko", "en"],
+                   help="Override auto-detected profile for every folder. Useful when TMDB is unavailable.")
+    return p
+
+
+def _batch_resolve_root(args) -> "Path":
+    """Pick the root directory from positional / --root / CWD, in that order."""
+    if args.paths:
+        return Path(args.paths[0]).expanduser().resolve()
+    if args.root:
+        return Path(args.root).expanduser().resolve()
+    return Path.cwd().resolve()
+
+
+def _batch_describe_target(target: "Path", show_folder: "Path", season: int | None,
+                            profile: str) -> str:
+    name = str(target)
+    if show_folder != target:
+        name = f"{show_folder.name}  ({target.name})"
+    else:
+        name = show_folder.name
+    s = f" S{season:02d}" if season is not None else ""
+    return f"[{profile}]{s}  {name}"
+
+
+def _batch_fetch_one(target: "Path", show_folder: "Path", season: int | None,
+                     profile: str, mt_engine: str | None, dry_run: bool) -> None:
+    """Run fetch for one disk target (folder or bare file)."""
+    _batch_heading(_batch_describe_target(target, show_folder, season, profile))
+
+    title = show_folder.name
+    is_folder = target.is_dir()
+    output_dir = target if is_folder else target.parent
+
+    fetch_langs = _BATCH_FETCH_LANGS.get(profile, _BATCH_FETCH_LANGS["en"])
+    mt_source = _BATCH_MT_SOURCE.get(profile, "en")
+
+    # Step 1: human-quality fetch via providers.
+    fetch_cmd = [
+        sys.executable, "-m", "getsubtitle",
+    ] if not shutil.which("getsubtitle") else ["getsubtitle"]
+    fetch_cmd += ["--title", title]
+    if season is not None:
+        fetch_cmd += ["-s", str(season)]
+    fetch_cmd += ["-e", "all", "-l", ",".join(fetch_langs),
+                  "--layout", "flat", "-o", str(output_dir), "-y"]
+    print(f"  fetch: -l {','.join(fetch_langs)}")
+    _batch_run(fetch_cmd, dry_run=dry_run)
+
+    # Step 2: MT fallback for anything that came back empty. translate skips
+    # langs that already have a file on disk, so this is idempotent.
+    if mt_engine:
+        translate_cmd = (["getsubtitle"] if shutil.which("getsubtitle")
+                         else [sys.executable, "-m", "getsubtitle"])
+        translate_cmd += [
+            "translate", str(output_dir),
+            "-l", ",".join(fetch_langs),
+            "--mt-engine", mt_engine,
+            "--mt-source-lang", mt_source,
+        ]
+        print(f"  mt fallback: -l {','.join(fetch_langs)} via {mt_engine} ({mt_source}→targets)")
+        _batch_run(translate_cmd, dry_run=dry_run)
+
+
+def _batch_merge_one(target: "Path", show_folder: "Path", season: int | None,
+                     profile: str, fmt: str | None, dry_run: bool) -> None:
+    """Run smi-to-srt + combine for one folder."""
+    if not target.is_dir():
+        return  # combine works on folders, not bare files
+    _batch_heading(_batch_describe_target(target, show_folder, season, profile))
+
+    # Step 1: convert any .smi present to .ko.srt (no-op if none).
+    smis = _batch_list_smi_files(target)
+    if smis:
+        convert_cmd = (["getsubtitle"] if shutil.which("getsubtitle")
+                       else [sys.executable, "-m", "getsubtitle"])
+        convert_cmd += ["modify", str(target), "--convert", "smi-to-srt", "--force"]
+        print(f"  smi→srt: {len(smis)} .smi file(s)")
+        _batch_run(convert_cmd, dry_run=dry_run)
+
+    base = (["getsubtitle"] if shutil.which("getsubtitle")
+            else [sys.executable, "-m", "getsubtitle"])
+
+    def combine(langs: list[str], master: str, with_furigana: bool, label: str) -> None:
+        cmd = base + ["combine", str(target), "-l", ",".join(langs), "--master", master]
+        if with_furigana:
+            cmd.append("--furigana")
+        if fmt:
+            cmd += ["--format", fmt]
+        print(f"  combine ({label}): -l {','.join(langs)}  master={master}"
+              + ("  +furigana" if with_furigana else ""))
+        _batch_run(cmd, dry_run=dry_run)
+
+    if profile == "ja":
+        combine(["ja", "ko"], master="ja", with_furigana=True, label="JP master dual")
+    elif profile == "ko":
+        combine(["ko", "ja"], master="ko", with_furigana=True, label="KR master dual")
+        combine(["ko", "ja", "en", "es"], master="ko", with_furigana=True, label="KR master quad")
+    else:  # en (and zh/fr/etc treated as en for our workflow)
+        combine(["en", "es"], master="en", with_furigana=False, label="EN master dual")
+        combine(["ja", "ko", "en", "es"], master="en", with_furigana=True, label="EN master quad")
+
+
+def _batch_walk_targets(root: "Path") -> list[tuple["Path", "Path", int | None]]:
+    """Walk root and return (target, show_folder, season) tuples. `target`
+    is the folder containing the video files (the actual fetch/merge
+    destination); `show_folder` is the show name root (parent for Plex
+    Season subdirs). Bare top-level files appear as (file, file, None)."""
+    out: list[tuple["Path", "Path", int | None]] = []
+    for folder in _batch_find_video_folders(root):
+        show, season = detect_show_and_season(folder, root)
+        out.append((folder, show, season))
+    for f in _batch_find_bare_video_files(root):
+        out.append((f, f, None))
+    return out
+
+
+def batch_main(argv: list[str]) -> int:
+    args = build_batch_parser().parse_args(argv)
+    root = _batch_resolve_root(args)
+    if not root.is_dir():
+        raise CliError(f"batch root is not a directory: {root}")
+
+    dry_run = not args.run
+    mode = "DRY RUN (no writes)" if dry_run else "LIVE"
+    print(f"batch {args.action} — root: {root}")
+    print(f"mode: {mode}", end="")
+    if args.action == "fetch":
+        mt = args.mt_engine or None
+        print(f"  |  MT engine: {mt or 'disabled'}")
+    elif args.action == "merge":
+        print(f"  |  format: {args.format or 'default (srt)'}")
+    else:
+        print()
+
+    if args.profile:
+        print(f"profile override: {args.profile} (applies to every folder)")
+    elif not get_provider_api_key("tmdb"):
+        print("note: no TMDB key configured — profile auto-detection falls back to")
+        print("      character-set heuristics. Set a key for better accuracy:")
+        print("      getsubtitle --set-key tmdb")
+
+    targets = _batch_walk_targets(root)
+    if not targets:
+        print("\nNo video files found under that root.")
+        return 1
+
+    for target, show_folder, season in targets:
+        profile = args.profile or detect_profile_from_title(show_folder.name)
+        if args.action == "fetch":
+            _batch_fetch_one(
+                target=target, show_folder=show_folder, season=season,
+                profile=profile, mt_engine=(args.mt_engine or None),
+                dry_run=dry_run,
+            )
+        else:  # merge
+            _batch_merge_one(
+                target=target, show_folder=show_folder, season=season,
+                profile=profile, fmt=args.format, dry_run=dry_run,
+            )
+
+    print()
+    print(f"Processed {len(targets)} target(s).")
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(
         prog="getsubtitle",
@@ -6531,85 +6909,68 @@ Notes:
   Run `getsubtitle config --show` to see what's currently active.
 """,
     "batch": """\
-Bulk subtitle workflows over a whole library (batch/ scripts).
+Bulk subtitle workflows over a whole library.
 
-The batch/ directory ships three companion Python scripts that walk a
-Plex-style library, match each show/movie folder against a reference
-map, and shell out to the regular `getsubtitle` CLI in bulk. They're
-not subcommands of `getsubtitle` itself — run them with Python
-directly. All of getsubtitle's own defaults (engine, model, auto-load,
-furigana, etc.) apply to the shelled-out calls.
+Two sub-actions, both walk the current directory (or --root) and
+shell out to the regular getsubtitle commands per folder:
 
-Files:
-  batch/reference.json    Folder name -> {title, profile, IDs, season,
-                          notes}. The single source of truth that drives
-                          all three scripts. Edit by hand or have
-                          lookup.py fill in IDs.
-  batch/fetch.py          Walk CWD, fetch missing subtitles per the
-                          entry's profile.
-  batch/merge.py          Walk CWD, convert any .smi to .ko.srt, then
-                          combine language stacks per the profile.
-  batch/lookup.py         Backfill empty anilist_id / imdb_id / tmdb_id
-                          in reference.json from AniList + TMDB.
-  batch/README.md         User-facing docs (longer than this topic).
+  getsubtitle batch fetch [PATH] [--run] [--mt-engine ENGINE]
+      Download missing subtitles for every show / movie folder under
+      PATH. Detects the show's origin language automatically (TMDB
+      original_language with a character-set fallback) and picks the
+      right fetch + MT chain per profile.
 
-Profiles (set per entry in reference.json):
-  ja                       Japanese-origin. fetch.py grabs ko first; if
-                           missing, MTs ja->ko via Ollama. merge.py
-                           combines ja+ko with --master ja --furigana.
-  ko                       Korean-origin. fetch.py grabs ja first; if
-                           missing, MTs ko->ja. merge.py combines
-                           ko+ja (and a ko+ja+en+es quad if those
-                           sidefiles exist), --master ko --furigana.
-  en                       English / Western / other. fetch.py grabs
-                           es and ko; MTs from en when missing.
-                           merge.py produces both en+es dual and
-                           ja+ko+en+es quad, --master en.
+  getsubtitle batch merge [PATH] [--run] [--format vtt|srt]
+      For every folder: convert any .smi to .ko.srt, then combine the
+      language stacks per the profile. JP/KR master → master+furigana
+      dual. EN master → en+es dual AND ja+ko+en+es quad.
+
+Both default to dry-run; pass --run to actually do work.
+
+Profiles (auto-detected, override with --profile):
+  ja  Japanese-origin. fetch grabs ko (then MTs ja→ko if missing).
+      merge: combine -l ja,ko --master ja --furigana.
+  ko  Korean-origin. fetch grabs ja (then MTs ko→ja). merge: combine
+      -l ko,ja and -l ko,ja,en,es, both --master ko --furigana.
+  en  English / Western / other. fetch grabs es+ko (then MTs from en
+      for any that came back empty). merge: combine -l en,es AND
+      -l ja,ko,en,es, both --master en.
+
+Profile detection runs in this order:
+  1. --profile flag (applies to every folder; useful when offline).
+  2. Japanese kana in the folder name → ja (fast path; never wrong).
+  3. TMDB search by folder name → original_language → ja/ko/en.
+     Recommended setup: getsubtitle --set-key tmdb
+  4. Character-set fallback: Hangul-only → ko; otherwise → en.
 
 Quickstart:
-  # 1. Backfill missing IDs in reference.json (free TMDB key needed for
-  #    live-action). getsubtitle --set-key tmdb works too.
-  python3 /path/to/getsubtitle/batch/lookup.py
+  # 1. (Recommended) free TMDB key for accurate profile detection
+  getsubtitle --set-key tmdb
 
-  # 2. Walk your library, see what would be fetched (default: dry-run).
+  # 2. Walk your library, see what would be fetched (default: dry-run)
   cd /path/to/your/plex/library
-  python3 /path/to/getsubtitle/batch/fetch.py
+  getsubtitle batch fetch
 
-  # 3. If the plan looks right, run for real.
-  python3 /path/to/getsubtitle/batch/fetch.py --run
+  # 3. If the plan looks right, run for real
+  getsubtitle batch fetch --run
 
-  # 4. Build combined study files.
-  python3 /path/to/getsubtitle/batch/merge.py --run --format vtt
+  # 4. Build combined study files
+  getsubtitle batch merge --run --format vtt
 
-Each script accepts --help for its own flags:
-  python3 batch/fetch.py --help
-  python3 batch/merge.py --help
-  python3 batch/lookup.py --help
-
-Matching rules (how a folder on disk lines up with a reference entry):
-  1. Exact path relative to CWD              (e.g. "유포니움/1기")
-  2. Walk up parents until one matches       (Plex Season XX -> Show key)
-  3. Bare filename for loose top-level files (e.g. "Kill Boksoon ...mkv")
-
-Unmatched targets are listed at the end of each run with a hint to add
-them to reference.json.
-
-Adding a new entry to reference.json:
-
-  "New Show (2026)": {
-    "title": "New Show",
-    "year": 2026,
-    "type": "show",          // or "movie"
-    "profile": "en",          // ja | ko | en
-    "needs_lookup": true      // lookup.py will fill IDs on next run
-  }
+Folder layout handling:
+  Show/Season 01/      → show=Show, season=1
+  Show/1기/           → show=Show, season=1 (Korean form)
+  Show/                → show=Show, season=None (single-folder shows)
+  loose-movie.mkv      → treated as a movie, fetched into the same dir
 
 Notes:
-  - Both fetch.py and merge.py are dry-run by default. Add --run.
-  - merge.py runs `getsubtitle modify --convert smi-to-srt --force` on
+  - merge runs `getsubtitle modify --convert smi-to-srt --force` on
     each folder first, so legacy Korean .smi files become .ko.srt
     automatically before combine.
-  - lookup.py is idempotent and never overwrites a manually-set ID.
+  - No reference.json / no setup files required. Profile detection,
+    title parsing, and ID resolution all happen at runtime.
+  - All of getsubtitle's own defaults (engine, model, auto_load,
+    furigana, strip_before_mt) apply to every shelled-out call.
 """,
     "advanced": """\
 Advanced and experimental options.
@@ -6670,6 +7031,11 @@ def _is_topic_help_request(argv: list[str]) -> bool:
             return True
         if len(argv) == 1:
             return True
+    if argv[0] == "batch":
+        if any(a in ("-h", "--help") for a in argv[1:]):
+            return True
+        if len(argv) == 1:
+            return True
     if argv[0] == "config":
         # `getsubtitle config --help` / `-h` routes to the config topic page.
         # `getsubtitle config` alone is handled by config_main (prints
@@ -6688,6 +7054,9 @@ def _show_topic_help(argv: list[str]) -> int:
         return 0
     if argv and argv[0] == "modify":
         sys.stdout.write(HELP_TOPICS["modify"])
+        return 0
+    if argv and argv[0] == "batch":
+        sys.stdout.write(HELP_TOPICS["batch"])
         return 0
     if argv and argv[0] == "config":
         sys.stdout.write(HELP_TOPICS["config"])
@@ -6726,6 +7095,8 @@ def main(argv: list[str] | None = None) -> int:
         return translate_main(raw_argv[1:])
     if raw_argv[0] == "modify":
         return modify_main(raw_argv[1:])
+    if raw_argv[0] == "batch":
+        return batch_main(raw_argv[1:])
     if raw_argv[0] == "config":
         return config_main(raw_argv[1:])
     args = build_parser().parse_args(raw_argv)
