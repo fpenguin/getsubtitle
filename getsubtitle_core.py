@@ -5882,13 +5882,16 @@ def _example_template_text() -> str:
 _EMBEDDED_EXAMPLE_TEMPLATE = """\
 # getsubtitle user settings — minimal embedded fallback.
 # Every value below is set to the current built-in default; edit to change.
-# Command-line flags always win. DO NOT put API keys here.
+# Command-line flags always win. DO NOT put API keys here
+# (set with: getsubtitle --set-key {jimaku|wyzie|deepl|tmdb}).
 
 [download]
 langs = "ja"
 output = "~/Movies/Subtitles"
 layout = "archive"                # archive | flat | plex
-release_source = "auto"           # auto | any | netflix | crunchyroll
+# auto = infer from URL host (Hulu/Max/Disney+/Apple/Paramount+/Peacock/
+# Amazon/Netflix/Crunchyroll all auto-prefer their own release tags).
+release_source = "auto"           # auto | any | netflix | crunchyroll | amazon | hulu | hbo | disney | apple | paramount | peacock
 open_folder = false
 single_line = true                # asbplayer-friendly one-line cues
 strip_cc_noise = true             # remove broadcast ➡ continuation arrows

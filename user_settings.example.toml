@@ -10,7 +10,7 @@
 # this file just sets defaults for when no flag is passed.
 #
 # DO NOT put API keys here. Keys live in macOS Keychain or in environment
-# variables (JIMAKU_API_KEY, WYZIE_API_KEY, DEEPL_API_KEY).
+# variables (JIMAKU_API_KEY, WYZIE_API_KEY, DEEPL_API_KEY, TMDB_API_KEY).
 #
 # ─────────────────────────────────────────────────────────────────────────
 # Quickstart recipes
@@ -36,6 +36,13 @@
 #     `getsubtitle --set-key deepl` or DEEPL_API_KEY env var):
 #       [translate]
 #       engine = "deepl"
+#
+# (4) "Recognise Hulu / Max / Disney+ / Apple TV+ / Paramount+ / Peacock
+#     / Prime Video URLs, and let `-e all` work for live-action TV":
+#       # No file changes needed. Set a free TMDB key once:
+#       getsubtitle --set-key tmdb
+#       # TMDB resolves the URL slug → IMDb/TMDB IDs that Wyzie can
+#       # search by, and supplies episode counts for non-anime shows.
 # ─────────────────────────────────────────────────────────────────────────
 
 
@@ -53,8 +60,17 @@ output = "~/Movies/Subtitles"
 # plex     Plex-style layout for direct library inclusion
 layout = "archive"
 
-# Release-source preference: auto | any | netflix | crunchyroll. Default: auto.
-# auto prefers the URL source when useful; any disables source preference.
+# Release-source preference. Default: auto.
+# Valid: auto | any | netflix | crunchyroll | amazon | hulu | hbo |
+#        disney | apple | paramount | peacock
+# - auto:  inferred from the URL host (so a hulu.com URL prefers HULU
+#          rips, max.com prefers HMAX/MAX, disneyplus.com prefers DSNP,
+#          tv.apple.com prefers ATVP, paramountplus.com prefers PMTP,
+#          peacocktv.com prefers PCOK, amazon/primevideo prefer AMZN,
+#          netflix.com prefers NF, crunchyroll.com prefers CR)
+# - any:   disable source preference entirely (Wyzie returns whatever
+#          it likes — usually fine, sometimes mismatched audio rates)
+# - <name>: pin to a specific source regardless of URL host
 release_source = "auto"
 
 # Open the output folder after each download. Default: false.
