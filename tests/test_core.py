@@ -385,6 +385,251 @@ def test_wyzie_does_not_retry_tmdb_when_imdb_has_results():
     assert "id=tt9999999" in calls[0]
 
 
+# ---------------------------------------------------------------------------
+# TMDB integration
+# ---------------------------------------------------------------------------
+
+
+def _install_fake_tmdb(payloads_by_path: dict[str, dict | None]):
+    """Patch urllib.request.urlopen used by _tmdb_get so the tests don't
+    hit the network. Returns a (restore_callable, calls_list) pair."""
+    import io
+    import json as _json_mod
+    import urllib.request
+
+    scope = MODULE["_tmdb_get"].__globals__
+    saved = scope["urllib"].request.urlopen
+    calls: list[str] = []
+
+    class _FakeResp:
+        def __init__(self, body: bytes):
+            self._body = body
+        def __enter__(self): return self
+        def __exit__(self, *a): return False
+        def read(self): return self._body
+
+    def fake_urlopen(req, timeout=10):
+        url = req.full_url
+        calls.append(url)
+        # Match by the path portion that comes after /3/, before the '?'.
+        path_with_query = url.split("/3/", 1)[1] if "/3/" in url else url
+        path = path_with_query.split("?", 1)[0]
+        # Allow lookup by full path including any query (e.g. "search/tv")
+        # but normalise by stripping the api_key param from the URL.
+        for key, payload in payloads_by_path.items():
+            if path == key:
+                if payload is None:
+                    err = urllib.error.HTTPError(url, 404, "Not Found", {}, io.BytesIO(b""))
+                    raise err
+                body = _json_mod.dumps(payload).encode("utf-8")
+                return _FakeResp(body)
+        # Default to 404 so unmatched paths look like misses.
+        raise urllib.error.HTTPError(url, 404, "Not Found", {}, io.BytesIO(b""))
+
+    scope["urllib"].request.urlopen = fake_urlopen
+
+    def restore():
+        scope["urllib"].request.urlopen = saved
+
+    return restore, calls
+
+
+def test_tmdb_search_tv_returns_top_match_with_imdb():
+    import json as _json
+    payloads = {
+        "search/tv": {"results": [{
+            "id": 71912, "name": "The Witcher",
+            "first_air_date": "2019-12-20", "original_language": "en",
+        }]},
+        "tv/71912/external_ids": {"imdb_id": "tt5180504"},
+    }
+    restore, calls = _install_fake_tmdb(payloads)
+    MODULE["_TMDB_CACHE"].clear()
+    try:
+        hit = MODULE["tmdb_search_tv"]("The Witcher", api_key="dummy")
+    finally:
+        restore()
+        MODULE["_TMDB_CACHE"].clear()
+    assert hit == {
+        "tmdb_id": "71912",
+        "imdb_id": "tt5180504",
+        "title": "The Witcher",
+        "year": 2019,
+        "original_language": "en",
+    }
+    assert len(calls) == 2  # search + external_ids
+
+
+def test_tmdb_search_movie_returns_top_match_with_imdb():
+    payloads = {
+        "search/movie": {"results": [{
+            "id": 278, "title": "The Shawshank Redemption",
+            "release_date": "1994-09-23", "original_language": "en",
+        }]},
+        "movie/278": {"imdb_id": "tt0111161"},
+    }
+    restore, _ = _install_fake_tmdb(payloads)
+    MODULE["_TMDB_CACHE"].clear()
+    try:
+        hit = MODULE["tmdb_search_movie"]("The Shawshank Redemption", year=1994, api_key="dummy")
+    finally:
+        restore()
+        MODULE["_TMDB_CACHE"].clear()
+    assert hit and hit["tmdb_id"] == "278"
+    assert hit["imdb_id"] == "tt0111161"
+    assert hit["year"] == 1994
+
+
+def test_tmdb_search_returns_none_without_key():
+    # No api_key arg and no env / Keychain → None, no network call.
+    import os
+    saved = os.environ.pop("TMDB_API_KEY", None)
+    try:
+        # Force keychain miss too — get_provider_api_key falls through.
+        assert MODULE["tmdb_search_tv"]("anything") is None
+        assert MODULE["tmdb_search_movie"]("anything") is None
+    finally:
+        if saved is not None:
+            os.environ["TMDB_API_KEY"] = saved
+
+
+def test_tmdb_search_handles_no_results():
+    payloads = {"search/tv": {"results": []}}
+    restore, _ = _install_fake_tmdb(payloads)
+    MODULE["_TMDB_CACHE"].clear()
+    try:
+        hit = MODULE["tmdb_search_tv"]("not a real show xyz123", api_key="dummy")
+    finally:
+        restore()
+        MODULE["_TMDB_CACHE"].clear()
+    assert hit is None
+
+
+def test_tmdb_search_handles_http_404():
+    # _tmdb_get must catch HTTPError and return None.
+    restore, _ = _install_fake_tmdb({})  # every path 404s
+    MODULE["_TMDB_CACHE"].clear()
+    try:
+        hit = MODULE["tmdb_search_tv"]("anything", api_key="dummy")
+    finally:
+        restore()
+        MODULE["_TMDB_CACHE"].clear()
+    assert hit is None
+
+
+def test_enrich_media_from_tmdb_populates_imdb_and_tmdb():
+    payloads = {
+        "search/tv": {"results": [{
+            "id": 71912, "name": "The Witcher",
+            "first_air_date": "2019-12-20", "original_language": "en",
+        }]},
+        "tv/71912/external_ids": {"imdb_id": "tt5180504"},
+    }
+    restore, _ = _install_fake_tmdb(payloads)
+    MODULE["_TMDB_CACHE"].clear()
+    try:
+        media = MODULE["MediaInfo"](source_url="x", provider="manual", title="The Witcher")
+        changed = MODULE["enrich_media_from_tmdb"](media, langs=["ko", "en"], api_key="dummy") if False else None
+        # api_key kwarg isn't on the public helper; supply via env instead.
+        import os
+        os.environ["TMDB_API_KEY"] = "dummy"
+        try:
+            changed = MODULE["enrich_media_from_tmdb"](media, langs=["ko", "en"])
+        finally:
+            del os.environ["TMDB_API_KEY"]
+    finally:
+        restore()
+        MODULE["_TMDB_CACHE"].clear()
+    assert changed is True
+    assert media.imdb_id == "tt5180504"
+    assert media.tmdb_id == "71912"
+
+
+def test_enrich_media_from_tmdb_skips_japanese_when_ja_requested():
+    # If TMDB says original_language=ja AND user wants ja subs, leave the
+    # AniList path alone — Jimaku needs the AniList ID for anime.
+    payloads = {
+        "search/tv": {"results": [{
+            "id": 99999, "name": "Some Anime",
+            "first_air_date": "2020-01-01", "original_language": "ja",
+        }]},
+        "tv/99999/external_ids": {"imdb_id": "tt99999999"},
+    }
+    restore, _ = _install_fake_tmdb(payloads)
+    MODULE["_TMDB_CACHE"].clear()
+    import os
+    os.environ["TMDB_API_KEY"] = "dummy"
+    try:
+        media = MODULE["MediaInfo"](source_url="x", provider="manual", title="Some Anime")
+        changed = MODULE["enrich_media_from_tmdb"](media, langs=["ja", "ko"])
+    finally:
+        del os.environ["TMDB_API_KEY"]
+        restore()
+        MODULE["_TMDB_CACHE"].clear()
+    assert changed is False
+    assert media.imdb_id is None
+    assert media.tmdb_id is None
+
+
+def test_enrich_media_from_tmdb_populates_japanese_when_ja_not_requested():
+    # Same Japanese-origin result, but user only wants ko/en — TMDB should
+    # populate so Wyzie's IMDb path lights up.
+    payloads = {
+        "search/tv": {"results": [{
+            "id": 99999, "name": "Some Anime",
+            "first_air_date": "2020-01-01", "original_language": "ja",
+        }]},
+        "tv/99999/external_ids": {"imdb_id": "tt99999999"},
+    }
+    restore, _ = _install_fake_tmdb(payloads)
+    MODULE["_TMDB_CACHE"].clear()
+    import os
+    os.environ["TMDB_API_KEY"] = "dummy"
+    try:
+        media = MODULE["MediaInfo"](source_url="x", provider="manual", title="Some Anime")
+        changed = MODULE["enrich_media_from_tmdb"](media, langs=["ko", "en"])
+    finally:
+        del os.environ["TMDB_API_KEY"]
+        restore()
+        MODULE["_TMDB_CACHE"].clear()
+    assert changed is True
+    assert media.tmdb_id == "99999"
+    assert media.imdb_id == "tt99999999"
+
+
+def test_enrich_media_from_tmdb_noop_when_ids_already_present():
+    # If imdb/tmdb/anilist already set, never even call TMDB.
+    restore, calls = _install_fake_tmdb({})
+    MODULE["_TMDB_CACHE"].clear()
+    import os
+    os.environ["TMDB_API_KEY"] = "dummy"
+    try:
+        for prefilled in (
+            {"imdb_id": "tt0111161"},
+            {"tmdb_id": "278"},
+            {"anilist_id": 19815},
+        ):
+            media = MODULE["MediaInfo"](
+                source_url="x", provider="manual", title="Anything", **prefilled
+            )
+            changed = MODULE["enrich_media_from_tmdb"](media, langs=["en"])
+            assert changed is False
+    finally:
+        del os.environ["TMDB_API_KEY"]
+        restore()
+        MODULE["_TMDB_CACHE"].clear()
+    assert calls == []  # no network calls at all
+
+
+def test_tmdb_in_key_providers_registry():
+    # The shared --set-key / --reset-key machinery should auto-pick up
+    # tmdb via the KEY_PROVIDERS dict.
+    kp = MODULE["KEY_PROVIDERS"]
+    assert "tmdb" in kp
+    assert kp["tmdb"]["env"] == "TMDB_API_KEY"
+    assert kp["tmdb"]["account"] == "tmdb"
+
+
 def test_wyzie_falls_back_when_broad_call_returns_nothing():
     # If the broad (no-language) call returns 0 items, we should retry once
     # with the language filter applied (legacy behavior).

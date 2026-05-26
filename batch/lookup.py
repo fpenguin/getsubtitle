@@ -38,6 +38,18 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from _common import REFERENCE, entries_from, load_reference
 
+# Prefer the main getsubtitle module's TMDB helpers when available — they
+# handle keychain lookup, caching, and error swallowing consistently with
+# the rest of the CLI. Falls back to a local urllib path if the package
+# isn't importable (e.g. running this script from outside an install).
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+try:
+    import getsubtitle_core as _gs  # type: ignore
+    _MAIN_TMDB = True
+except Exception:
+    _gs = None  # type: ignore[assignment]
+    _MAIN_TMDB = False
+
 
 ANILIST_GRAPHQL = "https://graphql.anilist.co"
 TMDB_BASE = "https://api.themoviedb.org/3"
@@ -87,7 +99,16 @@ def query_anilist(title: str) -> int | None:
 
 
 def query_tmdb_movie(title: str, year: int | None, api_key: str) -> tuple[int | None, str | None]:
-    """Return (tmdb_id, imdb_id) for a movie title. Either may be None."""
+    """Return (tmdb_id, imdb_id) for a movie title. Either may be None.
+    Uses getsubtitle_core.tmdb_search_movie when importable so the shared
+    cache + key-handling logic lives in one place."""
+    if _MAIN_TMDB:
+        hit = _gs.tmdb_search_movie(title, year=year, api_key=api_key)
+        if not hit:
+            return None, None
+        tid = hit.get("tmdb_id")
+        return (int(tid) if tid else None), hit.get("imdb_id")
+    # Fallback path: direct urllib calls (when running outside an install).
     params = {"api_key": api_key, "query": title}
     if year:
         params["year"] = str(year)
@@ -103,7 +124,6 @@ def query_tmdb_movie(title: str, year: int | None, api_key: str) -> tuple[int | 
     tmdb_id = results[0].get("id")
     if not tmdb_id:
         return None, None
-    # Pull imdb_id via the movie detail endpoint.
     try:
         detail = _get_json(f"{TMDB_BASE}/movie/{tmdb_id}?api_key={api_key}")
     except Exception:
@@ -112,7 +132,14 @@ def query_tmdb_movie(title: str, year: int | None, api_key: str) -> tuple[int | 
 
 
 def query_tmdb_tv(title: str, api_key: str) -> tuple[int | None, str | None]:
-    """Return (tmdb_id, imdb_id) for a TV show title."""
+    """Return (tmdb_id, imdb_id) for a TV show title.
+    Uses getsubtitle_core.tmdb_search_tv when importable."""
+    if _MAIN_TMDB:
+        hit = _gs.tmdb_search_tv(title, api_key=api_key)
+        if not hit:
+            return None, None
+        tid = hit.get("tmdb_id")
+        return (int(tid) if tid else None), hit.get("imdb_id")
     params = {"api_key": api_key, "query": title}
     url = f"{TMDB_BASE}/search/tv?" + urllib.parse.urlencode(params)
     try:
@@ -198,10 +225,21 @@ def main() -> int:
                    help="Process entries even if needs_lookup is false (re-check).")
     args = p.parse_args()
 
-    tmdb_key = os.environ.get("TMDB_API_KEY")
+    # Prefer the shared key-resolution path so users who ran
+    # `getsubtitle --set-key tmdb` don't need to also export the env var.
+    tmdb_key = None
+    if _MAIN_TMDB:
+        try:
+            tmdb_key = _gs.get_provider_api_key("tmdb")
+        except Exception:
+            tmdb_key = None
     if not tmdb_key:
-        print("Note: TMDB_API_KEY not set — only AniList anime lookups will run.")
-        print("Get a free key: https://www.themoviedb.org/settings/api")
+        tmdb_key = os.environ.get("TMDB_API_KEY")
+    if not tmdb_key:
+        print("Note: no TMDB key found — only AniList anime lookups will run.")
+        print("Set one with:  getsubtitle --set-key tmdb")
+        print("Or:            export TMDB_API_KEY=...")
+        print("Get a free key at https://www.themoviedb.org/settings/api")
         print()
 
     ref = load_reference()

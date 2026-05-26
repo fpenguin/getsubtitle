@@ -106,6 +106,16 @@ Successful lookups clear `needs_lookup`.
 Get a TMDB key at <https://www.themoviedb.org/settings/api> — it's free
 and instant.
 
+The preferred way to set it is with the shared key flow:
+
+```sh
+getsubtitle --set-key tmdb
+```
+
+`lookup.py` reads the key via the same path the main `getsubtitle` CLI
+does (macOS Keychain → `TMDB_API_KEY` env var), so a single setup works
+for both.
+
 ## Adding new shows to reference.json
 
 ```jsonc

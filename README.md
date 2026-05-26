@@ -161,6 +161,7 @@ getsubtitle --set-key            # interactive picker
 getsubtitle --set-key jimaku
 getsubtitle --set-key wyzie
 getsubtitle --set-key deepl
+getsubtitle --set-key tmdb
 ```
 
 | Provider | Get a key | Cost | Purpose | Needed when |
@@ -168,6 +169,7 @@ getsubtitle --set-key deepl
 | Jimaku | [jimaku.cc account](https://jimaku.cc/) | Free | Japanese anime SRTs | `-l ja` for anime |
 | Wyzie | [Free key / dashboard](https://store.wyzie.io/redeem) and [API key docs](https://docs.wyzie.io/subs/usage/api-keys) | Free tier: 1,000 requests/day. Pro: $5 one-time for paid request balance; top-ups available. Check Wyzie docs/store for current limits. | Movie/TV subtitles by IMDb/TMDB ID | non-`ja` languages, or `IMDb`/`TMDB`/`Netflix` URLs |
 | DeepL | [DeepL API plans](https://support.deepl.com/hc/en-us/articles/360021200939-DeepL-API-plans) | DeepL docs currently mention a 1,000,000-character total Developer plan and legacy API Free at 500,000 chars/month. Paid plans are usage-based. | Machine translation (optional) | `--mt-engine deepl` |
+| TMDB | [TMDB API key](https://www.themoviedb.org/settings/api) | Free | Title → IMDb/TMDB ID resolution. Without it, title-only inputs (`--title "..."` with no URL) cannot auto-populate IDs and Wyzie has less to search against. | `--title "X"` for live-action without an IMDb URL |
 
 On macOS keys live in Keychain. On Linux and Windows, set them as environment variables:
 
@@ -175,6 +177,7 @@ On macOS keys live in Keychain. On Linux and Windows, set them as environment va
 export JIMAKU_API_KEY="..."
 export WYZIE_API_KEY="..."
 export DEEPL_API_KEY="..."
+export TMDB_API_KEY="..."
 ```
 
 Reset a saved key with `getsubtitle --reset-key <provider>`. See `getsubtitle --help keys` for details.

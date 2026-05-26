@@ -26,6 +26,7 @@ from typing import Iterable
 
 JIMAKU_API = "https://jimaku.cc/api"
 ANILIST_API = "https://graphql.anilist.co"
+TMDB_API = "https://api.themoviedb.org/3"
 WIKIDATA_SPARQL_API = "https://query.wikidata.org/sparql"
 WYZIE_API = "https://sub.wyzie.io/search"
 ANIME_IDS_URL = "https://raw.githubusercontent.com/Kometa-Team/Anime-IDs/master/anime_ids.json"
@@ -44,6 +45,7 @@ ARCHIVE_EXTENSIONS = {".zip"}
 KEYCHAIN_SERVICE = "getsubtitle"
 KEYCHAIN_JIMAKU_ACCOUNT = "jimaku"
 KEYCHAIN_WYZIE_ACCOUNT = "wyzie"
+KEYCHAIN_TMDB_ACCOUNT = "tmdb"
 ASS_BASE_FONT_SIZE = 54
 ASS_FURIGANA_FONT_SIZE = round(ASS_BASE_FONT_SIZE * 0.75)
 ASS_FURIGANA_SCALE_X = round(100 * ASS_BASE_FONT_SIZE / ASS_FURIGANA_FONT_SIZE)
@@ -77,6 +79,13 @@ KEY_PROVIDERS = {
         "account": "deepl",
         "url": "https://www.deepl.com/your-account/keys",
         "use": "machine translation for --mt-engine deepl (free tier: 500K chars/mo)",
+    },
+    "tmdb": {
+        "label": "TMDB",
+        "env": "TMDB_API_KEY",
+        "account": KEYCHAIN_TMDB_ACCOUNT,
+        "url": "https://www.themoviedb.org/settings/api",
+        "use": "movie/TV title → ID resolution (improves Wyzie match rate when only a title is known)",
     },
 }
 
@@ -310,6 +319,185 @@ def request_json(url: str, *, headers: dict[str, str] | None = None, data: dict 
         raise CliError(f"HTTP {e.code} from {redact_url(url)}: {body[:500]}") from e
     except urllib.error.URLError as e:
         raise CliError(f"Network error for {redact_url(url)}: {e.reason}") from e
+
+
+# ---------------------------------------------------------------------------
+# TMDB — movie / TV title resolution
+# ---------------------------------------------------------------------------
+# Used to convert "--title TEXT" into a TMDB ID (and the IMDb ID alongside it),
+# which then unlocks Wyzie's primary search path. All TMDB calls are
+# best-effort: any HTTP or network failure returns None instead of raising,
+# because TMDB is a metadata bridge, not a hard dependency. The CLI works
+# without it (just with fewer auto-resolved IDs).
+
+# Module-level cache so repeated lookups in the same run don't re-hit TMDB.
+_TMDB_CACHE: dict[str, object] = {}
+
+
+def _tmdb_get(path: str, params: dict[str, str], api_key: str) -> dict | None:
+    """GET https://api.themoviedb.org/3/<path>?<params>&api_key=...
+    Returns parsed JSON dict or None on any failure. Cached per call."""
+    full_params = {**params, "api_key": api_key}
+    url = f"{TMDB_API}/{path.lstrip('/')}?" + urllib.parse.urlencode(full_params)
+    # Cache key omits api_key so we don't leak it into the dict.
+    cache_key = f"{path}?" + urllib.parse.urlencode(params)
+    if cache_key in _TMDB_CACHE:
+        return _TMDB_CACHE[cache_key]  # type: ignore[return-value]
+    req = urllib.request.Request(
+        url,
+        headers={"User-Agent": "getsubtitle/0.1", "Accept": "application/json"},
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=10) as res:
+            body = res.read().decode("utf-8")
+        data = json.loads(body)
+    except urllib.error.HTTPError as e:
+        # 401 = bad/missing key. Don't crash the run; downstream code falls back.
+        if e.code in (401, 404):
+            _TMDB_CACHE[cache_key] = None
+            return None
+        # Other HTTP errors: cache the None so we don't retry on the same URL.
+        _TMDB_CACHE[cache_key] = None
+        return None
+    except (urllib.error.URLError, OSError, json.JSONDecodeError):
+        _TMDB_CACHE[cache_key] = None
+        return None
+    if not isinstance(data, dict):
+        _TMDB_CACHE[cache_key] = None
+        return None
+    _TMDB_CACHE[cache_key] = data
+    return data
+
+
+def tmdb_search_movie(title: str, year: int | None = None, *, api_key: str | None = None) -> dict | None:
+    """Search TMDB for a movie. Returns the top result with imdb_id resolved,
+    or None if no key is configured / no match / network error.
+
+    Shape: {tmdb_id, imdb_id, title, year, original_language}."""
+    if api_key is None:
+        api_key = get_provider_api_key("tmdb")
+    if not api_key or not title.strip():
+        return None
+    params: dict[str, str] = {"query": title.strip()}
+    if year:
+        params["year"] = str(year)
+    data = _tmdb_get("search/movie", params, api_key)
+    if not data:
+        return None
+    results = data.get("results") or []
+    if not results:
+        return None
+    top = results[0]
+    tmdb_id = top.get("id")
+    if not tmdb_id:
+        return None
+    # Pull imdb_id from the movie detail endpoint.
+    detail = _tmdb_get(f"movie/{tmdb_id}", {}, api_key) or {}
+    release = top.get("release_date") or ""
+    return {
+        "tmdb_id": str(tmdb_id),
+        "imdb_id": detail.get("imdb_id"),
+        "title": top.get("title") or top.get("original_title"),
+        "year": int(release[:4]) if release[:4].isdigit() else None,
+        "original_language": top.get("original_language"),
+    }
+
+
+def tmdb_search_tv(title: str, *, api_key: str | None = None) -> dict | None:
+    """Search TMDB for a TV show. Returns top match with imdb_id resolved.
+    Shape: {tmdb_id, imdb_id, title, year, original_language}."""
+    if api_key is None:
+        api_key = get_provider_api_key("tmdb")
+    if not api_key or not title.strip():
+        return None
+    data = _tmdb_get("search/tv", {"query": title.strip()}, api_key)
+    if not data:
+        return None
+    results = data.get("results") or []
+    if not results:
+        return None
+    top = results[0]
+    tmdb_id = top.get("id")
+    if not tmdb_id:
+        return None
+    ext = _tmdb_get(f"tv/{tmdb_id}/external_ids", {}, api_key) or {}
+    first_air = top.get("first_air_date") or ""
+    return {
+        "tmdb_id": str(tmdb_id),
+        "imdb_id": ext.get("imdb_id"),
+        "title": top.get("name") or top.get("original_name"),
+        "year": int(first_air[:4]) if first_air[:4].isdigit() else None,
+        "original_language": top.get("original_language"),
+    }
+
+
+def tmdb_external_ids(media_type: str, tmdb_id: str | int, *, api_key: str | None = None) -> dict | None:
+    """Resolve a TMDB ID to its IMDb (and other) IDs via the external_ids
+    endpoint. media_type is 'movie' or 'tv'."""
+    if api_key is None:
+        api_key = get_provider_api_key("tmdb")
+    if not api_key:
+        return None
+    if media_type == "movie":
+        # Movies expose imdb_id on the detail endpoint; external_ids is for tv.
+        data = _tmdb_get(f"movie/{tmdb_id}", {}, api_key) or {}
+        return {"imdb_id": data.get("imdb_id")}
+    if media_type == "tv":
+        return _tmdb_get(f"tv/{tmdb_id}/external_ids", {}, api_key)
+    return None
+
+
+def tmdb_tv_season_episode_count(tmdb_id: str | int, season: int, *, api_key: str | None = None) -> int | None:
+    """Return the number of episodes in a TV season per TMDB, or None on miss.
+    Useful for `-e all` expansion on non-anime shows."""
+    if api_key is None:
+        api_key = get_provider_api_key("tmdb")
+    if not api_key:
+        return None
+    data = _tmdb_get(f"tv/{tmdb_id}/season/{season}", {}, api_key)
+    if not data:
+        return None
+    episodes = data.get("episodes")
+    if isinstance(episodes, list):
+        return len(episodes)
+    return None
+
+
+def enrich_media_from_tmdb(media: "MediaInfo", langs: list[str] | None = None) -> bool:
+    """If a TMDB API key is configured and we have a title but no
+    IMDb/TMDB/AniList ID yet, search TMDB and populate the IDs.
+
+    Returns True if anything was added. Best-effort — silently no-ops
+    without a key, on network failure, or when no result matches.
+
+    Skips Japanese-origin results when the user asked for `ja` subs, so
+    the existing AniList → Jimaku path stays intact for anime. (Wyzie's
+    Japanese coverage for live-action is decent; Jimaku is anime-only.)"""
+    if not media.title:
+        return False
+    if media.imdb_id or media.tmdb_id or media.anilist_id:
+        return False
+    api_key = get_provider_api_key("tmdb")
+    if not api_key:
+        return False
+    # Try TV first — shows are the primary use case for the batch flow.
+    hit = tmdb_search_tv(media.title, api_key=api_key)
+    if not hit:
+        hit = tmdb_search_movie(media.title, api_key=api_key)
+    if not hit:
+        return False
+    # Preserve the AniList-driven path for "user wants Japanese subs of a
+    # Japanese-origin title" — Jimaku needs AniList IDs, and TMDB filling
+    # in imdb/tmdb here would shortcut the needs_anilist branch.
+    wants_japanese = bool(langs) and "ja" in langs
+    is_japanese = (hit.get("original_language") or "").lower() == "ja"
+    if wants_japanese and is_japanese:
+        return False
+    if hit.get("tmdb_id"):
+        media.tmdb_id = hit["tmdb_id"]
+    if hit.get("imdb_id"):
+        media.imdb_id = hit["imdb_id"]
+    return bool(media.tmdb_id or media.imdb_id)
 
 
 def request_text(url: str) -> str:
@@ -4869,9 +5057,9 @@ def build_parser() -> argparse.ArgumentParser:
     # Deprecated aliases — kept silently so existing scripts keep working.
     learning.add_argument("--strip-cc-arrows", "--strip-arrows", "-strip-cc-noise", "-strip-cc-arrows", "-strip-arrows", dest="strip_cc_noise", action="store_true", help=argparse.SUPPRESS)
 
-    keys = p.add_argument_group("API Keys", description="Stored in macOS Keychain when available; otherwise set JIMAKU_API_KEY / WYZIE_API_KEY / DEEPL_API_KEY in your shell.")
-    keys.add_argument("--set-key", nargs="?", const="", metavar="PROVIDER", help="Guided API key setup: jimaku, wyzie, deepl, or all.")
-    keys.add_argument("--reset-key", nargs="?", const="", metavar="PROVIDER", help="Delete saved API key: jimaku, wyzie, deepl, or all.")
+    keys = p.add_argument_group("API Keys", description="Stored in macOS Keychain when available; otherwise set JIMAKU_API_KEY / WYZIE_API_KEY / DEEPL_API_KEY / TMDB_API_KEY in your shell.")
+    keys.add_argument("--set-key", nargs="?", const="", metavar="PROVIDER", help="Guided API key setup: jimaku, wyzie, deepl, tmdb, or all.")
+    keys.add_argument("--reset-key", nargs="?", const="", metavar="PROVIDER", help="Delete saved API key: jimaku, wyzie, deepl, tmdb, or all.")
     p.add_argument("--reset-jimaku-key", action="store_true", help=argparse.SUPPRESS)
     p.add_argument("--set-jimaku-key", action="store_true", help=argparse.SUPPRESS)
 
@@ -5821,22 +6009,30 @@ Providers:
   jimaku                   Japanese anime subtitles
   wyzie                    Movie and TV subtitles by IMDb/TMDB ID
   deepl                    Machine translation with DeepL
+  tmdb                     Movie/TV title → ID resolution (improves Wyzie
+                           match rate when only a title is known)
   all                      Set or reset all supported providers
 
 Examples:
   getsubtitle --set-key
   getsubtitle --set-key jimaku
   getsubtitle --set-key wyzie
+  getsubtitle --set-key tmdb
   getsubtitle --reset-key wyzie
 
 Environment variables:
   JIMAKU_API_KEY
   WYZIE_API_KEY
   DEEPL_API_KEY
+  TMDB_API_KEY
 
 Notes:
   macOS stores keys in Keychain.
   Linux and Windows use environment variables.
+  TMDB key is optional — without it the rest of the pipeline still works,
+  but title-only inputs won't auto-resolve to IMDb/TMDB IDs and Wyzie's
+  match rate will be lower. Get a free key at:
+  https://www.themoviedb.org/settings/api
 """,
     "furigana": """\
 Generate Japanese reading helpers.
@@ -6184,6 +6380,11 @@ def main(argv: list[str] | None = None) -> int:
     media.episode = str(args.episode).lower()
     if args.title:
         media.title = args.title
+    # TMDB title → IDs enrichment. Only fires when the user has a TMDB
+    # API key configured AND we have a title but no IDs yet. Skipped for
+    # Japanese-origin titles when `ja` is requested (preserves AniList
+    # path for Jimaku). Pure no-op otherwise.
+    enrich_media_from_tmdb(media, langs=langs)
     # If the URL gave us a TVDB ID but no IMDb/TMDB yet (e.g. a /thetvdb.com/
     # series page), use Wikidata to bridge. This lets non-anime TVDB shows
     # reach Wyzie without first being routed through AniList.
