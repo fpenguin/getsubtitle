@@ -77,37 +77,45 @@ py -m pip install -e ".[furigana]"
 
 ## Quickstart
 
-The fastest path is the interactive wizard — it asks 11 questions, probes
-your environment for missing packages and API keys, and either prints the
-CLI command, saves a reusable TOML workflow, or runs it live with a
-dry-run preview:
+First-time setup starts with you, not with flags. It asks what languages
+you already understand, what you are learning, what you watch, and where
+you watch it. Then it recommends subtitle sources, API keys, player
+settings, and optional dependencies with rough cost/setup time:
+
+```sh
+getsubtitle setup
+```
+
+After setup, use the workflow wizard when you want help building one
+specific command:
 
 ```sh
 getsubtitle -i
 ```
 
-Or jump straight into the CLI with the language pair you actually want to
-watch with:
+Or jump straight into the CLI:
 
 ```sh
-# 1. Japanese movie night: Japanese + English
-getsubtitle "https://www.imdb.com/title/tt0096283/" -l ja,en
+# Easy: movie, TMDB link — Totoro, Japanese + English subtitles
+getsubtitle "https://www.themoviedb.org/movie/8392" -l ja,en
 
-# 2. Preview a full anime season in Japanese, Korean, English, and Spanish
-#    Anime episode count comes from AniList automatically.
-getsubtitle "https://www.imdb.com/title/tt28299608/" -s 1 -e all -l ja,ko,en,es --dry-run
+# Medium: series, IMDb link — Midnight Diner, Japanese + Korean,
+# with Japanese pronunciation guides for asbplayer
+getsubtitle "https://www.imdb.com/title/tt6150576/" -s 1 -e all -l ja,ko --romanization ja:hiragana --format vtt
 
-# 3. Download a season and fill missing Korean/Spanish with MT
-getsubtitle "https://www.imdb.com/title/tt28299608/" -s 1 -e all -l ja,ko,en,es --engine argos
-
-# 4. Add Japanese furigana for asbplayer
-getsubtitle "https://www.imdb.com/title/tt28299608/" -s 1 -e 1 -l ja --romanization ja:hiragana --format vtt
-
-# 5. Merge downloaded subtitle files into one study stack
-getsubtitle merge ~/Movies/Subtitles/MF\ Ghost -l ja,ko,en,es --format vtt
+# Hard: Friends S4E3-5, fill missing Spanish from French, then merge
+getsubtitle "https://www.themoviedb.org/tv/1668-friends" -s 4 -e 3-5 -l fr,en,es
+getsubtitle translate ~/Movies/Subtitles/Friends -s 4 -e 3-5 -l es --engine deepl --mt-source es:fr
+getsubtitle merge ~/Movies/Subtitles/Friends -s 4 -e 3-5 -l fr,en,es
 ```
 
 `-e all` on **non-anime TV** needs a TMDB key for episode-count expansion — set one once with `getsubtitle --set-key tmdb`, or pass an explicit range like `-e 1-22`.
+
+Frequently used settings can be saved into a file:
+
+```sh
+getsubtitle "https://www.themoviedb.org/tv/1668-friends" -s 5 -e all --config ./friends.toml
+```
 
 For raw `.srt` with no learning helpers:
 
@@ -116,6 +124,33 @@ getsubtitle "URL" -l ja --no-romanization --no-single-line --no-strip-cc-noise -
 ```
 
 `getsubtitle` (no args) prints a short overview and a topic-help index.
+
+## First-time setup
+
+```sh
+getsubtitle setup
+```
+
+Setup asks:
+
+- what languages you already understand
+- what languages you are learning
+- whether you mostly watch movies, TV shows, anime, or a mix
+- whether you watch in a browser, tablet/TV app, Plex, or a local player
+- whether you want no MT, free offline MT, or best-quality online MT
+
+Then it explains recommendations before asking you to opt in:
+
+- **Jimaku** — recommended for Japanese anime. Free, about 2 minutes.
+- **Wyzie** — broad movie/TV subtitle search. Free tier available; paid tier unlocks more sources and AI-translated subtitles. About 2 minutes.
+- **SubDL** — fallback when Wyzie misses. API key/account required; check SubDL account terms. About 2 minutes.
+- **TMDB** — better title matching and full-season detection. Free API key, about 3 minutes.
+- **DeepL** — best-quality online MT. Free API tier includes 500,000 characters/month, roughly 50-80 anime episodes depending on subtitle length. About 2 minutes.
+- **Argos** — free offline MT. Lower quality, 0-5 minutes depending on language packages.
+
+For selected web providers, setup can open the signup/API-key page in your
+default browser and save pasted keys with the same secure flow as
+`getsubtitle --set-key`. It also offers to create `user_settings.toml`.
 
 ## Interactive mode
 
@@ -146,7 +181,7 @@ What it asks (11 questions):
 After Q10 the wizard runs a dependency probe and points out anything
 missing — pykakasi for Japanese furigana, the Ollama daemon if you
 picked ollama, the DeepL key if you picked DeepL, missing
-Jimaku/Wyzie/TMDB keys — and walks you through fixing each gap with
+Jimaku/Wyzie/SubDL/TMDB keys — and walks you through fixing each gap with
 the right `--set-key` or `pip install` command before the final
 action.
 
@@ -215,6 +250,7 @@ getsubtitle --help translate     # machine translation
 getsubtitle --help modify        # cleanup, SAMI→SRT, furigana side files
 getsubtitle --help merge         # stack languages into a study file
 getsubtitle --help pipeline      # chain verbs / --config FILE.toml
+getsubtitle --help setup         # first-time onboarding
 getsubtitle --help config        # user_settings.toml defaults
 getsubtitle --help keys          # API key setup
 getsubtitle --help furigana      # Japanese readings

@@ -2246,6 +2246,16 @@ def test_help_includes_config_topic_and_preferences_block():
     assert "--help" in text and "config" in text  # topic-help line present
 
 
+def test_help_includes_setup_topic():
+    import io, contextlib
+    out = io.StringIO()
+    with contextlib.redirect_stdout(out):
+        MODULE["main"](["--help"])
+    text = out.getvalue()
+    assert "setup" in text
+    assert "first-time setup" in text.lower() or "onboarding" in text.lower()
+
+
 def test_help_topic_config_describes_file_and_precedence():
     import io, contextlib
     out = io.StringIO()
@@ -2255,6 +2265,55 @@ def test_help_topic_config_describes_file_and_precedence():
     assert "user_settings.toml" in text
     assert "precedence" in text.lower()
     assert "API keys are NEVER" in text or "API keys" in text
+
+
+def test_help_topic_setup_describes_onboarding():
+    rc, out, _ = _capture_main(["--help", "setup"])
+    assert rc == 0
+    assert "First-time setup" in out
+    assert "opens the provider pages" in out
+    assert "Subtitle HTML = Render" in out
+
+
+def test_setup_recommendations_for_korean_speaker_learning_japanese_anime():
+    choice = MODULE["_SetupChoice"](
+        native=["ko"],
+        learning=["ja"],
+        content="anime",
+        venue="browser",
+        mt="online",
+    )
+    recs = MODULE["_setup_recommendations"](choice)
+    keys = [r.key for r in recs]
+    assert "jimaku" in keys
+    assert "deepl" in keys
+    assert "ja-reading" in keys
+    assert "tmdb" not in keys  # anime path should not force non-anime TV setup
+    deepl = next(r for r in recs if r.key == "deepl")
+    assert "500,000" in deepl.cost
+
+
+def test_setup_config_text_uses_learning_then_native_order_and_vtt_for_asbplayer():
+    choice = MODULE["_SetupChoice"](
+        native=["ko"],
+        learning=["ja"],
+        content="anime",
+        venue="browser",
+        mt="online",
+    )
+    text = MODULE["_setup_config_text"](choice)
+    assert 'languages = "ja,ko"' in text
+    assert 'reading_format = "vtt"' in text
+    assert 'format = "vtt"' in text
+    assert 'engine = "deepl"' in text
+    assert "API keys are not stored here" in text
+
+
+def test_setup_help_subcommand_works_without_tty():
+    rc, out, _ = _capture_main(["setup", "--help"])
+    assert rc == 0
+    assert "getsubtitle setup" in out
+    assert "Machine translation preference" in out
 
 
 def test_builtin_defaults_applied_when_no_config_present():

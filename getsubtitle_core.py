@@ -7,6 +7,7 @@ import argparse
 import json
 import os
 import getpass
+import platform
 import re
 import shlex
 import shutil
@@ -719,6 +720,11 @@ def get_wyzie_api_key() -> str | None:
 
 def get_subdl_api_key(*, prompt_if_missing: bool = False) -> str | None:
     return get_provider_api_key("subdl", prompt_if_missing=prompt_if_missing)
+
+
+def provider_has_api_key(provider: str) -> bool:
+    info = KEY_PROVIDERS[provider]
+    return bool(os.environ.get(str(info["env"])) or keychain_get(KEYCHAIN_SERVICE, str(info["account"])))
 
 
 def get_provider_api_key(provider: str, *, prompt_if_missing: bool = False) -> str | None:
@@ -8545,6 +8551,379 @@ def config_main(argv: list[str]) -> int:
     return 0  # unreachable
 
 
+# ═══════════════════════════════════════════════════════════════════════
+# First-time setup onboarding
+# ═══════════════════════════════════════════════════════════════════════
+
+@dataclass
+class _SetupChoice:
+    native: list[str]
+    learning: list[str]
+    content: str
+    venue: str
+    mt: str
+
+
+@dataclass
+class _SetupRecommendation:
+    key: str
+    title: str
+    reason: str
+    cost: str
+    setup_time: str
+    url: str | None = None
+    provider: str | None = None
+    selected_by_default: bool = True
+
+
+def _setup_parse_langs(raw: str) -> list[str]:
+    parts = [p.strip().lower() for p in raw.split(",") if p.strip()]
+    out: list[str] = []
+    for part in parts:
+        canon = LANGUAGE_ALIASES.get(part, part)
+        if canon not in out:
+            out.append(canon)
+    return out
+
+
+def _setup_select(question: str, options: list[tuple[str, str]], default: str) -> str:
+    print()
+    print(question)
+    for key, label in options:
+        print(f"  {key}) {label}")
+    answer = _wizard_prompt("Choose", default).strip().lower()
+    return answer[:1] if answer[:1] in {key for key, _label in options} else default
+
+
+def _setup_system_summary() -> list[str]:
+    rows = [
+        f"OS: {platform.system() or sys.platform}",
+        f"CPU: {platform.machine() or 'unknown'}",
+    ]
+    if sys.platform == "darwin" and platform.machine().lower() in {"arm64", "aarch64"}:
+        rows.append("Apple Silicon detected: good fit for small/medium Ollama models.")
+    elif platform.machine():
+        rows.append("Hardware note: offline LLM speed depends heavily on RAM/GPU.")
+    rows.append("Ollama: " + ("installed" if shutil.which("ollama") else "not installed"))
+    rows.append("Japanese reading-aid dependency: " + ("installed" if _setup_module_exists("pykakasi") else "not installed"))
+    return rows
+
+
+def _setup_module_exists(module_name: str) -> bool:
+    try:
+        __import__(module_name)
+        return True
+    except ImportError:
+        return False
+
+
+def _setup_recommendations(choice: _SetupChoice) -> list[_SetupRecommendation]:
+    learning = set(choice.learning)
+    content = choice.content
+    mt = choice.mt
+    recs: list[_SetupRecommendation] = []
+
+    if "ja" in learning or content == "anime":
+        recs.append(_SetupRecommendation(
+            key="jimaku",
+            title="Jimaku",
+            reason="Recommended for Japanese anime subtitles.",
+            cost="Free.",
+            setup_time="About 2 minutes.",
+            url=KEY_PROVIDERS["jimaku"]["url"],
+            provider="jimaku",
+        ))
+    if content in {"movie", "tv", "mixed"} or any(lang in learning for lang in ["en", "ko", "es", "fr", "zh"]):
+        recs.append(_SetupRecommendation(
+            key="wyzie",
+            title="Wyzie",
+            reason="Broad movie/TV subtitle search by IMDb/TMDB ID.",
+            cost="Free tier available; paid tier unlocks more sources and AI-translated subtitles.",
+            setup_time="About 2 minutes.",
+            url=KEY_PROVIDERS["wyzie"]["url"],
+            provider="wyzie",
+        ))
+        recs.append(_SetupRecommendation(
+            key="subdl",
+            title="SubDL",
+            reason="Fallback source when Wyzie misses, often useful for Korean, Spanish, Chinese, and European subtitles.",
+            cost="API key/account required; check SubDL account terms.",
+            setup_time="About 2 minutes.",
+            url=KEY_PROVIDERS["subdl"]["url"],
+            provider="subdl",
+            selected_by_default=False,
+        ))
+    if content in {"movie", "tv", "mixed"}:
+        recs.append(_SetupRecommendation(
+            key="tmdb",
+            title="TMDB",
+            reason="Improves title matching and enables full-season detection for non-anime TV.",
+            cost="Free API key.",
+            setup_time="About 3 minutes.",
+            url=KEY_PROVIDERS["tmdb"]["url"],
+            provider="tmdb",
+        ))
+    if mt == "offline":
+        recs.append(_SetupRecommendation(
+            key="argos",
+            title="Argos Translate",
+            reason="Free offline machine translation fallback.",
+            cost="Free.",
+            setup_time="0-5 minutes depending on language packages.",
+            selected_by_default=True,
+        ))
+    if mt == "online":
+        recs.append(_SetupRecommendation(
+            key="deepl",
+            title="DeepL",
+            reason="Best-quality online machine translation fallback.",
+            cost="Free API tier includes 500,000 characters/month; paid tiers available. Roughly 50-80 anime episodes depending on subtitle length.",
+            setup_time="About 2 minutes.",
+            url=KEY_PROVIDERS["deepl"]["url"],
+            provider="deepl",
+        ))
+    if "ja" in learning:
+        recs.append(_SetupRecommendation(
+            key="ja-reading",
+            title="Japanese pronunciation guide",
+            reason="Shows readings for kanji, for example 日本 -> にほん. This is often called furigana.",
+            cost="Free dependency: pykakasi.",
+            setup_time="About 1 minute if Python environment allows package installs.",
+            selected_by_default=True,
+        ))
+    recs.append(_SetupRecommendation(
+        key="config",
+        title="user_settings.toml",
+        reason="Saves your defaults so future commands are shorter.",
+        cost="Free.",
+        setup_time="Instant.",
+        selected_by_default=True,
+    ))
+    return recs
+
+
+def _setup_print_viewing_guidance(choice: _SetupChoice) -> None:
+    print()
+    print("Viewing guidance:")
+    if choice.venue == "tablet":
+        print("  Tablet/TV streaming apps usually cannot import custom subtitle files.")
+        print("  Recommended alternatives: web browser + asbplayer, Plex, or a local video player.")
+    elif choice.venue == "browser":
+        print("  Browser streaming works best with asbplayer.")
+        print("  For Japanese pronunciation guides: asbplayer Settings > Misc > Subtitles > Subtitle HTML = Render.")
+    elif choice.venue == "plex":
+        print("  Plex works best with SRT for normal playback, or merged study files for separate study sessions.")
+    elif choice.venue == "local":
+        print("  VLC/IINA/mpv work well with SRT. Use VTT when your player supports HTML/ruby subtitles.")
+    else:
+        print("  Mixed viewing is fine. Use SRT for compatibility; VTT for asbplayer ruby reading aids.")
+
+
+def _setup_print_recommendations(recs: list[_SetupRecommendation]) -> None:
+    print()
+    print("Recommended setup:")
+    for idx, rec in enumerate(recs, start=1):
+        mark = "recommended" if rec.selected_by_default else "optional"
+        print(f"\n  {idx}. {rec.title} ({mark})")
+        print(f"     {rec.reason}")
+        print(f"     Cost: {rec.cost}")
+        print(f"     Setup time: {rec.setup_time}")
+        if rec.key == "argos":
+            print("     Quality: lower, but private and free.")
+        if rec.key == "ja-reading":
+            print("     Output tip: VTT looks best in asbplayer.")
+        if rec.url:
+            print(f"     URL: {rec.url}")
+
+
+def _setup_config_text(choice: _SetupChoice) -> str:
+    fetch_langs = ",".join([*choice.learning, *[lang for lang in choice.native if lang not in choice.learning]]) or "ja,en"
+    merge_langs = fetch_langs
+    wants_ja_reading = "ja" in choice.learning
+    fmt = "vtt" if wants_ja_reading and choice.venue == "browser" else "srt"
+    mt_engine = "deepl" if choice.mt == "online" else "argos" if choice.mt == "offline" else ""
+    lines = [
+        "# Generated by `getsubtitle setup`",
+        "# API keys are not stored here. Use `getsubtitle --set-key PROVIDER`.",
+        "",
+        "[fetch]",
+        f'languages = "{fetch_langs}"',
+        'release_source = "auto"',
+        "",
+        "[modify]",
+        "single_line = true",
+        "strip_cc_noise = true",
+        f'furigana = "{"hiragana" if wants_ja_reading else "off"}"',
+        f'reading_format = "{fmt}"',
+        "",
+        "[merge]",
+        f'languages = "{merge_langs}"',
+        'sync = "auto"',
+        "preserve_lines = false",
+        f'format = "{fmt}"',
+        f'furigana = {"true" if wants_ja_reading else "false"}',
+        "",
+        "[output]",
+        'target = "~/Movies/Subtitles"',
+        'layout = "archive"',
+        'open_folder = false',
+        "",
+    ]
+    if mt_engine:
+        lines.extend([
+            "[translate]",
+            f'engine = "{mt_engine}"',
+            'mt_source = "auto"',
+            "",
+        ])
+    return "\n".join(lines)
+
+
+def _setup_write_config(choice: _SetupChoice) -> bool:
+    path = config_path()
+    if path.exists() and not _wizard_yesno(f"{path} already exists. Overwrite it?", default=False):
+        print(f"  Kept existing config: {path}")
+        return False
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(_setup_config_text(choice), encoding="utf-8")
+    print(f"  Created {path}")
+    return True
+
+
+def _setup_configure_provider(provider: str) -> bool:
+    info = KEY_PROVIDERS[provider]
+    if provider_has_api_key(provider):
+        print(f"  {info['label']}: already configured.")
+        return False
+    print(f"\n{info['label']} setup")
+    print(f"  Use: {info['use']}")
+    print(f"  URL: {info['url']}")
+    if _wizard_yesno("  Open this page in your default browser?", default=True):
+        try:
+            open_in_browser(str(info["url"]))
+        except CliError as e:
+            print(f"  Could not open browser automatically: {e}")
+    if not _wizard_yesno(f"  Paste and save {info['label']} API key now?", default=True):
+        return False
+    key = masked_input(f"{info['label']} API key: ").strip()
+    if not key:
+        print("  Skipped: no key entered.")
+        return False
+    if macos_keychain_available():
+        keychain_set(KEYCHAIN_SERVICE, str(info["account"]), key)
+        print(f"  Saved {info['label']} API key to macOS Keychain.")
+        return True
+    print(f"  Set this environment variable in your shell: {info['env']}={key}")
+    print("  (Not saved automatically because secure key storage is only implemented for macOS Keychain.)")
+    return False
+
+
+def _setup_try_examples() -> None:
+    print()
+    print("Try one:")
+    print()
+    print("Easy: Movie, TMDB link — Totoro, Japanese + English subtitles.")
+    print('  getsubtitle "https://www.themoviedb.org/movie/8392" -l ja,en')
+    print()
+    print("Medium: Series, IMDb link — Midnight Diner: Tokyo Stories, Japanese + Korean, with Japanese pronunciation guide.")
+    print('  getsubtitle "https://www.imdb.com/title/tt6150576/" -s 1 -e all -l ja,ko --romanization ja:hiragana --format vtt')
+    print()
+    print("Hard: Series + machine translation + merge — Friends S4E3-5, fill missing Spanish from French, then stack French/English/Spanish.")
+    print('  getsubtitle "https://www.themoviedb.org/tv/1668-friends" -s 4 -e 3-5 -l fr,en,es')
+    print('  getsubtitle translate ~/Movies/Subtitles/Friends -s 4 -e 3-5 -l es --engine deepl --mt-source es:fr')
+    print('  getsubtitle merge ~/Movies/Subtitles/Friends -s 4 -e 3-5 -l fr,en,es')
+    print()
+    print("Frequently used settings can be saved into a file:")
+    print('  getsubtitle "https://www.themoviedb.org/tv/1668-friends" -s 5 -e all --config ./friends.toml')
+
+
+def setup_main(argv: list[str]) -> int:
+    if argv and argv[0] in ("-h", "--help"):
+        sys.stdout.write(HELP_TOPICS["setup"])
+        return 0
+    if not _wizard_is_interactive():
+        raise CliError("setup needs an attached terminal. See: getsubtitle --help setup")
+
+    print("getsubtitle setup")
+    print("Let's tune this for what you watch and what you're learning.")
+    native = _setup_parse_langs(_wizard_prompt("What languages do you already understand? (comma-separated)", "english"))
+    learning = _setup_parse_langs(_wizard_prompt("What languages are you trying to learn? (comma-separated)", "japanese"))
+    content = _setup_select(
+        "What do you watch most?",
+        [("a", "Movies"), ("b", "TV shows"), ("c", "Anime"), ("d", "Mixed")],
+        "d",
+    )
+    content_value = {"a": "movie", "b": "tv", "c": "anime", "d": "mixed"}[content]
+    venue = _setup_select(
+        "Where do you watch it?",
+        [
+            ("a", "Streaming service via web browser"),
+            ("b", "Streaming service on tablet/TV app"),
+            ("c", "Plex"),
+            ("d", "Third-party/local video player with subtitle support"),
+            ("e", "Mixed"),
+        ],
+        "a",
+    )
+    venue_value = {"a": "browser", "b": "tablet", "c": "plex", "d": "local", "e": "mixed"}[venue]
+    mt = _setup_select(
+        "Do you want machine translation when subtitles are missing?",
+        [("a", "No"), ("b", "Free offline"), ("c", "Best quality online")],
+        "a",
+    )
+    mt_value = {"a": "none", "b": "offline", "c": "online"}[mt]
+    choice = _SetupChoice(native=native, learning=learning, content=content_value, venue=venue_value, mt=mt_value)
+
+    print()
+    print("System check:")
+    for row in _setup_system_summary():
+        print("  - " + row)
+    _setup_print_viewing_guidance(choice)
+    recs = _setup_recommendations(choice)
+    _setup_print_recommendations(recs)
+
+    completed: list[str] = []
+    skipped: list[str] = []
+    print()
+    print("Choose what to set up now. You can skip anything and come back later.")
+    for rec in recs:
+        default = rec.selected_by_default
+        if not _wizard_yesno(f"Set up {rec.title} now?", default=default):
+            skipped.append(rec.title)
+            continue
+        if rec.provider:
+            if _setup_configure_provider(rec.provider):
+                completed.append(rec.title)
+            else:
+                skipped.append(rec.title)
+        elif rec.key == "config":
+            if _setup_write_config(choice):
+                completed.append(rec.title)
+            else:
+                skipped.append(rec.title)
+        elif rec.key == "ja-reading":
+            if _setup_module_exists("pykakasi"):
+                print("  pykakasi already installed.")
+                completed.append(rec.title)
+            else:
+                print('  Install later with: pip install -e ".[furigana]"')
+                skipped.append(rec.title)
+        elif rec.key == "argos":
+            if _setup_module_exists("argostranslate"):
+                print("  argostranslate already installed.")
+                completed.append(rec.title)
+            else:
+                print("  Install later with: pip install argostranslate")
+                skipped.append(rec.title)
+
+    print()
+    print("Setup summary:")
+    print("  Configured: " + (", ".join(completed) if completed else "none yet"))
+    print("  Skipped: " + (", ".join(skipped) if skipped else "none"))
+    _setup_try_examples()
+    return 0
+
+
 def _apply_download_config_defaults(parser: argparse.ArgumentParser) -> None:
     """Push user_settings.toml pipeline-aligned values into the URL-form
     download parser as argparse defaults.
@@ -8674,12 +9053,14 @@ HELP_MAIN = """\
 getsubtitle — Find and prepare subtitles for language learning.
 
 Quick start:
+  getsubtitle setup                              # first-time setup helper
   getsubtitle -i                                  # interactive wizard (recommended for first run)
   getsubtitle URL                                 # download from a URL
   getsubtitle merge PATH -l ja,en                 # stack downloaded SRTs
   getsubtitle --config FILE.toml                  # run a saved workflow
 
 Subcommands (each has its own --help):
+  setup         First-time onboarding: keys, config, recommendations.
   interactive   Guided wizard — asks 11 questions, then prints / saves / runs.
   fetch         Download from URL, or scan a folder. (Bare URL works too.)
   translate     Fill missing-language SRTs via MT (argos / ollama / deepl).
@@ -8704,13 +9085,39 @@ Layered config (lowest → highest priority):
 
 Topic help:
   getsubtitle --help fetch | translate | modify | merge | pipeline
-  getsubtitle --help interactive | config | keys | furigana | sources | advanced
+  getsubtitle --help setup | interactive | config | keys | furigana | sources | advanced
 
-New here? Try `getsubtitle -i` for a guided setup wizard.
+New here? Try `getsubtitle setup` first, then `getsubtitle -i`.
 """
 
 
 HELP_TOPICS: dict[str, str] = {
+    "setup": """\
+First-time setup and onboarding.
+
+  getsubtitle setup
+
+Setup asks a few plain-language questions:
+  1. Languages you already understand
+  2. Languages you are learning
+  3. What you watch most: movie / TV shows / anime / mixed
+  4. Where you watch: web browser / tablet-TV app / Plex / local player
+  5. Machine translation preference: none / free offline / best online
+
+Then it shows recommendations with rough cost and setup time, lets you
+choose which ones to opt into, opens the provider pages in your browser,
+saves API keys with the same secure key flow as `--set-key`, optionally
+creates user_settings.toml, and finishes with Easy / Medium / Hard
+commands to try.
+
+Notes:
+  - API keys are never written to TOML.
+  - Streaming apps on tablets/TVs usually cannot import custom subtitle
+    files. Setup will recommend browser + asbplayer, Plex, or a local
+    player instead.
+  - For asbplayer + Japanese pronunciation guides, use VTT and set:
+    Settings > Misc > Subtitles > Subtitle HTML = Render.
+""",
     "keys": """\
 Manage API keys.
 
@@ -9427,7 +9834,7 @@ def _is_topic_help_request(argv: list[str]) -> bool:
             return True
         if len(argv) == 1:
             return True
-    if argv[0] in ("merge", "fetch", "sources"):
+    if argv[0] in ("merge", "fetch", "sources", "setup"):
         if any(a in ("-h", "--help") for a in argv[1:]):
             return True
         if len(argv) == 1:
@@ -9462,6 +9869,9 @@ def _show_topic_help(argv: list[str]) -> int:
         return 0
     if argv and argv[0] == "sources":
         sys.stdout.write(HELP_TOPICS["sources"])
+        return 0
+    if argv and argv[0] == "setup":
+        sys.stdout.write(HELP_TOPICS["setup"])
         return 0
     # `--help TOPIC` form: topic is the next non-flag arg.
     topic: str | None = None
@@ -10195,6 +10605,8 @@ def main(argv: list[str] | None = None) -> int:
     if raw_argv[0] in ("interactive",) or raw_argv[0] in ("-i", "--interactive"):
         # Strip the trigger so interactive_main sees clean argv.
         return interactive_main(raw_argv[1:])
+    if raw_argv[0] == "setup":
+        return setup_main(raw_argv[1:])
     # Topic-help dispatch — handled before argparse so we own the help UX.
     if _is_topic_help_request(raw_argv):
         return _show_topic_help(raw_argv)
