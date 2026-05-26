@@ -1,0 +1,19 @@
+# Example: download Simpsons Season 1 in English + French → /Download
+#
+# Run with:
+#   getsubtitle --config simpsons-s1-en-fr.toml
+#
+# Override per-run with CLI flags (CLI wins over this file):
+#   getsubtitle --languages english,spanish --config simpsons-s1-en-fr.toml
+#   getsubtitle --season 2 --config simpsons-s1-en-fr.toml
+#   getsubtitle --output ~/Movies/Simpsons --config simpsons-s1-en-fr.toml
+
+[fetch]
+source = "https://www.imdb.com/title/tt0096697/"   # IMDb ID for The Simpsons
+season = "1"                                        # ranges OK: "1-3"
+episode = "all"
+languages = "english,french"                        # full names OK; ISO codes too
+
+[output]
+target = "/Download"
+layout = "archive"                                  # archive | flat | plex

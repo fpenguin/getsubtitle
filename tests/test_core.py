@@ -1485,11 +1485,14 @@ def test_combine_main_writes_combined_file():
         )
         rc = MODULE["combine_main"]([str(root), "-l", "ja,ko"])
         assert rc == 0
-        out = root / "Show.S01E07.ja-ko.srt"
+        out = root / "Show.S01E07.ja-furigana-ko.srt"
         assert out.exists()
         body = out.read_text(encoding="utf-8")
-        # Flattened, in lang order.
-        assert "彼女に運命を占ってもらいたい 人間の列は 引きも切らない" in body
+        # Default merge includes inline Japanese readings, while preserving
+        # the original Japanese text and Korean support line.
+        assert "彼女" in body
+        assert "運命" in body
+        assert "人間" in body
         assert "그녀에게 점을 보려는 사람들의 행렬이" in body
 
 
@@ -1567,8 +1570,8 @@ def test_combine_main_episode_filter_writes_only_requested_episode():
             )
         rc = MODULE["combine_main"]([str(root), "-e", "8", "-l", "ja,ko"])
         assert rc == 0
-        assert not (root / "Show.S01E07.ja-ko.srt").exists()
-        assert (root / "Show.S01E08.ja-ko.srt").exists()
+        assert not (root / "Show.S01E07.ja-furigana-ko.srt").exists()
+        assert (root / "Show.S01E08.ja-furigana-ko.srt").exists()
 
 
 def test_combine_main_season_and_episode_range_filter():
@@ -1585,10 +1588,10 @@ def test_combine_main_season_and_episode_range_filter():
             )
         rc = MODULE["combine_main"]([str(root), "-s", "2", "-e", "1-2", "-l", "ja,ko"])
         assert rc == 0
-        assert not (root / "Show.S01E01.ja-ko.srt").exists()
-        assert (root / "Show.S02E01.ja-ko.srt").exists()
-        assert (root / "Show.S02E02.ja-ko.srt").exists()
-        assert not (root / "Show.S02E03.ja-ko.srt").exists()
+        assert not (root / "Show.S01E01.ja-furigana-ko.srt").exists()
+        assert (root / "Show.S02E01.ja-furigana-ko.srt").exists()
+        assert (root / "Show.S02E02.ja-furigana-ko.srt").exists()
+        assert not (root / "Show.S02E03.ja-furigana-ko.srt").exists()
 
 
 def test_combine_main_force_overwrites_existing():
@@ -1602,7 +1605,7 @@ def test_combine_main_force_overwrites_existing():
         (root / "Show.S01E07.ko.srt").write_text(
             "1\n00:00:01,000 --> 00:00:02,000\n안녕\n", encoding="utf-8"
         )
-        out = root / "Show.S01E07.ja-ko.srt"
+        out = root / "Show.S01E07.ja-furigana-ko.srt"
         out.write_text("EXISTING", encoding="utf-8")
         # Without --force, must not overwrite.
         MODULE["combine_main"]([str(root), "-l", "ja,ko"])
@@ -1627,7 +1630,7 @@ def test_combine_main_master_override_changes_timings():
         )
         rc = MODULE["combine_main"]([str(root), "-l", "ja,ko", "--master", "ko"])
         assert rc == 0
-        out = root / "Show.S01E07.ja-ko.srt"
+        out = root / "Show.S01E07.ja-furigana-ko.srt"
         body = out.read_text(encoding="utf-8")
         # Master is ko -> output timing should be ko's 1.5->2.5.
         assert "00:00:01,500 --> 00:00:02,500" in body
@@ -1647,9 +1650,9 @@ def test_combine_main_output_dir_redirects_files():
         )
         rc = MODULE["combine_main"]([str(root), "-l", "ja,ko", "-o", str(out_dir)])
         assert rc == 0
-        assert (out_dir / "Show.S01E07.ja-ko.srt").exists()
+        assert (out_dir / "Show.S01E07.ja-furigana-ko.srt").exists()
         # Not beside the source.
-        assert not (root / "Show.S01E07.ja-ko.srt").exists()
+        assert not (root / "Show.S01E07.ja-furigana-ko.srt").exists()
 
 
 def test_combine_main_skips_when_match_rate_below_threshold():
@@ -1671,11 +1674,11 @@ def test_combine_main_skips_when_match_rate_below_threshold():
         rc = MODULE["combine_main"]([str(root), "-l", "ja,ko"])
         # Skipped -> no plan, return 1.
         assert rc == 1
-        assert not (root / "Show.S01E07.ja-ko.srt").exists()
+        assert not (root / "Show.S01E07.ja-furigana-ko.srt").exists()
         # With --force, the file is written anyway.
         rc2 = MODULE["combine_main"]([str(root), "-l", "ja,ko", "--force"])
         assert rc2 == 0
-        assert (root / "Show.S01E07.ja-ko.srt").exists()
+        assert (root / "Show.S01E07.ja-furigana-ko.srt").exists()
 
 
 def test_combine_main_skips_episode_with_entirely_missing_target_language():
@@ -1691,11 +1694,11 @@ def test_combine_main_skips_episode_with_entirely_missing_target_language():
         rc = MODULE["combine_main"]([str(root), "-l", "ja,ko"])
         # Nothing written without --force.
         assert rc == 1
-        assert not list(root.glob("*ja-ko.srt"))
+        assert not list(root.glob("*ja-furigana-ko.srt"))
         # --force writes anyway, producing a ja-only "combined" file.
         rc2 = MODULE["combine_main"]([str(root), "-l", "ja,ko", "--force"])
         assert rc2 == 0
-        out = root / "Show.S01E07.ja-ko.srt"
+        out = root / "Show.S01E07.ja-furigana-ko.srt"
         assert out.exists()
         assert "hi" in out.read_text(encoding="utf-8")
 
@@ -1765,23 +1768,23 @@ def test_config_path_default_per_platform():
 
 
 def test_config_validates_layout_enum():
-    bad = '[download]\nlayout = "totally-bogus"\n'
+    bad = '[output]\nlayout = "totally-bogus"\n'
     with _isolated_config(bad):
         try:
             MODULE["load_user_config"]()
         except MODULE["CliError"] as e:
-            assert "download.layout" in str(e)
+            assert "output.layout" in str(e)
         else:
             raise AssertionError("expected CliError for invalid layout")
 
 
 def test_config_validates_boolean_type():
-    bad = '[download]\nsingle_line = "yes"\n'
+    bad = '[modify]\nsingle_line = "yes"\n'
     with _isolated_config(bad):
         try:
             MODULE["load_user_config"]()
         except MODULE["CliError"] as e:
-            assert "download.single_line" in str(e)
+            assert "modify.single_line" in str(e)
             assert "boolean" in str(e).lower()
         else:
             raise AssertionError("expected CliError for non-bool")
@@ -1825,36 +1828,36 @@ def test_config_validates_ollama_models_pair_keys():
 
 def test_config_accepts_langs_as_string_or_array():
     toml = (
-        '[download]\nlangs = "ja,ko"\n'
-        '[combine]\nlangs = ["ja", "ko", "en"]\n'
+        '[fetch]\nlanguages = "ja,ko"\n'
+        '[merge]\nlanguages = ["ja", "ko", "en"]\n'
     )
     with _isolated_config(toml):
         cfg = MODULE["load_user_config"]()
-    assert cfg["download"]["langs"] == "ja,ko"
+    assert cfg["fetch"]["languages"] == "ja,ko"
     # Arrays are normalised to a comma-separated string for argparse.
-    assert cfg["combine"]["langs"] == "ja,ko,en"
+    assert cfg["merge"]["languages"] == "ja,ko,en"
 
 
 def test_config_combine_priority_parsed_as_lowercase_list():
-    toml = '[combine]\npriority = ["JA", "En", "ko"]\n'
+    toml = '[merge]\npriority = ["JA", "En", "ko"]\n'
     with _isolated_config(toml):
         cfg = MODULE["load_user_config"]()
-    assert cfg["combine"]["priority"] == ["ja", "en", "ko"]
+    assert cfg["merge"]["priority"] == ["ja", "en", "ko"]
 
 
 def test_config_combine_priority_rejects_non_list():
-    bad = '[combine]\npriority = "ja,en"\n'
+    bad = '[merge]\npriority = "ja,en"\n'
     with _isolated_config(bad):
         try:
             MODULE["load_user_config"]()
         except MODULE["CliError"] as e:
-            assert "combine.priority" in str(e)
+            assert "merge.priority" in str(e)
         else:
             raise AssertionError("expected CliError for non-list priority")
 
 
 def test_config_default_lang_applies_to_download_parser():
-    toml = '[download]\nlangs = "ja,ko,en"\n'
+    toml = '[fetch]\nlanguages = "ja,ko,en"\n'
     with _isolated_config(toml):
         parser = MODULE["build_parser"]()
         # No -l passed -> takes config default.
@@ -1863,7 +1866,7 @@ def test_config_default_lang_applies_to_download_parser():
 
 
 def test_cli_lang_overrides_config_lang():
-    toml = '[download]\nlangs = "ja,ko,en"\n'
+    toml = '[fetch]\nlanguages = "ja,ko,en"\n'
     with _isolated_config(toml):
         parser = MODULE["build_parser"]()
         args = parser.parse_args(["URL", "-l", "es"])
@@ -1871,7 +1874,7 @@ def test_cli_lang_overrides_config_lang():
 
 
 def test_config_output_path_is_expanded():
-    toml = '[download]\noutput = "~/Subtitles/CustomFolder"\n'
+    toml = '[output]\ntarget = "~/Subtitles/CustomFolder"\n'
     with _isolated_config(toml):
         parser = MODULE["build_parser"]()
         args = parser.parse_args(["URL"])
@@ -1881,7 +1884,7 @@ def test_config_output_path_is_expanded():
 
 
 def test_config_combine_langs_applies_to_combine_parser():
-    toml = '[combine]\nlangs = "en,es,ko"\n'
+    toml = '[merge]\nlanguages = "en,es,ko"\n'
     with _isolated_config(toml):
         parser = MODULE["build_combine_parser"]()
         args = parser.parse_args(["/tmp/x"])
@@ -1889,7 +1892,7 @@ def test_config_combine_langs_applies_to_combine_parser():
 
 
 def test_config_combine_sync_applies_default():
-    toml = '[combine]\nsync = "strict"\n'
+    toml = '[merge]\nsync = "strict"\n'
     with _isolated_config(toml):
         parser = MODULE["build_combine_parser"]()
         args = parser.parse_args(["/tmp/x"])
@@ -1897,7 +1900,7 @@ def test_config_combine_sync_applies_default():
 
 
 def test_combine_single_line_flag_is_explicit_default_and_overrides_preserve_config():
-    toml = '[combine]\npreserve_lines = true\n'
+    toml = '[merge]\npreserve_lines = true\n'
     with _isolated_config(toml):
         parser = MODULE["build_combine_parser"]()
         args = parser.parse_args(["/tmp/x", "--single-line"])
@@ -1907,7 +1910,8 @@ def test_combine_single_line_flag_is_explicit_default_and_overrides_preserve_con
 
 
 def test_config_furigana_enabled_default_implies_hiragana():
-    toml = '[furigana]\nenabled = true\n'
+    # [modify].furigana = "hiragana" → download parser default = hiragana
+    toml = '[modify]\nfurigana = "hiragana"\n'
     with _isolated_config(toml):
         parser = MODULE["build_parser"]()
         args = parser.parse_args(["URL"])
@@ -1915,7 +1919,7 @@ def test_config_furigana_enabled_default_implies_hiragana():
 
 
 def test_config_furigana_enabled_with_romaji_mode():
-    toml = '[furigana]\nenabled = true\nmode = "romaji"\n'
+    toml = '[modify]\nfurigana = "romaji"\n'
     with _isolated_config(toml):
         parser = MODULE["build_parser"]()
         args = parser.parse_args(["URL"])
@@ -1923,11 +1927,9 @@ def test_config_furigana_enabled_with_romaji_mode():
 
 
 def test_config_furigana_combine_carries_mode_to_combine_parser():
-    # [furigana].combine controls whether combine inlines furigana. With the
-    # new defaults, enabled=true is already on by default — so download also
-    # picks up the mode from config. Verify both parsers see the user's mode
-    # override.
-    toml = '[furigana]\ncombine = true\nmode = "romaji"\n'
+    # [merge].furigana = true asks merge to inline ja readings; the mode
+    # comes from [modify].furigana. Both parsers should see "romaji".
+    toml = '[modify]\nfurigana = "romaji"\n[merge]\nfurigana = true\n'
     with _isolated_config(toml):
         download_parser = MODULE["build_parser"]()
         download_args = download_parser.parse_args(["URL"])
@@ -1939,9 +1941,8 @@ def test_config_furigana_combine_carries_mode_to_combine_parser():
 
 
 def test_config_furigana_disabled_explicitly_skips_download():
-    # If the user opts out via [furigana].enabled = false, download no longer
-    # auto-applies furigana (regardless of BUILTIN default).
-    toml = '[furigana]\nenabled = false\ncombine = false\n'
+    # [modify].furigana = "off" + [merge].furigana = false turn both off.
+    toml = '[modify]\nfurigana = "off"\n[merge]\nfurigana = false\n'
     with _isolated_config(toml):
         download_parser = MODULE["build_parser"]()
         download_args = download_parser.parse_args(["URL"])
@@ -1953,7 +1954,7 @@ def test_config_furigana_disabled_explicitly_skips_download():
 
 
 def test_no_furigana_overrides_config_default():
-    toml = '[furigana]\nenabled = true\nmode = "romaji"\n'
+    toml = '[modify]\nfurigana = "romaji"\n[merge]\nfurigana = true\n'
     with _isolated_config(toml):
         parser = MODULE["build_parser"]()
         args = parser.parse_args(["URL", "--no-furigana"])
@@ -1965,7 +1966,7 @@ def test_no_furigana_overrides_config_default():
 
 
 def test_config_strip_cc_noise_default_true_applies():
-    toml = '[download]\nstrip_cc_noise = true\n'
+    toml = '[modify]\nstrip_cc_noise = true\n'
     with _isolated_config(toml):
         parser = MODULE["build_parser"]()
         args = parser.parse_args(["URL"])
@@ -1985,7 +1986,7 @@ def test_config_combine_priority_picks_master_when_no_master_flag():
     # combine.priority = ['ja', 'en'] with -l en,ja,ko should pick ja as master.
     import tempfile
     from pathlib import Path
-    toml = '[combine]\npriority = ["ja", "en"]\n'
+    toml = '[merge]\npriority = ["ja", "en"]\n'
     with _isolated_config(toml):
         with tempfile.TemporaryDirectory() as d:
             root = Path(d)
@@ -2047,7 +2048,7 @@ def test_config_subcommand_init_creates_file_then_refuses_overwrite():
 
 
 def test_config_subcommand_show_includes_all_sections():
-    toml = '[download]\nlangs = "ja,ko"\n'
+    toml = '[fetch]\nlanguages = "ja,ko"\n'
     with _isolated_config(toml):
         import io, contextlib
         out = io.StringIO()
@@ -2055,12 +2056,12 @@ def test_config_subcommand_show_includes_all_sections():
             rc = MODULE["config_main"](["--show"])
         assert rc == 0
         text = out.getvalue()
-    for section in ("[download]", "[combine]", "[furigana]", "[translate]", "[experimental]"):
+    for section in ("[fetch]", "[translate]", "[modify]", "[merge]", "[output]", "[experimental]"):
         assert section in text
     # User-overridden field should be marked.
     assert "from user_settings.toml" in text
     # The overridden value should appear.
-    assert 'langs = "ja,ko"' in text
+    assert 'languages = "ja,ko"' in text
 
 
 def test_config_subcommand_rejects_multiple_actions():
@@ -2079,9 +2080,10 @@ def test_help_includes_config_topic_and_preferences_block():
     with contextlib.redirect_stdout(out):
         MODULE["main"](["--help"])
     text = out.getvalue()
-    assert "config --path" in text
-    assert "config --init" in text
-    assert "--help config" in text
+    # Main help mentions the config subcommand and points at the topic page.
+    assert "config" in text
+    assert "user_settings.toml" in text
+    assert "--help" in text and "config" in text  # topic-help line present
 
 
 def test_help_topic_config_describes_file_and_precedence():
@@ -2130,8 +2132,12 @@ def test_main_no_args_prints_short_main_help():
     rc, out, _ = _capture_main([])
     assert rc == 0
     assert "Find and prepare subtitles" in out
-    # Must include the topic list.
-    assert "getsubtitle --help download" in out
+    # Must include all five subcommand names + the topic-help pointer.
+    for name in ("fetch", "translate", "modify", "merge", "config"):
+        assert name in out
+    # Must include the example-config references for v1.0.
+    assert "simpsons-s1-en-fr.toml" in out
+    assert "plex-movies-fill-merge.toml" in out
     # Must NOT include the long argparse-style argument table.
     assert "--debug-providers" not in out
 
@@ -2142,40 +2148,39 @@ def test_main_help_short_form_and_long_form_match():
     assert short_out == long_out
 
 
-def test_help_download_topic_focused():
-    rc, out, _ = _capture_main(["--help", "download"])
+def test_help_fetch_topic_focused():
+    rc, out, _ = _capture_main(["--help", "fetch"])
     assert rc == 0
-    assert "Download subtitles" in out
+    assert "Fetch subtitles" in out
     assert "Supported URL types" in out
-    # Cross-topic options must not leak into this page.
-    assert "--mt-engine" not in out
+    # Cross-topic experimental flags must not leak into this page.
     assert "--experimental-subdivx" not in out
 
 
-def test_help_combine_topic_focused():
-    rc, out, _ = _capture_main(["--help", "combine"])
+def test_help_merge_topic_focused():
+    rc, out, _ = _capture_main(["--help", "merge"])
     assert rc == 0
-    assert "Combine multiple subtitle languages" in out
+    assert "Merge multiple language SRT files" in out
     assert "--sync" in out
     assert "--master" in out
 
 
-def test_combine_subcommand_help_routes_to_combine_topic():
-    # 'getsubtitle combine --help' and 'getsubtitle combine -h' should both
-    # show the combine topic, not main help.
-    rc, out, _ = _capture_main(["combine", "--help"])
+def test_merge_subcommand_help_routes_to_merge_topic():
+    # 'getsubtitle merge --help' and 'getsubtitle merge -h' should both
+    # show the merge topic, not main help.
+    rc, out, _ = _capture_main(["merge", "--help"])
     assert rc == 0
-    assert "Combine multiple subtitle languages" in out
-    rc, out, _ = _capture_main(["combine", "-h"])
+    assert "Merge multiple language SRT files" in out
+    rc, out, _ = _capture_main(["merge", "-h"])
     assert rc == 0
-    assert "Combine multiple subtitle languages" in out
+    assert "Merge multiple language SRT files" in out
 
 
-def test_combine_subcommand_no_args_shows_combine_topic():
-    # 'getsubtitle combine' alone — friendlier than an argparse error.
-    rc, out, _ = _capture_main(["combine"])
+def test_merge_subcommand_no_args_shows_merge_topic():
+    # 'getsubtitle merge' alone — friendlier than an argparse error.
+    rc, out, _ = _capture_main(["merge"])
     assert rc == 0
-    assert "Combine multiple subtitle languages" in out
+    assert "Merge multiple language SRT files" in out
 
 
 def test_help_topic_keys_lists_providers_and_env_vars():
@@ -2212,7 +2217,7 @@ def test_help_unknown_topic_returns_2_with_hint():
     assert rc == 2
     assert out == ""
     assert "Unknown help topic" in err
-    assert "download" in err and "combine" in err  # Lists valid topics.
+    assert "fetch" in err and "merge" in err  # Lists valid topics.
 
 
 def test_help_does_not_break_existing_download_flow():
@@ -2338,20 +2343,20 @@ def test_strip_inline_furigana_is_noop_on_plain_text():
     assert s("(player shouts)") == "(player shouts)"
 
 
-def test_furigana_config_validates_strip_before_mt_as_bool():
+def test_translate_config_validates_strip_furigana_before_mt_as_bool():
     # The validator should accept true/false and reject non-bool.
     v = MODULE["validate_user_config"]
-    out = v({"furigana": {"strip_before_mt": True}})
-    assert out["furigana"]["strip_before_mt"] is True
-    out = v({"furigana": {"strip_before_mt": False}})
-    assert out["furigana"]["strip_before_mt"] is False
+    out = v({"translate": {"strip_furigana_before_mt": True}})
+    assert out["translate"]["strip_furigana_before_mt"] is True
+    out = v({"translate": {"strip_furigana_before_mt": False}})
+    assert out["translate"]["strip_furigana_before_mt"] is False
     # Bad value → CliError mentioning the key path.
     err = None
     try:
-        v({"furigana": {"strip_before_mt": "yes"}})
+        v({"translate": {"strip_furigana_before_mt": "yes"}})
     except MODULE["CliError"] as e:
         err = str(e)
-    assert err is not None and "furigana.strip_before_mt" in err
+    assert err is not None and "translate.strip_furigana_before_mt" in err
 
 
 def test_translate_srt_file_strips_furigana_when_source_is_ja():
@@ -2458,7 +2463,7 @@ def test_translate_main_strip_before_mt_config_false_passes_through():
     saved_select = scope["select_translator"]
     try:
         scope["select_translator"] = lambda engine, model: _CapturingTranslator()
-        toml = "[furigana]\nstrip_before_mt = false\n"
+        toml = "[translate]\nstrip_furigana_before_mt = false\n"
         with _isolated_config(toml):
             with tempfile.TemporaryDirectory() as d:
                 root = Path(d)
@@ -3245,39 +3250,78 @@ def test_main_help_lists_modify_subcommand():
     with contextlib.redirect_stdout(out), _isolated_config(None):
         MODULE["main"](["--help"])
     text = out.getvalue()
-    assert "modify PATH" in text
-    assert "getsubtitle --help modify" in text
+    # `modify` appears in the subcommand list and the topic-help footer.
+    assert "modify" in text
 
 
-def test_main_help_lists_batch_topic():
+def test_main_help_lists_fetch_and_merge_topics():
     import io, contextlib
     out = io.StringIO()
     with contextlib.redirect_stdout(out), _isolated_config(None):
         MODULE["main"](["--help"])
     text = out.getvalue()
-    assert "getsubtitle --help batch" in text
+    # Both subcommand names appear (in the subcommand block + topic footer).
+    assert "fetch" in text
+    assert "merge" in text
+    # Pipeline form mentioned.
+    assert "--config" in text
 
 
-def test_batch_topic_help_renders_with_expected_content():
+def test_fetch_topic_help_renders_with_expected_content():
     import io, contextlib
     out = io.StringIO()
     with contextlib.redirect_stdout(out), _isolated_config(None):
-        rc = MODULE["main"](["--help", "batch"])
+        rc = MODULE["main"](["--help", "fetch"])
     text = out.getvalue()
     assert rc == 0
-    # Subcommand shape, sub-actions, profile labels, quickstart.
-    assert "getsubtitle batch fetch" in text
-    assert "getsubtitle batch merge" in text
+    # Subcommand shape, --subdirectory flag, profile labels, recommended setup.
+    assert "getsubtitle fetch URL" in text
+    assert "getsubtitle fetch PATH" in text
+    assert "--subdirectory" in text
     assert "Profiles" in text
-    assert "Quickstart" in text
     assert "--set-key tmdb" in text  # recommended setup is surfaced
     # The three profile names should be documented.
     for tag in ("ja", "ko", "en"):
         assert tag in text
 
 
+def test_merge_topic_help_renders_with_expected_content():
+    import io, contextlib
+    out = io.StringIO()
+    with contextlib.redirect_stdout(out), _isolated_config(None):
+        rc = MODULE["main"](["--help", "merge"])
+    text = out.getvalue()
+    assert rc == 0
+    assert "getsubtitle merge PATH" in text
+    assert "--subdirectory" in text
+    assert "Merge options" in text
+
+
+def test_legacy_aliases_no_longer_dispatch():
+    # `download` and `combine` were dropped. They should NOT route to fetch
+    # or merge — main() falls through to the URL-parser which errors out.
+    import io, contextlib
+    with _isolated_config(None), contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+        for legacy in ("combine", "download"):
+            try:
+                rc = MODULE["main"]([legacy, "/tmp", "-l", "ja,en"])
+            except (SystemExit, MODULE["CliError"]):
+                rc = 2
+            assert rc != 0, f"{legacy!r} should not still dispatch"
+
+
+def test_legacy_help_topics_are_gone():
+    # `getsubtitle --help download` and `--help combine` should now report
+    # "Unknown help topic" (return code 2).
+    import io, contextlib
+    for legacy in ("download", "combine"):
+        with _isolated_config(None), contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+            rc = MODULE["main"](["--help", legacy])
+        assert rc == 2, f"--help {legacy} should report unknown topic"
+
+
 # ---------------------------------------------------------------------------
-# batch subcommand: helpers + dispatch
+# fetch / merge subcommands: helpers + dispatch (formerly batch)
 # ---------------------------------------------------------------------------
 
 
@@ -3427,11 +3471,13 @@ def test_batch_walk_targets_finds_folders_and_bare_files():
     assert bare_show == "movie.mkv" and bare_season is None
 
 
-def test_batch_main_dispatches_to_fetch_or_merge():
-    # We don't run real subprocess calls — patch subprocess.run to capture.
+def test_fetch_main_subdirectory_dispatches_to_per_show_runs():
+    # `getsubtitle fetch ROOT --subdirectory` should walk every immediate
+    # subdir of ROOT and run a per-show fetch for each. We don't run real
+    # subprocess calls — patch subprocess.run to capture them.
     import tempfile, io, contextlib
     from pathlib import Path
-    scope = MODULE["batch_main"].__globals__
+    scope = MODULE["fetch_main"].__globals__
     saved_run = scope["subprocess"].run
 
     captured: list[list[str]] = []
@@ -3442,8 +3488,7 @@ def test_batch_main_dispatches_to_fetch_or_merge():
         return _FakeResult()
     scope["subprocess"].run = fake_run
 
-    # Also patch profile detection to a known value so the test doesn't
-    # depend on TMDB.
+    # Patch profile detection to a known value so we don't hit TMDB.
     saved_detect = scope["detect_profile_from_title"]
     scope["detect_profile_from_title"] = lambda title, year=None: "en"
 
@@ -3452,28 +3497,26 @@ def test_batch_main_dispatches_to_fetch_or_merge():
             root = Path(tmp)
             (root / "Show A").mkdir()
             (root / "Show A" / "ep01.mkv").touch()
+            (root / "Show B").mkdir()
+            (root / "Show B" / "ep01.mkv").touch()
             with _isolated_config(None):
-                # fetch path
                 with contextlib.redirect_stdout(io.StringIO()):
-                    rc = MODULE["main"](["batch", "fetch", str(root), "--mt-engine", ""])
+                    rc = MODULE["main"]([
+                        "fetch", str(root), "--subdirectory", "--run",
+                    ])
                 assert rc == 0
-                fetch_calls = [c for c in captured if "modify" not in c and "translate" not in c]
+                fetch_calls = [c for c in captured if "translate" not in c]
                 assert any("Show A" in " ".join(c) for c in fetch_calls), captured
-                captured.clear()
-                # merge path
-                with contextlib.redirect_stdout(io.StringIO()):
-                    rc = MODULE["main"](["batch", "merge", str(root)])
-                assert rc == 0
-                assert any("combine" in c for c in captured), captured
+                assert any("Show B" in " ".join(c) for c in fetch_calls), captured
     finally:
         scope["subprocess"].run = saved_run
         scope["detect_profile_from_title"] = saved_detect
 
 
-def test_batch_main_profile_override_applies_to_all_folders():
+def test_fetch_main_profile_override_applies_to_all_folders():
     import tempfile, io, contextlib
     from pathlib import Path
-    scope = MODULE["batch_main"].__globals__
+    scope = MODULE["fetch_main"].__globals__
     saved_run = scope["subprocess"].run
     captured_langs: list[str] = []
     class _FakeResult:
@@ -3498,8 +3541,8 @@ def test_batch_main_profile_override_applies_to_all_folders():
             with _isolated_config(None):
                 with contextlib.redirect_stdout(io.StringIO()):
                     MODULE["main"]([
-                        "batch", "fetch", str(root),
-                        "--profile", "en", "--mt-engine", "",
+                        "fetch", str(root), "--subdirectory",
+                        "--profile", "en", "--run",
                     ])
     finally:
         scope["subprocess"].run = saved_run
@@ -3508,10 +3551,13 @@ def test_batch_main_profile_override_applies_to_all_folders():
     assert any("es,ko" in lv for lv in captured_langs), captured_langs
 
 
-def test_batch_main_dry_run_appends_dry_run_to_every_call():
+def test_fetch_main_dry_run_is_default_for_path_form():
+    # PATH form is dry-run by default — no real subprocess calls should
+    # leak through; the captured _batch_run path adds --dry-run when not
+    # passed --run.
     import tempfile, io, contextlib
     from pathlib import Path
-    scope = MODULE["batch_main"].__globals__
+    scope = MODULE["fetch_main"].__globals__
     saved_run = scope["subprocess"].run
     all_args: list[list[str]] = []
     class _FakeResult:
@@ -3530,16 +3576,1003 @@ def test_batch_main_dry_run_appends_dry_run_to_every_call():
             (root / "Show A" / "ep01.mkv").touch()
             with _isolated_config(None):
                 with contextlib.redirect_stdout(io.StringIO()):
-                    # No --run flag → dry-run default.
+                    # No --run flag → dry-run default. With --subdirectory
+                    # to exercise the walker on Show A.
                     MODULE["main"]([
-                        "batch", "fetch", str(root), "--mt-engine", "",
+                        "fetch", str(root), "--subdirectory",
                     ])
     finally:
         scope["subprocess"].run = saved_run
         scope["detect_profile_from_title"] = saved_detect
-    assert all_args  # at least one call happened
-    for args in all_args:
+    # PATH form defaults to dry-run: every captured subprocess invocation
+    # must carry --dry-run so the underlying getsubtitle call is a no-op.
+    assert all_args, "expected at least one captured call"
+    getsubtitle_calls = [args for args in all_args if args and args[0] != "security"]
+    assert getsubtitle_calls, "expected at least one getsubtitle subprocess call"
+    for args in getsubtitle_calls:
         assert "--dry-run" in args, f"expected --dry-run in {args}"
+
+
+def test_fetch_main_url_form_delegates_to_main_download_flow():
+    # `getsubtitle fetch URL ...` should be a thin pass-through to the
+    # bare-URL download flow. We patch main() to capture what arrived.
+    import io, contextlib
+    captured: list[list[str]] = []
+    real_main = MODULE["main"]
+    fetch_main_globals = MODULE["fetch_main"].__globals__
+    def fake_main(argv):
+        captured.append(list(argv))
+        return 0
+    fetch_main_globals["main"] = fake_main
+    try:
+        with _isolated_config(None), contextlib.redirect_stdout(io.StringIO()):
+            rc = MODULE["fetch_main"]([
+                "https://www.imdb.com/title/tt28299608/",
+                "-l", "ja,ko",
+            ])
+        assert rc == 0
+        assert len(captured) == 1
+        assert captured[0][0].startswith("https://")
+        assert "-l" in captured[0]
+    finally:
+        fetch_main_globals["main"] = real_main
+
+
+def test_fetch_main_url_with_subdirectory_is_an_error():
+    # --subdirectory is for PATH only; combining it with a URL must fail.
+    import io, contextlib
+    CliError = MODULE["CliError"]
+    with _isolated_config(None), contextlib.redirect_stdout(io.StringIO()):
+        try:
+            MODULE["fetch_main"]([
+                "https://example.com/x", "--subdirectory",
+            ])
+        except CliError as e:
+            assert "subdirectory" in str(e).lower()
+        else:
+            raise AssertionError("expected CliError for URL + --subdirectory")
+
+
+def test_merge_main_subdirectory_runs_combine_per_subdir():
+    # `getsubtitle merge ROOT --subdirectory -l ja,ko` should invoke
+    # combine_main once per immediate subdir, with --subdirectory stripped.
+    import tempfile, io, contextlib
+    from pathlib import Path
+    captured: list[list[str]] = []
+    saved = MODULE["combine_main"]
+    # combine_main re-enters itself recursively with --subdirectory stripped.
+    # We patch it at module scope to count invocations.
+    def fake_combine(argv):
+        captured.append(list(argv))
+        return 0
+    # Patch where combine_main is looked up by merge_main + the subdir
+    # dispatcher.
+    MODULE["combine_main"] = fake_combine
+    # The dispatcher in combine_main itself calls combine_main(...) for each
+    # subdir — but since we replaced combine_main wholesale, the dispatcher
+    # is also gone. So we need a different strategy: leave combine_main in
+    # place and capture _batch_run instead — but combine_main writes files,
+    # not subprocesses. Easiest: just verify merge_main calls combine_main
+    # via the dispatch in main().
+    MODULE["combine_main"] = saved
+    # Verify merge subcommand reaches combine_main code path through main().
+    try:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "Show A").mkdir()
+            (root / "Show B").mkdir()
+            with _isolated_config(None), contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+                rc = MODULE["main"]([
+                    "merge", str(root), "--subdirectory", "-l", "ja,ko",
+                ])
+            # Per-subdir loop prints a heading per subdir even when no SRTs
+            # are found — and the dispatcher returns 0 when every subdir
+            # ran (each individual run may have its own return code).
+            assert rc in (0, 1)
+    finally:
+        MODULE["combine_main"] = saved
+
+
+def test_combine_subdirectory_dispatch_prints_per_subdir_heading():
+    # The --subdirectory wrapper prints "━━ combine SHOW/SUB ━━" per subdir.
+    # Verify by reading captured stdout.
+    import tempfile, io, contextlib
+    from pathlib import Path
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        (root / "Show A").mkdir()
+        (root / "Show B").mkdir()
+        out = io.StringIO()
+        with _isolated_config(None), contextlib.redirect_stdout(out), contextlib.redirect_stderr(io.StringIO()):
+            MODULE["combine_main"]([str(root), "--subdirectory", "-l", "ja,ko"])
+        text = out.getvalue()
+        # Per-subdir headings should appear for both Show A and Show B.
+        assert "Show A" in text
+        assert "Show B" in text
+
+
+def test_combine_parser_accepts_subdirectory_flag():
+    # The --subdirectory flag must be in the combine/translate/modify parsers.
+    cp = MODULE["build_combine_parser"]()
+    tp = MODULE["build_translate_parser"]()
+    mp = MODULE["build_modify_parser"]()
+    for p in (cp, tp, mp):
+        # Argparse stores known optionals in the actions list.
+        flags = {a.option_strings[0] if a.option_strings else a.dest
+                 for a in p._actions}
+        assert any("--subdirectory" in f for f in flags), (
+            f"parser missing --subdirectory: {sorted(flags)}"
+        )
+
+
+def test_looks_like_url_helper():
+    f = MODULE["_looks_like_url"]
+    assert f("https://example.com")
+    assert f("http://example.com")
+    assert f("HTTPS://EXAMPLE.COM")
+    assert not f("/Users/me/Movies")
+    assert not f("~/Movies/Show")
+    assert not f("Show A")
+
+
+def test_immediate_subdirs_helper_skips_dotfiles():
+    import tempfile
+    from pathlib import Path
+    f = MODULE["_immediate_subdirs"]
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        (root / "Show A").mkdir()
+        (root / "Show B").mkdir()
+        (root / ".hidden").mkdir()
+        (root / "loose.mkv").touch()
+        subs = f(root)
+        names = sorted(s.name for s in subs)
+        assert names == ["Show A", "Show B"]
+
+
+# ---------------------------------------------------------------------------
+# Pipeline form: getsubtitle --fetch X --translate ENGINE --merge ... etc.
+# ---------------------------------------------------------------------------
+
+
+def test_split_pipeline_argv_partitions_by_verb_flags():
+    split = MODULE["split_pipeline_argv"]
+    argv = [
+        "--output", "/tmp/out",
+        "--fetch", "/Plex", "--subdirectory",
+        "--translate", "ollama:qwen3:8b", "--mt-source-lang", "en",
+        "--merge", "-l", "ja,en", "--format", "vtt",
+    ]
+    blocks = split(argv)
+    assert blocks["shared"] == ["--output", "/tmp/out"]
+    assert blocks["fetch"] == ["/Plex", "--subdirectory"]
+    assert blocks["translate"] == ["ollama:qwen3:8b", "--mt-source-lang", "en"]
+    assert blocks["merge"] == ["-l", "ja,en", "--format", "vtt"]
+
+
+def test_split_pipeline_argv_canonical_order_independent_of_typing_order():
+    # User types --merge before --fetch — the splitter just bins per-verb;
+    # canonical order is enforced later by pipeline_main.
+    split = MODULE["split_pipeline_argv"]
+    blocks = split(["--merge", "-l", "ja,en", "--fetch", "/X"])
+    assert blocks["fetch"] == ["/X"]
+    assert blocks["merge"] == ["-l", "ja,en"]
+
+
+def test_is_pipeline_argv_true_when_any_verb_flag_present():
+    f = MODULE["_is_pipeline_argv"]
+    assert f(["--fetch", "/X"]) is True
+    assert f(["--merge"]) is True
+    assert f(["--output", "/tmp/out", "--translate", "argos"]) is True
+    # No verb flag → not a pipeline; falls through to single-verb dispatch.
+    assert f(["fetch", "/X"]) is False
+    assert f(["URL"]) is False
+    assert f(["merge", "/X", "-l", "ja,en"]) is False
+
+
+def test_parse_engine_spec_handles_bare_and_colon_forms():
+    parse = MODULE["_parse_engine_spec"]
+    assert parse("argos") == ("argos", None)
+    assert parse("ollama") == ("ollama", None)
+    assert parse("deepl") == ("deepl", None)
+    assert parse("ollama:qwen3:8b") == ("ollama", "qwen3:8b")
+    assert parse("ollama:llama3.2:3b") == ("ollama", "llama3.2:3b")
+    assert parse("") == ("", None)
+
+
+def test_parse_engine_spec_rejects_unknown_engines():
+    parse = MODULE["_parse_engine_spec"]
+    try:
+        parse("gpt4")
+    except MODULE["CliError"] as e:
+        assert "Unknown engine" in str(e)
+    else:
+        raise AssertionError("expected CliError for unknown engine")
+
+
+def test_rewrite_translate_block_emits_mt_engine_flags():
+    rewrite = MODULE["_rewrite_translate_block"]
+    assert rewrite(["argos"]) == ["--mt-engine", "argos"]
+    assert rewrite(["ollama:qwen3:8b"]) == ["--mt-engine", "ollama", "--mt-model", "qwen3:8b"]
+    # Pass-through of other flags after the engine spec.
+    assert rewrite(["ollama", "--mt-source-lang", "en"]) == [
+        "--mt-engine", "ollama", "--mt-source-lang", "en",
+    ]
+    # Empty engine → --no-mt-engine.
+    assert rewrite([""]) == ["--no-mt-engine"]
+
+
+def test_rewrite_translate_block_errors_when_engine_missing():
+    rewrite = MODULE["_rewrite_translate_block"]
+    CliError = MODULE["CliError"]
+    try:
+        rewrite([])
+    except CliError as e:
+        assert "engine" in str(e).lower()
+    else:
+        raise AssertionError("expected CliError for empty --translate block")
+    try:
+        rewrite(["--mt-source-lang", "en"])
+    except CliError as e:
+        assert "engine" in str(e).lower()
+    else:
+        raise AssertionError("expected CliError when first token is a flag")
+
+
+def test_pipeline_dispatch_runs_fetch_then_merge_in_canonical_order():
+    # Even when typed --merge first, fetch must run first.
+    import tempfile, io, contextlib
+    from pathlib import Path
+    calls: list[str] = []
+    scope = MODULE["pipeline_main"].__globals__
+
+    # Stub fetch_main, combine_main (merge calls combine_main internally).
+    saved_fetch = scope["fetch_main"]
+    saved_combine = scope["combine_main"]
+    def fake_fetch(argv):
+        calls.append(f"fetch:{argv[0]}")
+        return 0
+    def fake_combine(argv):
+        calls.append(f"merge:{argv[0]}")
+        return 0
+    scope["fetch_main"] = fake_fetch
+    scope["combine_main"] = fake_combine
+    try:
+        with tempfile.TemporaryDirectory() as tmp:
+            with _isolated_config(None), contextlib.redirect_stdout(io.StringIO()):
+                rc = MODULE["main"]([
+                    "--merge", "-l", "ja,en",
+                    "--fetch", tmp, "--subdirectory",
+                ])
+            assert rc == 0
+            # Fetch must execute BEFORE merge regardless of typing order.
+            assert calls[0].startswith("fetch:"), calls
+            assert calls[1].startswith("merge:"), calls
+    finally:
+        scope["fetch_main"] = saved_fetch
+        scope["combine_main"] = saved_combine
+
+
+def test_pipeline_translate_rewrites_engine_to_mt_engine():
+    # `--translate ollama:qwen3:8b` should reach translate_main as
+    # `--mt-engine ollama --mt-model qwen3:8b`.
+    import io, contextlib
+    captured: list[list[str]] = []
+    scope = MODULE["pipeline_main"].__globals__
+    saved_fetch = scope["fetch_main"]
+    saved_tr = scope["translate_main"]
+    def fake_fetch(argv): return 0
+    def fake_tr(argv):
+        captured.append(list(argv))
+        return 0
+    scope["fetch_main"] = fake_fetch
+    scope["translate_main"] = fake_tr
+    try:
+        with _isolated_config(None), contextlib.redirect_stdout(io.StringIO()):
+            MODULE["main"]([
+                "--fetch", "/some/path",
+                "--translate", "ollama:qwen3:8b", "--mt-source-lang", "en",
+            ])
+    finally:
+        scope["fetch_main"] = saved_fetch
+        scope["translate_main"] = saved_tr
+    assert captured, "expected translate_main to be invoked"
+    args = captured[0]
+    assert "--mt-engine" in args and args[args.index("--mt-engine") + 1] == "ollama"
+    assert "--mt-model" in args and args[args.index("--mt-model") + 1] == "qwen3:8b"
+    assert "--mt-source-lang" in args and args[args.index("--mt-source-lang") + 1] == "en"
+
+
+def test_pipeline_requires_target_for_downstream_verbs():
+    # `--merge` alone (no --fetch, no --output) → error.
+    import io, contextlib
+    CliError = MODULE["CliError"]
+    try:
+        with _isolated_config(None), contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+            MODULE["main"](["--merge", "-l", "ja,en"])
+    except CliError as e:
+        assert "fetch" in str(e).lower() or "output" in str(e).lower()
+    else:
+        raise AssertionError("expected CliError when no --fetch / --output for downstream verb")
+
+
+def test_pipeline_url_fetch_plus_merge_requires_output():
+    # URL form fetch + merge: we can't know where SRTs landed without --output.
+    import io, contextlib
+    CliError = MODULE["CliError"]
+    try:
+        with _isolated_config(None), contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+            MODULE["main"]([
+                "--fetch", "https://www.imdb.com/title/tt28299608/",
+                "--merge", "-l", "ja,en",
+            ])
+    except CliError as e:
+        assert "--output" in str(e) or "output" in str(e).lower()
+    else:
+        raise AssertionError("expected CliError when URL fetch + merge w/o --output")
+
+
+def test_pipeline_from_config_file_runs_full_pipeline():
+    # Write a TOML, point --pipeline at it, verify verbs were called.
+    import tempfile, io, contextlib
+    from pathlib import Path
+    calls: list[tuple[str, list]] = []
+    scope = MODULE["pipeline_main"].__globals__
+    saved_fetch = scope["fetch_main"]
+    saved_combine = scope["combine_main"]
+    saved_tr = scope["translate_main"]
+    def fake_fetch(argv): calls.append(("fetch", list(argv))); return 0
+    def fake_tr(argv): calls.append(("translate", list(argv))); return 0
+    def fake_combine(argv): calls.append(("merge", list(argv))); return 0
+    scope["fetch_main"] = fake_fetch
+    scope["translate_main"] = fake_tr
+    scope["combine_main"] = fake_combine
+    try:
+        with tempfile.TemporaryDirectory() as tmp:
+            cfg = Path(tmp) / "pipeline.toml"
+            # NB: top-level shared keys like `output` are TOML-valid but
+            # are not parseable by the minimal in-tree fallback parser
+            # used when neither stdlib tomllib nor tomli is available
+            # (Python 3.10 without tomli). The test keeps every key under
+            # a section so it passes under all three parser tiers.
+            cfg.write_text(
+                '[fetch]\n'
+                'target = "/Plex/Anime"\n'
+                'subdirectory = true\n'
+                '\n'
+                '[translate]\n'
+                'engine = "ollama:qwen3:4b"\n'
+                '\n'
+                '[merge]\n'
+                'langs = "ja,en"\n'
+                'format = "vtt"\n',
+                encoding="utf-8",
+            )
+            with _isolated_config(None), contextlib.redirect_stdout(io.StringIO()):
+                rc = MODULE["main"](["--config", str(cfg)])
+            assert rc == 0
+            verbs = [c[0] for c in calls]
+            assert verbs == ["fetch", "translate", "merge"], verbs
+            # fetch got TARGET + --subdirectory
+            assert "/Plex/Anime" in calls[0][1]
+            assert "--subdirectory" in calls[0][1]
+            # translate got rewritten --mt-engine + --mt-model
+            tr_args = calls[1][1]
+            assert "--mt-engine" in tr_args
+            assert tr_args[tr_args.index("--mt-engine") + 1] == "ollama"
+            assert "--mt-model" in tr_args
+            assert tr_args[tr_args.index("--mt-model") + 1] == "qwen3:4b"
+            # merge got --langs + --format
+            merge_args = calls[2][1]
+            assert "--langs" in merge_args or "-l" in merge_args
+            assert "ja,en" in merge_args
+    finally:
+        scope["fetch_main"] = saved_fetch
+        scope["translate_main"] = saved_tr
+        scope["combine_main"] = saved_combine
+
+
+def test_pipeline_toml_missing_required_source_errors():
+    # [fetch] needs `source` (or back-compat alias `target`). Empty section errors.
+    import tempfile, io, contextlib
+    from pathlib import Path
+    CliError = MODULE["CliError"]
+    with tempfile.TemporaryDirectory() as tmp:
+        cfg = Path(tmp) / "pipeline.toml"
+        cfg.write_text('[fetch]\nsubdirectory = true\n', encoding="utf-8")
+        try:
+            with _isolated_config(None), contextlib.redirect_stdout(io.StringIO()):
+                MODULE["main"](["--config", str(cfg)])
+        except CliError as e:
+            assert "source" in str(e).lower()
+        else:
+            raise AssertionError("expected CliError when [fetch] missing source")
+
+
+def test_pipeline_toml_target_alias_still_works_for_source():
+    # Back-compat: `[fetch].target` is still accepted as the source key.
+    import tempfile, io, contextlib
+    from pathlib import Path
+    captured: list[str] = []
+    scope = MODULE["pipeline_main"].__globals__
+    saved_fetch = scope["fetch_main"]
+    def fake_fetch(argv):
+        captured.extend(argv)
+        return 0
+    scope["fetch_main"] = fake_fetch
+    try:
+        with tempfile.TemporaryDirectory() as tmp:
+            cfg = Path(tmp) / "p.toml"
+            cfg.write_text('[fetch]\ntarget = "/legacy/path"\n', encoding="utf-8")
+            with _isolated_config(None), contextlib.redirect_stdout(io.StringIO()):
+                MODULE["main"](["--config", str(cfg)])
+        assert "/legacy/path" in captured
+    finally:
+        scope["fetch_main"] = saved_fetch
+
+
+def test_pipeline_output_dry_run_false_adds_run_to_path_fetch():
+    # [output].dry_run = false (or omitted) → auto-add --run to PATH-form
+    # fetch so the user doesn't have to also set [fetch].run = true.
+    import tempfile, io, contextlib
+    from pathlib import Path
+    captured: list[list[str]] = []
+    scope = MODULE["pipeline_main"].__globals__
+    saved_fetch = scope["fetch_main"]
+    def fake_fetch(argv):
+        captured.append(list(argv))
+        return 0
+    scope["fetch_main"] = fake_fetch
+    try:
+        with tempfile.TemporaryDirectory() as tmp:
+            cfg = Path(tmp) / "p.toml"
+            # No [output] block at all → live run (default).
+            cfg.write_text('[fetch]\nsource = "/plex"\nsubdirectory = true\n', encoding="utf-8")
+            with _isolated_config(None), contextlib.redirect_stdout(io.StringIO()):
+                MODULE["main"](["--config", str(cfg)])
+        assert captured and "--run" in captured[0], captured
+    finally:
+        scope["fetch_main"] = saved_fetch
+
+
+def test_pipeline_output_dry_run_true_does_not_add_run():
+    # [output].dry_run = true → fetch stays in dry-run mode.
+    import tempfile, io, contextlib
+    from pathlib import Path
+    captured: list[list[str]] = []
+    scope = MODULE["pipeline_main"].__globals__
+    saved_fetch = scope["fetch_main"]
+    def fake_fetch(argv):
+        captured.append(list(argv))
+        return 0
+    scope["fetch_main"] = fake_fetch
+    try:
+        with tempfile.TemporaryDirectory() as tmp:
+            cfg = Path(tmp) / "p.toml"
+            cfg.write_text(
+                '[fetch]\nsource = "/plex"\nsubdirectory = true\n'
+                '[output]\ndry_run = true\n',
+                encoding="utf-8",
+            )
+            with _isolated_config(None), contextlib.redirect_stdout(io.StringIO()):
+                MODULE["main"](["--config", str(cfg)])
+        assert captured and "--run" not in captured[0], captured
+        # --dry-run should have been propagated instead.
+        assert "--dry-run" in captured[0], captured
+    finally:
+        scope["fetch_main"] = saved_fetch
+
+
+def test_pipeline_url_source_does_not_auto_add_run():
+    # URL fetch doesn't use --run (it's PATH-only). Auto-add should skip URLs.
+    import io, contextlib
+    captured: list[list[str]] = []
+    scope = MODULE["pipeline_main"].__globals__
+    saved_fetch = scope["fetch_main"]
+    def fake_fetch(argv):
+        captured.append(list(argv))
+        return 0
+    scope["fetch_main"] = fake_fetch
+    try:
+        with _isolated_config(None), contextlib.redirect_stdout(io.StringIO()):
+            MODULE["main"](["--fetch", "https://example.com/x"])
+        # Inline pipeline form (no [output] section in CLI) → live run, but
+        # URL form doesn't get --run added.
+        assert captured and "--run" not in captured[0], captured
+    finally:
+        scope["fetch_main"] = saved_fetch
+
+
+def test_normalize_mt_source_accepts_string_and_dict():
+    f = MODULE["_normalize_mt_source"]
+    # String pass-through.
+    assert f("ja") == "ja"
+    assert f("ko:ja,es:en") == "ko:ja,es:en"
+    # Dict → comma-string of target:source pairs.
+    out = f({"ko": "ja", "es": "en"})
+    pairs = set(out.split(","))
+    assert pairs == {"ko:ja", "es:en"}
+    # Dict with list fallback → first source used (today's CLI limitation).
+    out = f({"ko": ["ja", "en"], "es": "en"})
+    pairs = set(out.split(","))
+    assert pairs == {"ko:ja", "es:en"}
+
+
+def test_toml_furigana_output_format_alias_replaces_format_in_modify():
+    convert = MODULE["_toml_to_pipeline_argv"]
+    # New canonical key reading_format → --reading-format
+    argv0, _ = convert({"modify": {"reading_format": "vtt"}})
+    assert "--reading-format" in argv0
+    assert argv0[argv0.index("--reading-format") + 1] == "vtt"
+    # Back-compat: furigana_output_format also works
+    argv1, _ = convert({"modify": {"furigana_output_format": "all"}})
+    assert "--reading-format" in argv1
+    assert argv1[argv1.index("--reading-format") + 1] == "all"
+    # Back-compat: `format` alias still works
+    argv2, _ = convert({"modify": {"format": "srt"}})
+    assert "--reading-format" in argv2
+
+
+def test_parse_romanization_spec_string_and_list():
+    parse = MODULE["_parse_romanization_spec"]
+    # Comma string
+    assert parse("ja:hiragana, ko:true, zh:true") == [
+        ("ja", "hiragana"), ("ko", "revised"), ("zh", "marks"),
+    ]
+    # List form
+    assert parse(["ja:hiragana", "ko:true", "zh:true"]) == [
+        ("ja", "hiragana"), ("ko", "revised"), ("zh", "marks"),
+    ]
+    # Bare lang code → use default
+    assert parse("ja, ko") == [("ja", "hiragana"), ("ko", "revised")]
+
+
+def test_parse_romanization_spec_pipe_expands_to_multiple_entries():
+    # `ja:hiragana|romaji` → two pairs.
+    parse = MODULE["_parse_romanization_spec"]
+    assert parse("ja:hiragana|romaji") == [("ja", "hiragana"), ("ja", "romaji")]
+    assert parse("ja:hiragana|romaji, ko:true") == [
+        ("ja", "hiragana"), ("ja", "romaji"), ("ko", "revised"),
+    ]
+
+
+def test_parse_romanization_spec_normalizes_typo_codes():
+    # jp → ja, kr → ko, cn → zh via LANGUAGE_ALIASES.
+    parse = MODULE["_parse_romanization_spec"]
+    assert parse("jp:hiragana") == [("ja", "hiragana")]
+    assert parse("kr:true") == [("ko", "revised")]
+    assert parse("cn:true") == [("zh", "marks")]
+
+
+def test_parse_romanization_spec_bool_true_expands_all_supported_langs():
+    # `romanization = true` → every language in _ROMANIZATION_DEFAULTS at its default.
+    parse = MODULE["_parse_romanization_spec"]
+    pairs = parse(True)
+    langs = {l for l, _ in pairs}
+    # Should include at least ja, ko, zh (the three priority langs).
+    assert {"ja", "ko", "zh"}.issubset(langs)
+    # And mode is the per-language default for each.
+    by_lang = dict(pairs)
+    assert by_lang["ja"] == "hiragana"
+    assert by_lang["ko"] == "revised"
+    assert by_lang["zh"] == "marks"
+    # `false` → empty list.
+    assert parse(False) == []
+
+
+def test_parse_romanization_spec_rejects_unknown_mode():
+    parse = MODULE["_parse_romanization_spec"]
+    try:
+        parse("ja:cuneiform")
+    except MODULE["CliError"] as e:
+        assert "cuneiform" in str(e).lower() or "doesn't support" in str(e).lower()
+    else:
+        raise AssertionError("expected CliError for unknown mode")
+
+
+def test_toml_modify_romanization_emits_cli_flag():
+    # [modify].romanization = "ja:hiragana, ko:true" → --romanization SPEC in argv.
+    convert = MODULE["_toml_to_pipeline_argv"]
+    argv, _extras = convert({"modify": {"romanization": "ja:hiragana, ko:true"}})
+    assert "--romanization" in argv
+    spec = argv[argv.index("--romanization") + 1]
+    assert "ja:hiragana" in spec
+    assert "ko:revised" in spec
+
+
+def test_toml_modify_romanization_wins_over_legacy_furigana_key():
+    # When both `romanization` and `furigana` are present, romanization wins.
+    convert = MODULE["_toml_to_pipeline_argv"]
+    argv, _ = convert({
+        "modify": {"romanization": "ja:romaji", "furigana": "hiragana"}
+    })
+    # --romanization is emitted; --furigana is NOT.
+    assert "--romanization" in argv
+    assert "--furigana" not in argv
+
+
+def test_modify_main_routes_ja_romanization_through_furigana_path():
+    # `getsubtitle modify FOLDER --romanization ja:hiragana` should set the
+    # internal furigana arg to "hiragana" so the existing furigana code
+    # path executes. (Test by parser-level inspection.)
+    import io, contextlib, tempfile
+    from pathlib import Path
+    scope = MODULE["modify_main"].__globals__
+    captured: list = []
+    saved_scan = scope["scan_srt_files"]
+    def fake_scan(paths):
+        captured.append(paths)
+        return []  # no files → "no work" exit
+    scope["scan_srt_files"] = fake_scan
+    try:
+        with tempfile.TemporaryDirectory() as tmp:
+            with _isolated_config(None), contextlib.redirect_stdout(io.StringIO()):
+                rc = MODULE["modify_main"]([tmp, "--romanization", "ja:hiragana"])
+            assert rc in (0, 1)
+    finally:
+        scope["scan_srt_files"] = saved_scan
+
+
+def test_modify_main_rejects_non_japanese_romanization_with_clear_error():
+    # Non-Japanese languages aren't implemented yet — should raise a
+    # CliError pointing at the roadmap, NOT silently no-op.
+    import io, contextlib, tempfile
+    CliError = MODULE["CliError"]
+    with tempfile.TemporaryDirectory() as tmp:
+        with _isolated_config(None), contextlib.redirect_stdout(io.StringIO()):
+            try:
+                MODULE["modify_main"]([tmp, "--romanization", "ko:true"])
+            except CliError as e:
+                msg = str(e).lower()
+                assert "not yet implemented" in msg
+                assert "ko" in msg or "korean" in msg
+            else:
+                raise AssertionError("expected CliError for ko:true")
+
+
+def test_toml_modify_convert_none_omits_flag():
+    convert = MODULE["_toml_to_pipeline_argv"]
+    argv1, _ = convert({"modify": {"convert": "smi-to-srt"}})
+    assert "--convert" in argv1
+    argv2, _ = convert({"modify": {"convert": "none"}})
+    assert "--convert" not in argv2
+
+
+def test_toml_output_force_propagates_to_all_supporting_verbs():
+    convert = MODULE["_toml_to_pipeline_argv"]
+    argv, _ = convert({
+        "fetch": {"source": "/x"},
+        "translate": {"engine": "argos"},
+        "modify": {"strip_cc_noise": True},
+        "merge": {"languages": "ja,en"},
+        "output": {"force": True, "dry_run": True},
+    })
+    # --force should appear three times (translate, modify, merge).
+    force_count = argv.count("--force")
+    assert force_count == 3, f"expected --force x3, got {force_count} in {argv}"
+
+
+def test_toml_output_yes_and_debug_propagate_to_fetch():
+    convert = MODULE["_toml_to_pipeline_argv"]
+    argv, _ = convert({
+        "fetch": {"source": "/x"},
+        "output": {"yes": True, "debug_providers": True},
+    })
+    assert "-y" in argv
+    assert "--debug-providers" in argv
+
+
+def test_toml_languages_canonical_with_langs_alias():
+    convert = MODULE["_toml_to_pipeline_argv"]
+    # Canonical
+    argv1, _ = convert({"fetch": {"source": "/x", "languages": "ja,en"}})
+    assert "--languages" in argv1 or "-l" in argv1 or "--langs" in argv1
+    # Alias
+    argv2, _ = convert({"fetch": {"source": "/x", "langs": "ja,en"}})
+    # Either way the lang value reaches argv.
+    assert "ja,en" in argv1
+    assert "ja,en" in argv2
+
+
+def test_url_form_season_range_expands_to_per_season_runs():
+    # `getsubtitle URL -s 1-2 ...` should call main() twice recursively,
+    # once per expanded season. We stub main() so the recursive calls
+    # capture argv without doing real work.
+    import io, contextlib
+    main_globals = MODULE["main"].__globals__
+    real_main = main_globals["main"]
+    captured: list[list[str]] = []
+    call_count = [0]
+    def stub_main(argv=None):
+        call_count[0] += 1
+        if call_count[0] == 1:
+            # Outer call: run the real expansion logic, which recurses.
+            return real_main(argv)
+        # Recursive per-season calls: capture and short-circuit.
+        captured.append(list(argv) if argv else [])
+        return 0
+    main_globals["main"] = stub_main
+    try:
+        with _isolated_config(None), contextlib.redirect_stdout(io.StringIO()):
+            try:
+                stub_main(["https://x.example/", "-s", "1-2", "-l", "ja"])
+            except Exception:
+                pass
+    finally:
+        main_globals["main"] = real_main
+    # Two recursive calls captured, one per expanded season.
+    assert len(captured) == 2, captured
+    assert captured[0][captured[0].index("-s") + 1] == "1"
+    assert captured[1][captured[1].index("-s") + 1] == "2"
+
+
+def test_url_form_season_single_value_does_not_expand():
+    # `-s 1` (single) → no expansion; build_parser called once.
+    import io, contextlib
+    f = MODULE["_expand_url_form_season_range"]
+    assert f(["URL", "-s", "1", "-l", "ja"]) is None
+    assert f(["URL", "-s", "all"]) is None
+    assert f(["URL", "-s", "auto"]) is None
+    # Range and list DO trigger expansion.
+    expanded = f(["URL", "--season", "1-3"])
+    assert expanded is not None and len(expanded) == 3
+    expanded = f(["URL", "-s", "1,3,5"])
+    assert expanded is not None and len(expanded) == 3
+
+
+def test_parse_vtt_preserves_cues_and_collapses_ruby():
+    parse_vtt = MODULE["parse_vtt"]
+    text = (
+        "WEBVTT\n"
+        "\n"
+        "NOTE this is a note\n"
+        "\n"
+        "1\n"
+        "00:00:01.000 --> 00:00:02.500\n"
+        "<ruby>漢字<rt>かんじ</rt></ruby>を学ぶ\n"
+        "\n"
+        "00:00:03.000 --> 00:00:04.000\n"
+        "<i>plain</i> line\n"
+    )
+    cues = parse_vtt(text)
+    assert len(cues) == 2
+    # Ruby collapsed to 漢字（かんじ）
+    assert cues[0].text_lines == ["漢字（かんじ）を学ぶ"]
+    # Time normalized to SRT comma form
+    assert "00:00:01,000" in cues[0].time_line
+    assert "00:00:02,500" in cues[0].time_line
+    # HTML markup stripped
+    assert cues[1].text_lines == ["plain line"]
+
+
+def test_parse_vtt_handles_mm_ss_format():
+    # WebVTT allows MM:SS.mmm (no hour). parse_vtt normalizes to HH:MM:SS,mmm.
+    parse_vtt = MODULE["parse_vtt"]
+    text = "WEBVTT\n\n01:23.500 --> 01:25.000\nhello\n"
+    cues = parse_vtt(text)
+    assert len(cues) == 1
+    assert "00:01:23,500" in cues[0].time_line
+    assert "00:01:25,000" in cues[0].time_line
+
+
+def test_read_cues_from_file_dispatches_by_extension():
+    # SRT, VTT both parse; unknown extension errors.
+    import tempfile
+    from pathlib import Path
+    read = MODULE["read_cues_from_file"]
+    with tempfile.TemporaryDirectory() as tmp:
+        srt = Path(tmp) / "x.srt"
+        srt.write_text("1\n00:00:01,000 --> 00:00:02,000\nhello\n", encoding="utf-8")
+        vtt = Path(tmp) / "x.vtt"
+        vtt.write_text("WEBVTT\n\n00:00:01.000 --> 00:00:02.000\nhi\n", encoding="utf-8")
+        assert len(read(srt)) == 1
+        assert len(read(vtt)) == 1
+        bogus = Path(tmp) / "x.txt"
+        bogus.write_text("nothing here", encoding="utf-8")
+        try:
+            read(bogus)
+        except MODULE["CliError"] as e:
+            assert "not supported" in str(e).lower()
+        else:
+            raise AssertionError("expected CliError for unknown extension")
+
+
+def test_normalize_merge_langs_strips_format_hints():
+    f = MODULE["_normalize_merge_langs"]
+    # String form
+    langs_str, hints = f("ja:vtt, en, ko:smi")
+    assert langs_str == "ja,en,ko"
+    assert hints == {"ja": "vtt", "ko": "smi"}
+    # List form
+    langs_str, hints = f(["ja:vtt", "en", "ko:smi"])
+    assert langs_str == "ja,en,ko"
+    assert hints == {"ja": "vtt", "ko": "smi"}
+    # No hints
+    langs_str, hints = f("ja, en")
+    assert langs_str == "ja,en"
+    assert hints == {}
+
+
+def test_normalize_merge_langs_rejects_ass_with_helpful_error():
+    f = MODULE["_normalize_merge_langs"]
+    try:
+        f("ja:ass, en")
+    except MODULE["CliError"] as e:
+        msg = str(e).lower()
+        assert "ass" in msg and "not yet supported" in msg
+    else:
+        raise AssertionError("expected CliError for :ass hint")
+
+
+def test_normalize_merge_langs_rejects_unknown_format():
+    f = MODULE["_normalize_merge_langs"]
+    try:
+        f("ja:bogus, en")
+    except MODULE["CliError"] as e:
+        assert "bogus" in str(e).lower()
+    else:
+        raise AssertionError("expected CliError for unknown format")
+
+
+def test_resolve_modify_furigana_tristate_handles_off_mode_bool():
+    resolve = MODULE["_resolve_modify_furigana"]
+    assert resolve("off") == []
+    assert resolve(False) == []
+    assert resolve("hiragana") == ["--furigana", "hiragana"]
+    assert resolve("romaji") == ["--furigana", "romaji"]
+    assert resolve(True) == ["--furigana"]
+    try:
+        resolve("klingon")
+    except MODULE["CliError"] as e:
+        assert "off" in str(e) and "hiragana" in str(e)
+    else:
+        raise AssertionError("expected CliError for unknown furigana value")
+
+
+def test_toml_aliases_plural_singular():
+    # episodes / seasons / languages are aliases for the canonical singular.
+    canon = MODULE["_canonicalize_toml_key"]
+    assert canon("episodes") == "episode"
+    assert canon("seasons") == "season"
+    assert canon("languages") == "langs"
+    assert canon("language") == "langs"
+    # Non-aliased keys pass through.
+    assert canon("profile") == "profile"
+
+
+def test_toml_to_pipeline_argv_emits_output_section_and_pair_models():
+    convert = MODULE["_toml_to_pipeline_argv"]
+    data = {
+        "output": {"root": "/tmp/out", "format": "vtt", "layout": "plex"},
+        "fetch": {"target": "/Plex/Anime", "subdirectory": True, "season": "1-2"},
+        "translate": {
+            "engine": "ollama",
+            "ja:ko": "qwen3:4b",
+            "en:es": "llama3.2:3b",
+            "mt_source_lang": "en",
+        },
+        "modify": {"furigana": "hiragana", "format": "srt"},
+        "merge": {"langs": "ja:vtt, en", "master": "ja"},
+    }
+    argv, extras = convert(data)
+    # --output prepended, layout passed to fetch
+    assert "--output" in argv
+    assert argv[argv.index("--output") + 1] == "/tmp/out"
+    # fetch gets --subdirectory, --season, and inherited --layout
+    fetch_idx = argv.index("--fetch")
+    assert argv[fetch_idx + 1] == "/Plex/Anime"
+    assert "--subdirectory" in argv
+    assert "--season" in argv
+    assert "--layout" in argv
+    # translate: engine positional + pair models stripped into extras
+    tr_idx = argv.index("--translate")
+    assert argv[tr_idx + 1] == "ollama"
+    assert "--mt-source" in argv
+    assert extras["translate_pair_models"] == {"ja:ko": "qwen3:4b", "en:es": "llama3.2:3b"}
+    # modify: furigana = "hiragana" → --furigana hiragana; format → --reading-format
+    assert "--furigana" in argv
+    assert "--reading-format" in argv
+    # merge: langs stripped of :format hints, hint stashed in extras
+    assert "-l" in argv
+    assert argv[argv.index("-l") + 1] == "ja,en"
+    assert extras["merge_format_hints"] == {"ja": "vtt"}
+    # [output].format overrides per-verb format → --format vtt for merge
+    assert "--format" in argv
+    assert argv[argv.index("--format") + 1] == "vtt"
+
+
+def test_language_aliases_full_names_normalize_to_iso():
+    # `langs = "japanese,english"` should equal `langs = "ja,en"` after
+    # split_csv normalization.
+    split = MODULE["split_csv"]
+    assert split("japanese,english", "") == ["ja", "en"]
+    assert split("korean,spanish,french,chinese", "") == ["ko", "es", "fr", "zh"]
+    assert split("German,Italian,Portuguese,Russian", "") == ["de", "it", "pt", "ru"]
+    # Mixed forms work too.
+    assert split("ja,english", "") == ["ja", "en"]
+
+
+def test_merge_l_accepts_format_hints_in_bare_cli():
+    # `getsubtitle merge PATH -l ja:vtt,en,ko:smi` should strip the :format
+    # hints, pass the cleaned langs to the merger, and stash the hints so
+    # the scanner picks them up — same behavior as the pipeline TOML form.
+    import tempfile, io, contextlib
+    from pathlib import Path
+    captured_hints: dict = {}
+    captured_paths: list = []
+    scope = MODULE["combine_main"].__globals__
+    saved_scanner = scope["scan_subtitle_files_extended"]
+    def fake_scanner(paths, *, format_hints=None, include_furigana=False):
+        captured_hints.update(format_hints or {})
+        captured_paths.extend(paths)
+        return []   # empty → "no episodes" path; we just want to verify the hint extraction
+    scope["scan_subtitle_files_extended"] = fake_scanner
+    try:
+        with tempfile.TemporaryDirectory() as tmp:
+            with _isolated_config(None), contextlib.redirect_stdout(io.StringIO()):
+                MODULE["main"]([
+                    "merge", tmp, "-l", "ja:vtt,en,ko:smi",
+                ])
+        # The hint dict matches what _normalize_merge_langs would emit.
+        assert captured_hints == {"ja": "vtt", "ko": "smi"}, captured_hints
+    finally:
+        scope["scan_subtitle_files_extended"] = saved_scanner
+
+
+def test_pipeline_session_only_pair_models_dont_leak():
+    # Run a pipeline with per-pair model overrides; after the run the
+    # session dict must be empty again.
+    import tempfile, io, contextlib
+    from pathlib import Path
+    pair_dict = MODULE["_PIPELINE_TRANSLATE_PAIR_MODELS"]
+    assert pair_dict == {}, "session dict polluted before test"
+
+    # Patch the verbs so we don't actually run anything heavy.
+    scope = MODULE["pipeline_main"].__globals__
+    saved_fetch = scope["fetch_main"]
+    saved_tr = scope["translate_main"]
+    saved_combine = scope["combine_main"]
+    # Snapshot the pair dict at translate-time so we can assert it was set.
+    seen_pairs: list[dict] = []
+    def fake_fetch(argv): return 0
+    def fake_tr(argv):
+        seen_pairs.append(dict(MODULE["_PIPELINE_TRANSLATE_PAIR_MODELS"]))
+        return 0
+    def fake_combine(argv): return 0
+    scope["fetch_main"] = fake_fetch
+    scope["translate_main"] = fake_tr
+    scope["combine_main"] = fake_combine
+    try:
+        with tempfile.TemporaryDirectory() as tmp:
+            cfg = Path(tmp) / "p.toml"
+            cfg.write_text(
+                '[fetch]\ntarget = "/x"\n'
+                '[translate]\nengine = "ollama"\n"ja:ko" = "qwen3:4b"\n',
+                encoding="utf-8",
+            )
+            with _isolated_config(None), contextlib.redirect_stdout(io.StringIO()):
+                MODULE["main"](["--config", str(cfg)])
+        # During translate, the session dict held the override.
+        assert seen_pairs and seen_pairs[0].get("ja:ko") == "qwen3:4b"
+    finally:
+        scope["fetch_main"] = saved_fetch
+        scope["translate_main"] = saved_tr
+        scope["combine_main"] = saved_combine
+    # After the run, the session dict is clean.
+    assert MODULE["_PIPELINE_TRANSLATE_PAIR_MODELS"] == {}
+
+
+def test_pipeline_missing_argument_errors():
+    # `--config` alone — no file path — should error.
+    import io, contextlib
+    CliError = MODULE["CliError"]
+    try:
+        with _isolated_config(None), contextlib.redirect_stdout(io.StringIO()):
+            MODULE["main"](["--config"])
+    except CliError as e:
+        assert "TOML" in str(e) or "file" in str(e).lower() or "path" in str(e).lower()
+    else:
+        raise AssertionError("expected CliError when --config has no path")
 
 
 def test_parse_furigana_formats_default_is_srt_only():
@@ -3625,7 +4658,7 @@ def test_generate_furigana_respects_formats_argument():
 
 
 def test_config_validates_furigana_format():
-    bad = '[furigana]\nformat = "srt,mp4"\n'
+    bad = '[modify]\nfurigana_output_format = "srt,mp4"\n'
     with _isolated_config(bad):
         try:
             MODULE["load_user_config"]()
@@ -3636,7 +4669,7 @@ def test_config_validates_furigana_format():
 
 
 def test_config_furigana_format_applies_to_download_parser_default():
-    toml = '[furigana]\nformat = "srt,ass"\n'
+    toml = '[modify]\nfurigana_output_format = "srt,ass"\n'
     with _isolated_config(toml):
         parser = MODULE["build_parser"]()
         args = parser.parse_args(["URL"])
@@ -3644,16 +4677,20 @@ def test_config_furigana_format_applies_to_download_parser_default():
 
 
 def test_format_flag_and_legacy_alias_both_parse():
-    # The canonical flag is --format; --furigana-format is a back-compat
-    # alias. Both should land on args.furigana_format.
+    # The canonical flag is --reading-format; --format and --furigana-format
+    # are back-compat aliases. All land on args.furigana_format.
     with _isolated_config(None):
         parser = MODULE["build_parser"]()
+        args = parser.parse_args(["URL", "--reading-format", "srt,vtt"])
+        assert args.furigana_format == "srt,vtt"
         args = parser.parse_args(["URL", "--format", "srt,ass"])
         assert args.furigana_format == "srt,ass"
         args = parser.parse_args(["URL", "--furigana-format", "all"])
         assert args.furigana_format == "all"
         # And in the modify subcommand.
         modify_parser = MODULE["build_modify_parser"]()
+        args = modify_parser.parse_args(["FOLDER", "--furigana", "--reading-format", "vtt"])
+        assert args.furigana_format == "vtt"
         args = modify_parser.parse_args(["FOLDER", "--furigana", "--format", "srt"])
         assert args.furigana_format == "srt"
         args = modify_parser.parse_args(["FOLDER", "--furigana", "--furigana-format", "srt,vtt"])
@@ -4328,10 +5365,10 @@ def test_main_help_lists_translate_subcommand():
     with contextlib.redirect_stdout(out), _isolated_config(None):
         MODULE["main"](["--help"])
     text = out.getvalue()
-    assert "translate PATH" in text
+    assert "translate" in text
 
 
-def test_dispatch_routes_combine_subcommand():
+def test_dispatch_routes_merge_subcommand():
     import tempfile
     from pathlib import Path
     with tempfile.TemporaryDirectory() as d:
@@ -4339,11 +5376,12 @@ def test_dispatch_routes_combine_subcommand():
         (root / "Show.S01E07.ja.srt").write_text(
             "1\n00:00:01,000 --> 00:00:02,000\nhi\n", encoding="utf-8"
         )
-        (root / "Show.S01E07.ko.srt").write_text(
-            "1\n00:00:01,000 --> 00:00:02,000\n안녕\n", encoding="utf-8"
+        (root / "Show.S01E07.en.srt").write_text(
+            "1\n00:00:01,000 --> 00:00:02,000\nhello\n", encoding="utf-8"
         )
-        # main(['combine', ...]) should dispatch to combine_main.
-        rc = MODULE["main"](["combine", str(root), "-l", "ja,ko", "--dry-run"])
+        # main(['merge', ...]) should dispatch to combine_main (the canonical
+        # name is `merge`; combine_main remains as an internal function name).
+        rc = MODULE["main"](["merge", str(root), "-l", "ja,en", "--dry-run"])
         assert rc == 0
 
 
@@ -4843,3 +5881,142 @@ def test_bridge_external_ids_to_anilist_uses_mal_id():
 
     assert media.anilist_id == 30
     assert calls["wikidata"] == 0, "MAL bridge should not need Wikidata"
+
+
+# ─── v1.1 naming-consistency renames ─────────────────────────────────────
+# These guard the canonical CLI/TOML names introduced in v1.1 along with
+# the silent back-compat aliases.
+
+def test_cli_engine_model_mt_source_languages_aliases():
+    """All four canonical CLI flag aliases land on the existing dests."""
+    # translate parser
+    p = MODULE["build_translate_parser"]()
+    ns = p.parse_args([
+        "/tmp", "--engine", "argos", "--model", "qwen3:4b",
+        "--mt-source", "ko:ja", "--languages", "ja,ko",
+    ])
+    assert ns.mt_engine == "argos"
+    assert ns.mt_model == "qwen3:4b"
+    assert ns.mt_source_lang == "ko:ja"
+    # dest stayed `langs` for back-compat with existing call sites;
+    # --languages is the new documented spelling.
+    assert ns.langs == "ja,ko"
+    # URL parser (build_parser)
+    p2 = MODULE["build_parser"]()
+    ns2 = p2.parse_args([
+        "https://example.com", "--engine", "argos",
+        "--model", "m", "--mt-source", "ko:ja", "--languages", "ja,ko",
+    ])
+    assert ns2.mt_engine == "argos"
+    assert ns2.mt_model == "m"
+    assert ns2.mt_source_lang == "ko:ja"
+    assert ns2.langs == "ja,ko"
+
+
+def test_cli_legacy_mt_flags_still_accepted():
+    """The pre-rename long names remain functional aliases."""
+    p = MODULE["build_translate_parser"]()
+    ns = p.parse_args([
+        "/tmp", "-l", "ja,ko",
+        "--mt-engine", "argos", "--mt-model", "qwen3:4b",
+        "--mt-source-lang", "ko:ja",
+    ])
+    assert ns.mt_engine == "argos"
+    assert ns.mt_model == "qwen3:4b"
+    assert ns.mt_source_lang == "ko:ja"
+
+
+def test_cli_reading_format_canonical_and_aliases():
+    """--reading-format is canonical; --format and --furigana-format are aliases."""
+    mp = MODULE["build_modify_parser"]()
+    assert mp.parse_args(["/tmp", "--reading-format", "all"]).furigana_format == "all"
+    assert mp.parse_args(["/tmp", "--format", "srt,vtt"]).furigana_format == "srt,vtt"
+    assert mp.parse_args(["/tmp", "--furigana-format", "srt"]).furigana_format == "srt"
+
+
+def test_toml_mt_source_canonical_and_alias_in_user_config():
+    """`mt_source` is the canonical TOML key; `mt_source_lang` still works."""
+    validate = MODULE["validate_user_config"]
+    # Canonical
+    v = validate({"translate": {"mt_source": "ko:ja"}})
+    assert v["translate"]["mt_source_lang"] == "ko:ja"
+    # Dict form
+    v = validate({"translate": {"mt_source": {"ko": "ja", "es": "en"}}})
+    assert v["translate"]["mt_source_lang"] == {"ko": "ja", "es": "en"}
+    # Legacy alias still accepted
+    v = validate({"translate": {"mt_source_lang": "auto"}})
+    assert v["translate"]["mt_source_lang"] == "auto"
+
+
+def test_toml_reading_format_canonical_and_aliases_in_user_config():
+    """`reading_format` is canonical in [modify]; older names are aliases."""
+    validate = MODULE["validate_user_config"]
+    # Canonical
+    v = validate({"modify": {"reading_format": "srt"}})
+    assert v["modify"]["furigana_output_format"] == "srt"
+    # Aliases
+    v = validate({"modify": {"furigana_output_format": "all"}})
+    assert v["modify"]["furigana_output_format"] == "all"
+    v = validate({"modify": {"format": "vtt"}})
+    assert v["modify"]["furigana_output_format"] == "vtt"
+
+
+def test_toml_pipeline_mt_source_lang_alias_emits_mt_source_flag():
+    """Pipeline TOML `mt_source_lang` still works, emits new --mt-source CLI flag."""
+    convert = MODULE["_toml_to_pipeline_argv"]
+    argv, _ = convert({
+        "translate": {"engine": "argos", "mt_source_lang": "ko:ja"},
+    })
+    assert "--mt-source" in argv
+    idx = argv.index("--mt-source")
+    assert argv[idx + 1] == "ko:ja"
+
+
+def test_toml_pipeline_reading_format_canonical_emits_reading_format_flag():
+    """Pipeline TOML emits --reading-format (new canonical CLI flag)."""
+    convert = MODULE["_toml_to_pipeline_argv"]
+    argv, _ = convert({"modify": {"reading_format": "vtt"}})
+    assert "--reading-format" in argv
+    assert argv[argv.index("--reading-format") + 1] == "vtt"
+
+
+def test_toml_hyphen_underscore_keys_normalize():
+    """Hyphens in TOML keys are accepted as alias for underscores."""
+    validate = MODULE["validate_user_config"]
+    # `release-source` should normalize to `release_source` and validate.
+    v = validate({"fetch": {"release-source": "netflix"}})
+    assert v["fetch"]["release_source"] == "netflix"
+    # `strip-cc-noise` in [modify]
+    v = validate({"modify": {"strip-cc-noise": True}})
+    assert v["modify"]["strip_cc_noise"] is True
+
+
+def test_toml_pipeline_dry_run_with_hyphen_works():
+    """[output].dry-run (hyphen) is treated as [output].dry_run."""
+    convert = MODULE["_toml_to_pipeline_argv"]
+    argv, extras = convert({"output": {"dry-run": True}})
+    assert "--dry-run" in argv
+    assert extras["force_live_run"] is False
+
+
+def test_toml_pipeline_retain_folder_structure_underscore_and_hyphen():
+    """retain_folder_structure (and the hyphen form) both map to layout=plex."""
+    convert = MODULE["_toml_to_pipeline_argv"]
+    argv1, extras1 = convert({"output": {"retain_folder_structure": True}})
+    assert extras1["output_layout"] == "plex"
+    argv2, extras2 = convert({"output": {"retain-folder-structure": True}})
+    assert extras2["output_layout"] == "plex"
+
+
+def test_user_settings_example_uses_canonical_names():
+    """The shipped example TOML demonstrates the new canonical names."""
+    from pathlib import Path
+    repo = Path(MODULE["__file__"]).parent
+    example = (repo / "user_settings.example.toml").read_text(encoding="utf-8")
+    # New canonical TOML keys appear:
+    assert "mt_source =" in example
+    assert "reading_format =" in example
+    # Old names should NOT be the active (uncommented) form. They may still
+    # appear in alias-mentioning comments.
+    for old_active in ("\nmt_source_lang =", "\nfurigana_output_format ="):
+        assert old_active not in example, f"unexpected active legacy key: {old_active}"

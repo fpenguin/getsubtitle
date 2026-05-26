@@ -1,0 +1,39 @@
+# Example: scan /Plex/Movies, fetch any missing JP/KO/EN/ES, fill
+# gaps via MT, then merge a 4-language study file next to each movie.
+#
+# Run with:
+#   getsubtitle --config plex-movies-fill-merge.toml
+#
+# Override per-run (CLI wins over this file):
+#   getsubtitle --source /Plex/Anime --config plex-movies-fill-merge.toml
+#   getsubtitle --dry-run --config plex-movies-fill-merge.toml
+#   getsubtitle --languages ja,en --config plex-movies-fill-merge.toml
+
+[fetch]
+source = "/Plex/Movies"
+subdirectory = true                          # one folder = one movie
+languages = "japanese,korean,english,spanish"
+
+[translate]
+engine = "ollama"
+# Per-target source: pick the linguistically-closest available source
+# instead of always translating from English. Saves quota and improves
+# quality for CJK / Romance pairs.
+mt_source = { ja = "ko", ko = "ja", es = "en", en = "es" }
+
+[modify]
+strip_cc_noise = true                        # remove broadcast ➡ arrows
+single_line = true                           # asbplayer-friendly
+furigana = "hiragana"                        # 漢字（かんじ） on ja side files
+
+[merge]
+languages = "ja,ko,en,es"
+master = "en"                                # en is usually the best-timed track
+sync = "auto"
+furigana = true                              # inline 漢字（かんじ） on the merged ja line
+
+[output]
+target = "/Plex/Movies"                      # in-place: merged files alongside videos
+layout = "plex"                              # preserve any Show/Season XX structure
+format = "vtt"                               # WebVTT — renders ruby furigana in asbplayer
+dry_run = false                              # set true to preview without writing

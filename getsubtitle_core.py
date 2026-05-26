@@ -114,6 +114,23 @@ LANGUAGE_ALIASES = {
     "cmn": "zh",
     "chinese": "zh",
     "mandarin": "zh",
+    # French
+    "fre": "fr",
+    "fra": "fr",
+    "french": "fr",
+    # German
+    "ger": "de",
+    "deu": "de",
+    "german": "de",
+    # Portuguese
+    "por": "pt",
+    "portuguese": "pt",
+    # Italian
+    "ita": "it",
+    "italian": "it",
+    # Russian
+    "rus": "ru",
+    "russian": "ru",
 }
 
 
@@ -561,7 +578,7 @@ def keychain_get(service: str, account: str) -> str | None:
         return None
     if result.returncode != 0:
         return None
-    value = result.stdout.strip()
+    value = getattr(result, "stdout", "").strip()
     return value or None
 
 
@@ -1677,7 +1694,7 @@ def prompt_for_anilist_id(initial_title: str | None = None) -> tuple[int, str | 
             raise CliError(
                 "Could not infer the show title from this URL. "
                 "Re-run with --title \"Show Name\" or --anilist <id>. "
-                "See: getsubtitle --help download"
+                "See: getsubtitle --help fetch"
             )
         raw = input(ANILIST_INPUT_PROMPT).strip()
         direct_id, parsed_title = parse_anilist_input(raw)
@@ -2888,22 +2905,28 @@ def select_translator(engine: str, model: str | None) -> _BaseTranslator:
 def ollama_model_for_pair(source_lang: str, target_lang: str, cli_model: str | None = None) -> str:
     """Resolve the Ollama model for a translation pair.
 
-    Precedence: --mt-model > [translate.ollama_models].src-tgt >
+    Precedence: --mt-model > pipeline TOML [translate]."src:tgt" (session)
+    > [translate.ollama_models].src-tgt (user_settings.toml) >
     [translate].model > built-in default.
     """
     if cli_model:
         return cli_model
     source = LANGUAGE_ALIASES.get(source_lang.lower(), source_lang.lower())
     target = LANGUAGE_ALIASES.get(target_lang.lower(), target_lang.lower())
+    pair_dash = f"{source}-{target}"
+    pair_colon = f"{source}:{target}"
+    # Session-only pipeline overrides take precedence over user_settings.toml.
+    for key in (pair_colon, pair_dash):
+        if key in _PIPELINE_TRANSLATE_PAIR_MODELS:
+            return _PIPELINE_TRANSLATE_PAIR_MODELS[key]
     try:
         cfg = load_user_config()
     except CliError:
         cfg = {}
     translate_cfg = cfg.get("translate", {})
     pair_models = translate_cfg.get("ollama_models", {}) or {}
-    pair_key = f"{source}-{target}"
-    if pair_key in pair_models:
-        return str(pair_models[pair_key])
+    if pair_dash in pair_models:
+        return str(pair_models[pair_dash])
     return str(translate_cfg.get("model") or DEFAULT_OLLAMA_MODEL)
 
 
@@ -3322,6 +3345,145 @@ def serialize_srt(cues: list[SrtCue]) -> str:
         body = "\n".join(cue.text_lines) if cue.text_lines else ""
         blocks.append(f"{cue.index}\n{cue.time_line}\n{body}".rstrip())
     return "\n\n".join(blocks) + "\n"
+
+
+_VTT_CUE_HEADER_RE = re.compile(
+    r"^(?P<start>\d{1,2}:\d{2}(?::\d{2})?[.,]\d{3})\s*-->\s*"
+    r"(?P<end>\d{1,2}:\d{2}(?::\d{2})?[.,]\d{3})",
+)
+
+
+def _vtt_time_to_srt(t: str) -> str:
+    """Normalize a WebVTT timestamp to SRT format (HH:MM:SS,mmm).
+
+    VTT allows MM:SS.mmm (no hour). SRT requires HH:MM:SS,mmm with comma.
+    """
+    t = t.strip().replace(".", ",")
+    parts = t.split(":")
+    if len(parts) == 2:
+        # MM:SS,mmm → 00:MM:SS,mmm
+        parts = ["00"] + parts
+    h, m, rest = parts[0], parts[1], parts[2]
+    return f"{int(h):02d}:{int(m):02d}:{rest}"
+
+
+_VTT_RUBY_RE = re.compile(r"<ruby>(.*?)<rt>(.*?)</rt>(?:\s*</ruby>)?", re.DOTALL)
+_VTT_HTML_TAG_RE = re.compile(r"<[^>]+>")
+
+
+def _strip_vtt_markup(text: str) -> str:
+    """Remove WebVTT/HTML markup from cue text. Ruby `<ruby>漢字<rt>かんじ</rt></ruby>`
+    collapses to `漢字（かんじ）` (parenthetical reading) so merged output
+    preserves furigana information. Other HTML tags are stripped wholesale."""
+    def _ruby_to_parens(m: re.Match) -> str:
+        base = m.group(1).strip()
+        reading = m.group(2).strip()
+        return f"{base}（{reading}）" if reading else base
+    text = _VTT_RUBY_RE.sub(_ruby_to_parens, text)
+    text = _VTT_HTML_TAG_RE.sub("", text)
+    return text
+
+
+def parse_vtt(text: str) -> list[SrtCue]:
+    """Parse a WebVTT body into the same SrtCue structure used by the
+    merge pipeline. Ruby markup is collapsed to `漢字（かんじ）` so that
+    furigana information survives the read. Other VTT-specific markup
+    (positioning, classes, etc.) is dropped.
+
+    Tolerates the WEBVTT header, NOTE blocks, and cue identifiers.
+    """
+    text = text.lstrip("﻿")
+    text = text.replace("\r\n", "\n").replace("\r", "\n")
+    cues: list[SrtCue] = []
+    # Strip the WEBVTT header line (and any signature/header keywords).
+    blocks = re.split(r"\n\s*\n", text.strip())
+    for block in blocks:
+        lines = block.splitlines()
+        # Skip the file header and NOTE blocks.
+        if lines and lines[0].strip().upper().startswith("WEBVTT"):
+            continue
+        if lines and lines[0].strip().upper().startswith("NOTE"):
+            continue
+        if not lines:
+            continue
+        # Optional cue identifier (any line before the time line).
+        time_line_idx = None
+        for i, ln in enumerate(lines):
+            if "-->" in ln:
+                time_line_idx = i
+                break
+        if time_line_idx is None:
+            continue
+        time_line_raw = lines[time_line_idx].strip()
+        m = _VTT_CUE_HEADER_RE.match(time_line_raw)
+        if not m:
+            continue
+        start = _vtt_time_to_srt(m.group("start"))
+        end = _vtt_time_to_srt(m.group("end"))
+        srt_time_line = f"{start} --> {end}"
+        text_lines = []
+        for ln in lines[time_line_idx + 1:]:
+            stripped = _strip_vtt_markup(ln).strip()
+            if stripped:
+                text_lines.append(stripped)
+        cues.append(SrtCue(
+            index=str(len(cues) + 1),
+            time_line=srt_time_line,
+            text_lines=text_lines,
+        ))
+    return cues
+
+
+def _sami_cues_to_srt_cues(cues: list[tuple[int, int, str]]) -> list[SrtCue]:
+    """Adapter from parse_sami's `(start_ms, end_ms, text)` triples to the
+    SrtCue list used by the merge pipeline."""
+    out: list[SrtCue] = []
+    for idx, (start_ms, end_ms, body) in enumerate(sorted(cues, key=lambda c: (c[0], c[1])), start=1):
+        if end_ms <= start_ms:
+            end_ms = start_ms + 1000
+        time_line = f"{_format_srt_timestamp(start_ms)} --> {_format_srt_timestamp(end_ms)}"
+        text_lines = [ln for ln in body.split("\n") if ln.strip()]
+        out.append(SrtCue(index=str(idx), time_line=time_line, text_lines=text_lines))
+    return out
+
+
+def parse_smi_for_lang(path: Path, lang: str) -> list[SrtCue]:
+    """Read a .smi file and return SrtCues for the requested language only.
+    Returns an empty list if the language isn't present in the SAMI body.
+    Uses the same encoding-detection path as convert_smi_file."""
+    data = path.read_bytes()
+    text = _sami_decode_bytes(data)
+    by_lang = parse_sami(text)
+    if lang not in by_lang:
+        return []
+    return _sami_cues_to_srt_cues(by_lang[lang])
+
+
+def read_cues_from_file(path: Path, *, lang_hint: str | None = None) -> list[SrtCue]:
+    """Read any supported subtitle file into the unified SrtCue
+    representation used by the merge pipeline.
+
+    Dispatch by extension:
+      .srt        → parse_srt
+      .vtt        → parse_vtt (ruby collapsed to 漢字（かんじ）)
+      .smi/.sami  → parse_smi_for_lang (requires lang_hint)
+    """
+    suffix = path.suffix.lower()
+    if suffix == ".srt":
+        return parse_srt(path.read_text(encoding="utf-8-sig", errors="replace"))
+    if suffix == ".vtt":
+        return parse_vtt(path.read_text(encoding="utf-8-sig", errors="replace"))
+    if suffix in (".smi", ".sami"):
+        if not lang_hint:
+            raise CliError(
+                f"Reading {path.name}: SAMI is multi-language; pass a lang_hint."
+            )
+        return parse_smi_for_lang(path, lang_hint)
+    raise CliError(
+        f"Cannot read subtitles from {path.name}: extension {suffix!r} "
+        "not supported. Convert to SRT first with `getsubtitle modify "
+        "--convert smi-to-srt` or `getsubtitle modify --convert vtt-to-srt`."
+    )
 
 
 def serialize_vtt(cues: list[SrtCue]) -> str:
@@ -3963,7 +4125,7 @@ ALLOWED_FURIGANA_FORMATS = ("srt", "ass", "vtt")
 
 
 def parse_furigana_formats(value: str | None) -> set[str]:
-    """Parse --furigana-format (or [furigana].format) into a set of format codes.
+    """Parse --reading-format (or [modify].reading_format) into a set of format codes.
 
     Accepts:
       None / empty      -> {"srt"}            (default — most reliable / asbplayer)
@@ -3984,7 +4146,7 @@ def parse_furigana_formats(value: str | None) -> set[str]:
     unknown = [p for p in parts if p not in ALLOWED_FURIGANA_FORMATS]
     if unknown:
         raise CliError(
-            f"--furigana-format: unknown format(s): {', '.join(unknown)}. "
+            f"--reading-format: unknown format(s): {', '.join(unknown)}. "
             "Allowed: srt, ass, vtt, all (comma-list ok). "
             "See: getsubtitle --help furigana"
         )
@@ -4157,6 +4319,122 @@ def group_srts_by_episode(
             # First occurrence wins, or prefer non-MT over MT.
             episode_files[lang] = (path, is_mt)
     return {key: {lang: pair[0] for lang, pair in files.items()} for key, files in grouped.items()}
+
+
+def _parse_vtt_filename(name: str) -> tuple[int, int, str, bool] | None:
+    """Like parse_srt_filename but for `<base>.<lang>.vtt`."""
+    if not name.lower().endswith(".vtt"):
+        return None
+    if is_combined_output_name(name) or is_furigana_output_name(name):
+        return None
+    ep = parse_episode_marker(name)
+    if not ep:
+        return None
+    m = _LANG_FILENAME_PATTERN.search(name)
+    if not m:
+        return None
+    season, episode = ep
+    return season, episode, m.group(1).lower(), bool(m.group(2))
+
+
+def scan_subtitle_files_extended(
+    paths: list[Path],
+    *,
+    format_hints: dict[str, str] | None = None,
+    include_furigana: bool = False,
+) -> list[tuple[Path, int, int, str, bool, str]]:
+    """Walk paths and find subtitle files in SRT, VTT, and optionally SAMI.
+
+    SRT and VTT use the standard `<base>.<lang>.<ext>` filename convention.
+    SAMI files are multi-language internally, so they're only scanned when
+    at least one entry in `format_hints` requests SMI for some language;
+    each SMI file then emits one candidate per requested language that it
+    actually contains.
+
+    Returns: list[(path, season, episode, lang, is_mt, source_format)]
+    where source_format is one of "srt" | "vtt" | "smi".
+    """
+    format_hints = format_hints or {}
+    out: list[tuple[Path, int, int, str, bool, str]] = []
+
+    # SRT (delegate to existing scanner).
+    for tup in scan_srt_files(paths, include_furigana=include_furigana):
+        out.append(tup + ("srt",))
+
+    # VTT.
+    discovered_vtt: list[Path] = []
+    for root in paths:
+        if root.is_file() and root.suffix.lower() == ".vtt":
+            discovered_vtt.append(root)
+        elif root.is_dir():
+            discovered_vtt.extend(sorted(root.rglob("*.vtt")))
+    for path in discovered_vtt:
+        if not include_furigana and is_furigana_output_name(path.name):
+            continue
+        parsed = _parse_vtt_filename(path.name)
+        if parsed is None:
+            continue
+        out.append((path, *parsed, "vtt"))
+
+    # SMI — only if a hint requests it (parsing every .smi file is
+    # expensive, and the convention is multi-language-internal so we'd
+    # need to peek inside each file).
+    smi_langs = {l for l, fmt in format_hints.items() if fmt == "smi"}
+    if smi_langs:
+        for smi_path in scan_smi_files(paths):
+            ep = parse_episode_marker(smi_path.name)
+            if not ep:
+                continue
+            season, episode = ep
+            try:
+                data = smi_path.read_bytes()
+                text = _sami_decode_bytes(data)
+                by_lang = parse_sami(text)
+            except Exception:
+                continue
+            for lang in smi_langs:
+                if lang in by_lang:
+                    out.append((smi_path, season, episode, lang, False, "smi"))
+
+    return out
+
+
+def group_subtitle_files_with_hints(
+    scanned: list[tuple[Path, int, int, str, bool, str]],
+    *,
+    format_hints: dict[str, str] | None = None,
+) -> dict[tuple[int, int], dict[str, Path]]:
+    """Bucket scanned files by (season, episode) → {lang: path}, choosing the
+    best candidate per language using:
+
+      1. format_hints[lang] match wins over everything else
+      2. Otherwise format priority: srt > vtt > smi
+      3. Within format, non-MT wins over MT
+
+    Returns the same shape as group_srts_by_episode."""
+    format_hints = format_hints or {}
+    fmt_priority = {"srt": 0, "vtt": 1, "smi": 2}
+
+    def score(lang: str, source_format: str, is_mt: bool) -> tuple[int, int]:
+        hint = format_hints.get(lang)
+        fmt_rank = -1 if hint and source_format == hint else fmt_priority.get(source_format, 99)
+        return (fmt_rank, 1 if is_mt else 0)
+
+    grouped: dict[tuple[int, int], dict[str, tuple[Path, str, bool]]] = {}
+    for path, season, episode, lang, is_mt, src_format in scanned:
+        key = (season, episode)
+        episode_files = grouped.setdefault(key, {})
+        candidate_score = score(lang, src_format, is_mt)
+        if lang not in episode_files:
+            episode_files[lang] = (path, src_format, is_mt)
+            continue
+        existing_path, existing_format, existing_is_mt = episode_files[lang]
+        if candidate_score < score(lang, existing_format, existing_is_mt):
+            episode_files[lang] = (path, src_format, is_mt)
+    return {
+        key: {lang: triple[0] for lang, triple in files.items()}
+        for key, files in grouped.items()
+    }
 
 
 def parse_srt_time_line(line: str) -> tuple[int, int]:
@@ -4507,11 +4785,12 @@ def build_combine_parser() -> argparse.ArgumentParser:
         ),
     )
     p.add_argument("paths", nargs="+", metavar="PATH", help="One or more SRT files or directories to scan (recursive).")
-    p.add_argument("-l", "--langs", "--lang", default="ja,ko", metavar="CODES", help="Language order for the output cue stack. First language is the timing master unless --master is set. Default: ja,ko.")
+    p.add_argument("-l", "--languages", "--langs", "--lang", dest="langs", default="ja,en", metavar="CODES", help="Language order for the output cue stack. First language is the timing master unless --master is set. Accepts ISO codes (ja,en) or full names (japanese,english). Default: ja,en.")
     p.add_argument("-s", "--season", default="all", metavar="N|all", help="Season filter. Default: all detected seasons.")
     p.add_argument("-e", "--episode", default="all", metavar="N|N-M|all", help="Episode filter. Accepts one episode, a range, a comma list, or all. Default: all detected episodes.")
     p.add_argument("-o", "--output", metavar="DIR", help="Output directory. Default: beside each episode's master SRT.")
     p.add_argument("--format", choices=["srt", "vtt"], default="srt", help="Combined output format. srt = broad compatibility; vtt = WebVTT with ruby markup when --furigana is used. Default: srt.")
+    p.add_argument("--subdirectory", action="store_true", help="Bulk mode: treat each immediate subdirectory of PATH as its own show and run combine once per subdir. Useful for whole-library passes.")
     p.add_argument("--dry-run", action="store_true", help="Show the plan without writing files.")
     p.add_argument("--force", action="store_true", help="Overwrite existing combined outputs and bypass the episode-level match-rate threshold.")
     p.add_argument("--open-folder", action="store_true", help="Open the output folder after writing.")
@@ -4520,8 +4799,14 @@ def build_combine_parser() -> argparse.ArgumentParser:
     p.add_argument("--master", metavar="LANG", help="Override the timing master language (default: first language in -l).")
     p.add_argument("--single-line", "--single", dest="preserve_lines", action="store_false", default=argparse.SUPPRESS, help="Flatten each language to one line per cue. This is the default; kept as an explicit readability flag.")
     p.add_argument("--preserve-lines", action="store_true", default=argparse.SUPPRESS, help="Keep each source language's original line breaks. Default: flatten each language to a single line.")
-    p.add_argument("-f", "--furigana", "-furigana", nargs="?", const="hiragana", choices=["hiragana", "romaji"], help="Inline Japanese readings into ja cues before combining. Default mode when used: hiragana.")
-    p.add_argument("--no-furigana", dest="furigana", action="store_const", const=None, help="Disable combine furigana for this run even if enabled in user_settings.toml.")
+    # Hidden compat aliases for the pre-v1.1 --furigana flag; kept so old
+    # scripts and the [merge].furigana TOML key still work. New code should
+    # use --romanization (added below), which generalises to non-Japanese
+    # languages and routes Japanese entries through the same code path.
+    p.add_argument("-f", "--furigana", "-furigana", nargs="?", const="hiragana", choices=["hiragana", "romaji"], help=argparse.SUPPRESS)
+    p.add_argument("--no-furigana", dest="furigana", action="store_const", const=None, help=argparse.SUPPRESS)
+    p.add_argument("--romanization", "--romanize", metavar="SPEC", help="Inline reading aids onto the matching language line in the merged cue stack. SPEC is a comma list of LANG:MODE pairs, e.g. 'ja:hiragana' or 'ja:romaji'. Japanese ships now; other languages land per the roadmap.")
+    p.add_argument("--no-romanization", dest="romanization", action="store_const", const="", help="Disable inline reading aids for this run, overriding [merge].romanization / [merge].furigana from user_settings.toml.")
     p.set_defaults(preserve_lines=False)
     _apply_combine_config_defaults(p)
     return p
@@ -4532,10 +4817,49 @@ def _format_rate(rate: float) -> str:
 
 
 def combine_main(argv: list[str]) -> int:
+    # --subdirectory: bulk mode. Walk each PATH's immediate subdirs and
+    # invoke combine_main per subdir without the flag. The subdir's
+    # recursive scan handles Plex Season XX/ layouts inside each show.
+    if "--subdirectory" in argv:
+        sub_argv = _strip_flag(argv, "--subdirectory")
+        # Reparse so we can find the original positional paths.
+        parsed = build_combine_parser().parse_args(sub_argv + ["--subdirectory"])
+        rc_total = 0
+        printed_any = False
+        for root_str in parsed.paths:
+            root = Path(root_str).expanduser()
+            if not root.is_dir():
+                print(f"  (skip) {root_str}: not a directory")
+                continue
+            subdirs = _immediate_subdirs(root)
+            if not subdirs:
+                print(f"  (skip) {root_str}: no subdirectories found")
+                continue
+            for sub in subdirs:
+                if printed_any:
+                    print()
+                printed_any = True
+                print(f"━━ combine {root.name}/{sub.name} ━━")
+                rc = combine_main(_replace_paths_in_argv(sub_argv, parsed.paths, str(sub)))
+                rc_total = rc or rc_total
+        return rc_total
     args = build_combine_parser().parse_args(argv)
-    langs = split_csv(args.langs, "ja,ko")
+    # --romanization (the v1.1 generalised flag) routes through the legacy
+    # --furigana attribute for Japanese; non-Japanese languages raise a
+    # clear "not yet implemented" CliError until per-language backends ship.
+    _apply_romanization_to_args(args)
+    # CLI/TOML symmetry: bare `merge -l ja:vtt,en,ko:smi` accepts the same
+    # per-language :format input hints as the pipeline TOML form. Strip the
+    # hints so split_csv sees just the language codes, then merge into the
+    # pipeline-set globals (CLI wins on key collision).
+    _cli_format_hints: dict[str, str] = {}
+    if args.langs and ":" in args.langs:
+        normalized_langs, _cli_format_hints = _normalize_merge_langs(args.langs)
+        args.langs = normalized_langs
+    _effective_format_hints = {**_PIPELINE_MERGE_FORMAT_HINTS, **_cli_format_hints}
+    langs = split_csv(args.langs, "ja,en")
     if not langs:
-        raise CliError("No languages specified. Use -l ja,ko or similar.")
+        raise CliError("No languages specified. Use -l ja,en or similar.")
     # Master language precedence: --master flag > [combine].priority config >
     # first language in -l.
     if args.master:
@@ -4556,13 +4880,27 @@ def combine_main(argv: list[str]) -> int:
             "Path not found: " + ", ".join(str(p) for p in missing)
         )
 
-    scanned = scan_srt_files(paths)
-    grouped = group_srts_by_episode(scanned)
+    # If per-language :format hints are present (from --config TOML
+    # and/or bare `-l ja:vtt,...` syntax), use the extended scanner that
+    # also finds .vtt and (where requested) .smi sources. Otherwise stay
+    # on the SRT-only fast path for behavior parity.
+    if _effective_format_hints:
+        scanned_ext = scan_subtitle_files_extended(
+            paths, format_hints=_effective_format_hints,
+        )
+        grouped = group_subtitle_files_with_hints(
+            scanned_ext, format_hints=_effective_format_hints,
+        )
+        scanned_count = len(scanned_ext)
+    else:
+        scanned = scan_srt_files(paths)
+        grouped = group_srts_by_episode(scanned)
+        scanned_count = len(scanned)
     output_dir_arg = Path(args.output).expanduser() if args.output else None
     sync_preset = SYNC_PRESETS[args.sync]
     episode_threshold = float(sync_preset["episode_success"])
 
-    print(f"Scanned: {len(scanned)} SRT file(s) across {len(paths)} path(s)")
+    print(f"Scanned: {scanned_count} subtitle file(s) across {len(paths)} path(s)")
     if not grouped:
         print("No (season, episode, language) groups detected. Nothing to combine.")
         return 1
@@ -4597,14 +4935,16 @@ def combine_main(argv: list[str]) -> int:
             # to combine the ones we have; we just note the missing.
             pass
 
-        # Parse SRT bodies.
+        # Parse subtitle bodies. read_cues_from_file dispatches on file
+        # extension (SRT/VTT/SMI) so the merger can consume any input
+        # format selected by the per-language :format hint upstream.
         try:
-            master_cues = parse_srt(files[master_lang].read_text(encoding="utf-8-sig", errors="replace"))
+            master_cues = read_cues_from_file(files[master_lang], lang_hint=master_lang)
         except Exception as e:
-            skipped.append((key, f"could not parse master SRT: {e}"))
+            skipped.append((key, f"could not parse master subtitle: {e}"))
             continue
         if not master_cues:
-            skipped.append((key, "master SRT has no cues"))
+            skipped.append((key, "master subtitle has no cues"))
             continue
         if args.format == "vtt" and args.furigana and master_lang == "ja":
             try:
@@ -4618,8 +4958,8 @@ def combine_main(argv: list[str]) -> int:
             if lang == master_lang or lang not in files:
                 continue
             try:
-                cues = parse_srt(files[lang].read_text(encoding="utf-8-sig", errors="replace"))
-            except Exception as e:
+                cues = read_cues_from_file(files[lang], lang_hint=lang)
+            except Exception:
                 # Treat as missing for this lang rather than skipping the
                 # whole episode.
                 cues = []
@@ -4734,10 +5074,17 @@ def _apply_translate_config_defaults(parser: argparse.ArgumentParser) -> None:
     tr = {**BUILTIN_CONFIG_DEFAULTS["translate"], **cfg.get("translate", {})}
     overrides: dict[str, object] = {}
     if tr.get("engine"):
-        overrides["mt_engine"] = tr["engine"]
-    if tr.get("model"):
+        # Accept "ollama:qwen3:8b" colon-spec by splitting engine head.
+        engine_spec = str(tr["engine"])
+        engine_head, _sep, model_part = engine_spec.partition(":")
+        overrides["mt_engine"] = engine_head if engine_head else engine_spec
+        if model_part:
+            overrides["mt_model"] = model_part
+    if tr.get("model") and "mt_model" not in overrides:
         overrides["mt_model"] = tr["model"]
-    src = tr.get("source_lang", "")
+    src = tr.get("mt_source_lang", "auto")
+    if isinstance(src, dict):
+        src = _normalize_mt_source(src)
     if src and src != "auto":
         overrides["mt_source_lang"] = src
     if overrides:
@@ -4764,14 +5111,15 @@ def build_translate_parser() -> argparse.ArgumentParser:
         ),
     )
     p.add_argument("paths", nargs="+", metavar="PATH", help="One or more SRT files or directories to scan (recursive).")
-    p.add_argument("-l", "--langs", "--lang", required=True, metavar="CODES", help="Target languages to ensure exist (e.g. ja,ko,en). Missing ones get MT'd from the best available source SRT.")
+    p.add_argument("-l", "--languages", "--langs", "--lang", dest="langs", required=True, metavar="CODES", help="Target languages to ensure exist (e.g. ja,en). Missing ones get MT'd from the best available source SRT.")
     p.add_argument("-s", "--season", default="all", metavar="N|all", help="Season filter. Default: all detected seasons.")
     p.add_argument("-e", "--episode", default="all", metavar="N|N-M|all", help="Episode filter. Accepts one episode, a range, a comma list, or all. Default: all detected episodes.")
-    p.add_argument("--mt-engine", choices=["argos", "ollama", "deepl"], help="Translation engine. Default: argos (via [translate].engine in user_settings.toml).")
+    p.add_argument("--engine", "--mt-engine", dest="mt_engine", choices=["argos", "ollama", "deepl"], help="Translation engine. Default: argos (via [translate].engine in user_settings.toml). --mt-engine still accepted as alias.")
     p.add_argument("--no-mt-engine", dest="mt_engine", action="store_const", const="", help="Disable machine translation for this run even when [translate].engine is set in user_settings.toml.")
-    p.add_argument("--mt-model", metavar="NAME", help=f"Ollama model when --mt-engine ollama. Default: {DEFAULT_OLLAMA_MODEL}.")
-    p.add_argument("--mt-source-lang", metavar="CODES", help="Force the source language(s). Single code (ja) applies to all targets; target:source pairs (ko:ja,es:en) map per target. Default: auto-pick.")
+    p.add_argument("--model", "--mt-model", dest="mt_model", metavar="NAME", help=f"Ollama model when --engine ollama. Default: {DEFAULT_OLLAMA_MODEL}. --mt-model still accepted as alias.")
+    p.add_argument("--mt-source", "--mt-source-lang", dest="mt_source_lang", metavar="CODES", help="Force the source language(s). Single code (ja) applies to all targets; target:source pairs (ko:ja,es:en) map per target. Default: auto-pick. --mt-source-lang still accepted as alias.")
     p.add_argument("-o", "--output", metavar="DIR", help="Output directory. Default: beside each episode's source SRT.")
+    p.add_argument("--subdirectory", action="store_true", help="Bulk mode: treat each immediate subdirectory of PATH as its own show and run translate once per subdir.")
     p.add_argument("--dry-run", action="store_true", help="Show the translation plan without writing files.")
     p.add_argument("--force", action="store_true", help="Overwrite existing .mt.srt outputs.")
     _apply_translate_config_defaults(p)
@@ -4779,6 +5127,31 @@ def build_translate_parser() -> argparse.ArgumentParser:
 
 
 def translate_main(argv: list[str]) -> int:
+    # --subdirectory: walk each PATH's immediate subdirs, run translate
+    # per subdir. Cosmetic for per-show progress; output files identical
+    # to the no-flag case since translate already walks recursively.
+    if "--subdirectory" in argv:
+        sub_argv = _strip_flag(argv, "--subdirectory")
+        parsed = build_translate_parser().parse_args(sub_argv + ["--subdirectory"])
+        rc_total = 0
+        printed_any = False
+        for root_str in parsed.paths:
+            root = Path(root_str).expanduser()
+            if not root.is_dir():
+                print(f"  (skip) {root_str}: not a directory")
+                continue
+            subdirs = _immediate_subdirs(root)
+            if not subdirs:
+                print(f"  (skip) {root_str}: no subdirectories found")
+                continue
+            for sub in subdirs:
+                if printed_any:
+                    print()
+                printed_any = True
+                print(f"━━ translate {root.name}/{sub.name} ━━")
+                rc = translate_main(_replace_paths_in_argv(sub_argv, parsed.paths, str(sub)))
+                rc_total = rc or rc_total
+        return rc_total
     args = build_translate_parser().parse_args(argv)
     explicit_mt_model = args.mt_model if option_was_passed(argv, "--mt-model") else None
     if not args.mt_engine:
@@ -4789,14 +5162,15 @@ def translate_main(argv: list[str]) -> int:
     langs = split_csv(args.langs, "ja")
     if not langs:
         raise CliError("No target languages specified. Use -l ja,ko or similar.")
-    # [furigana].strip_before_mt: when true (default), strip inline 漢字（かんじ）
-    # readings from ja source cues before MT so the translator doesn't treat
-    # them as extra content. Read once here so per-cue translation stays fast.
+    # [translate].strip_furigana_before_mt: when true (default), strip inline
+    # 漢字（かんじ） readings from ja source cues before MT so the translator
+    # doesn't treat them as extra content. Read once here so per-cue
+    # translation stays fast.
     try:
-        _cfg_furi = load_user_config().get("furigana", {})
+        _cfg_tr = load_user_config().get("translate", {})
     except CliError:
-        _cfg_furi = {}
-    strip_furigana_before_mt = bool(_cfg_furi.get("strip_before_mt", True))
+        _cfg_tr = {}
+    strip_furigana_before_mt = bool(_cfg_tr.get("strip_furigana_before_mt", True))
 
     # Parse --mt-source-lang once (so a bad value errors before the scan).
     source_overrides = parse_mt_source_lang(args.mt_source_lang, langs)
@@ -4993,23 +5367,25 @@ def translate_main(argv: list[str]) -> int:
 # already on disk. Composable flags so you can run any subset.
 
 def _apply_modify_config_defaults(parser: argparse.ArgumentParser) -> None:
-    """Honour [download].strip_cc_noise / [download].single_line and
-    [furigana].enabled / .mode for the modify subcommand defaults."""
+    """Honour [modify] values from user_settings.toml for the modify
+    subcommand defaults."""
     try:
         cfg = load_user_config()
     except CliError:
         cfg = {}
     overrides: dict[str, object] = {}
-    dl = cfg.get("download", {})
-    if dl.get("single_line"):
+    mod = cfg.get("modify", {})
+    if mod.get("single_line"):
         overrides["single_line"] = True
-    if dl.get("strip_cc_noise"):
+    if mod.get("strip_cc_noise"):
         overrides["strip_cc_noise"] = True
-    fur = cfg.get("furigana", {})
-    if fur.get("enabled"):
-        overrides["furigana"] = fur.get("mode", "hiragana")
-    if fur.get("format"):
-        overrides["furigana_format"] = fur["format"]
+    fur_mode = mod.get("furigana", False)
+    if isinstance(fur_mode, str) and fur_mode.lower() not in ("off", "false", "none", "no", ""):
+        overrides["furigana"] = fur_mode if fur_mode in ("hiragana", "romaji") else "hiragana"
+    elif fur_mode is True:
+        overrides["furigana"] = "hiragana"
+    if mod.get("furigana_output_format"):
+        overrides["furigana_format"] = mod["furigana_output_format"]
     if overrides:
         parser.set_defaults(**overrides)
 
@@ -5031,28 +5407,83 @@ def build_modify_parser() -> argparse.ArgumentParser:
               getsubtitle modify FOLDER --strip-cc-noise
               getsubtitle modify FOLDER --single-line
               getsubtitle modify FOLDER --strip-cc-noise --single-line
-              getsubtitle modify FOLDER --furigana
-              getsubtitle modify FOLDER --furigana romaji
+              getsubtitle modify FOLDER --romanization ja:hiragana
+              getsubtitle modify FOLDER --romanization ja:romaji
+              getsubtitle modify FOLDER --romanization "ja:hiragana|romaji"
               getsubtitle modify FOLDER --convert smi-to-srt
               getsubtitle modify FOLDER --convert smi-to-srt --force
-              getsubtitle modify FOLDER --strip-cc-noise --single-line --furigana --dry-run
+              getsubtitle modify FOLDER --strip-cc-noise --single-line --romanization ja:hiragana --dry-run
             """
         ),
     )
     p.add_argument("paths", nargs="+", metavar="PATH", help="One or more subtitle files or directories to scan (recursive).")
     p.add_argument("--strip-cc-noise", action="store_true", help="Remove broadcast closed-caption noise (currently: Japanese ➡ continuation arrows) in place.")
     p.add_argument("--single-line", "--single", action="store_true", help="Flatten each SRT cue to one text line in place. Useful for asbplayer.")
-    p.add_argument("-f", "--furigana", "-furigana", nargs="?", const="hiragana", choices=["hiragana", "romaji"], help="Generate Japanese reading variants from each .ja.srt file (creates new .furigana-*.srt/.vtt/.ass files; does not modify the source).")
-    p.add_argument("--format", "--furigana-format", dest="furigana_format", metavar="CODES", help="Furigana output format(s) — comma list of srt, ass, vtt, or 'all'. Default: srt. Overrides [furigana].format from user_settings.toml.")
+    # Hidden compat alias for the pre-v1.1 --furigana flag. Internally
+    # equivalent to `--romanization ja:MODE`.
+    p.add_argument("-f", "--furigana", "-furigana", nargs="?", const="hiragana", choices=["hiragana", "romaji"], help=argparse.SUPPRESS)
+    p.add_argument("--romanization", "--romanize", metavar="SPEC", help="Generate per-language reading aids. SPEC is a comma list of LANG:MODE pairs, e.g. 'ja:hiragana' or 'ja:hiragana|romaji' (pipe = both side files). MODE 'true' picks the language's sensible default. Japanese (furigana / romaji) ships now; Korean / Chinese / Cantonese / Thai / etc. land per the roadmap.")
+    p.add_argument("--no-romanization", dest="romanization", action="store_const", const="", help="Disable romanization for this run, overriding [modify].romanization from user_settings.toml.")
+    p.add_argument("--reading-format", "--format", "--furigana-format", "--romanization-format", dest="furigana_format", metavar="CODES", help="Reading-aid output format(s) — comma list of srt, ass, vtt, or 'all'. Default: srt. Overrides [modify].reading_format from user_settings.toml.")
     p.add_argument("--convert", choices=["smi-to-srt"], metavar="PAIR", help="Convert subtitle file format. Currently supports: smi-to-srt (Microsoft SAMI → one sibling .<lang>.srt per language found inside).")
     p.add_argument("--force", action="store_true", help="With --convert: overwrite existing sibling .srt files. Without --force, conversion skips targets that already exist.")
+    p.add_argument("--subdirectory", action="store_true", help="Bulk mode: treat each immediate subdirectory of PATH as its own show and run modify once per subdir.")
     p.add_argument("--dry-run", action="store_true", help="Show what would be processed without writing anything.")
     _apply_modify_config_defaults(p)
     return p
 
 
 def modify_main(argv: list[str]) -> int:
+    # --subdirectory: walk each PATH's immediate subdirs, run modify per
+    # subdir. Same op set per show; useful for per-show progress / isolation
+    # since modify already walks recursively within each PATH.
+    if "--subdirectory" in argv:
+        sub_argv = _strip_flag(argv, "--subdirectory")
+        parsed = build_modify_parser().parse_args(sub_argv + ["--subdirectory"])
+        rc_total = 0
+        printed_any = False
+        for root_str in parsed.paths:
+            root = Path(root_str).expanduser()
+            if not root.is_dir():
+                print(f"  (skip) {root_str}: not a directory")
+                continue
+            subdirs = _immediate_subdirs(root)
+            if not subdirs:
+                print(f"  (skip) {root_str}: no subdirectories found")
+                continue
+            for sub in subdirs:
+                if printed_any:
+                    print()
+                printed_any = True
+                print(f"━━ modify {root.name}/{sub.name} ━━")
+                rc = modify_main(_replace_paths_in_argv(sub_argv, parsed.paths, str(sub)))
+                rc_total = rc or rc_total
+        return rc_total
     args = build_modify_parser().parse_args(argv)
+    # --romanization is the v1.1 multi-language umbrella; for the Japanese
+    # entry it routes to the existing --furigana code path so this round
+    # ships the schema without rewriting the generator. Non-Japanese
+    # entries raise a clear "not yet implemented" error pointing at the
+    # roadmap until per-language backends ship.
+    if getattr(args, "romanization", None):
+        pairs = _parse_romanization_spec(args.romanization)
+        ja_pair = next(((l, m) for l, m in pairs if l == "ja"), None)
+        non_ja = [(l, m) for l, m in pairs if l != "ja"]
+        if non_ja:
+            langs = ", ".join(f"{l}:{m}" for l, m in non_ja)
+            raise CliError(
+                f"--romanization for non-Japanese languages ({langs}) is not yet "
+                "implemented. Korean (Revised Romanization with G2P) and Chinese "
+                "pinyin are on the roadmap; see ROADMAP.md > Romanization expansion. "
+                "Japanese (--furigana / ja:hiragana / ja:romaji) ships now."
+            )
+        if ja_pair is not None:
+            _lang, ja_mode = ja_pair
+            # Map ja-specific modes onto --furigana's argparse value.
+            if ja_mode in ("hiragana", "katakana", "furigana"):
+                args.furigana = "hiragana"
+            elif ja_mode == "romaji":
+                args.furigana = "romaji"
     ops_selected = [
         bool(args.strip_cc_noise),
         bool(args.single_line),
@@ -5062,7 +5493,7 @@ def modify_main(argv: list[str]) -> int:
     if not any(ops_selected):
         raise CliError(
             "modify needs at least one operation flag: "
-            "--strip-cc-noise, --single-line, --furigana [hiragana|romaji], "
+            "--strip-cc-noise, --single-line, --romanization SPEC, "
             "and/or --convert smi-to-srt."
         )
     # Validate --furigana-format upfront so a bad value errors before the
@@ -5383,56 +5814,142 @@ _BATCH_FETCH_LANGS = {
 _BATCH_MT_SOURCE = {"ja": "ja", "ko": "ko", "en": "en"}
 
 
-def build_batch_parser() -> argparse.ArgumentParser:
+def build_fetch_parser() -> argparse.ArgumentParser:
+    """Parser for the `fetch` subcommand.
+
+    `fetch` accepts either a URL (resolves IDs from the URL and fetches
+    matching subtitles — equivalent to typing `getsubtitle URL ...`) or
+    a PATH. With a PATH, it treats the folder as one show and runs the
+    per-show download per detected profile. Add --subdirectory to walk
+    one level of subdirs and treat each as its own show."""
     p = argparse.ArgumentParser(
-        prog="getsubtitle batch",
+        prog="getsubtitle fetch",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         description=(
-            "Bulk subtitle workflows over a library. Walk the current "
-            "directory, auto-detect each show's origin language via TMDB, "
-            "and run the right `getsubtitle` commands per profile."
+            "Download subtitles for a URL or for folder(s) on disk. "
+            "Accepts URL (existing download flow), PATH (treat folder "
+            "as one show), or PATH with --subdirectory (treat each "
+            "immediate subdir as its own show)."
         ),
         epilog=textwrap.dedent(
             """
             Examples:
-              cd /path/to/your/plex/library
-              getsubtitle batch fetch                  # dry-run (default)
-              getsubtitle batch fetch --run            # actually fetch
-              getsubtitle batch merge --run --format vtt
-              getsubtitle batch fetch --root ~/Movies/Subtitles --run
+              # URL — identical to typing `getsubtitle URL ...`
+              getsubtitle fetch "https://www.imdb.com/title/tt28299608/" -l ja,ko
 
-            Profiles (auto-detected from TMDB original_language):
+              # PATH single show
+              getsubtitle fetch ~/Movies/Subtitles/MF\\ Ghost
+
+              # PATH library, every immediate subdir = a show
+              getsubtitle fetch ~/Movies/Subtitles --subdirectory --run
+
+            Profiles (auto-detected from TMDB original_language; override with --profile):
               ja  Japanese-origin → fetch ko; MT ja→ko fallback
               ko  Korean-origin   → fetch ja; MT ko→ja fallback
               en  English / other → fetch es+ko; MT from en fallback
             """
         ),
+        add_help=False,
     )
-    p.add_argument("action", choices=["fetch", "merge"],
-                   help="fetch: download missing subs. merge: smi→srt convert + combine.")
-    p.add_argument("paths", nargs="*", metavar="PATH",
-                   help="Library root(s) to walk. Defaults to CWD if omitted.")
-    p.add_argument("--run", action="store_true",
-                   help="Actually run. Default is dry-run (every getsubtitle call gets --dry-run appended).")
-    p.add_argument("--root", default=None,
-                   help="Alternative spelling of the positional PATH argument.")
-    p.add_argument("--mt-engine", default="ollama",
-                   choices=["", "argos", "ollama", "deepl"],
-                   help="(fetch only) Engine for the MT fallback pass. Use '' to skip MT. Default: ollama.")
-    p.add_argument("--format", default=None, choices=["srt", "vtt"],
-                   help="(merge only) Combined output format. Default: getsubtitle's default (srt).")
+    p.add_argument("target", help="URL or PATH (file or directory).")
+    p.add_argument("--subdirectory", action="store_true",
+                   help="PATH only: walk each immediate subdir and treat it as a separate show.")
     p.add_argument("--profile", default=None, choices=["ja", "ko", "en"],
-                   help="Override auto-detected profile for every folder. Useful when TMDB is unavailable.")
+                   help="PATH only: override auto-detected profile for every show.")
+    p.add_argument("--run", action="store_true",
+                   help="PATH only: actually run. Default is dry-run.")
+    p.add_argument("-h", "--help", action="store_true",
+                   help="Show this help.")
     return p
 
 
-def _batch_resolve_root(args) -> "Path":
-    """Pick the root directory from positional / --root / CWD, in that order."""
-    if args.paths:
-        return Path(args.paths[0]).expanduser().resolve()
-    if args.root:
-        return Path(args.root).expanduser().resolve()
-    return Path.cwd().resolve()
+def fetch_main(argv: list[str]) -> int:
+    """`fetch` subcommand: URL → resolve IDs and download from providers;
+    PATH → folder-based bulk fetch (single show without --subdirectory;
+    many shows with it)."""
+    # Empty / explicit-help → show the topic page.
+    if not argv or argv[0] in ("-h", "--help"):
+        sys.stdout.write(HELP_TOPICS["fetch"])
+        return 0
+
+    parser = build_fetch_parser()
+    args, rest = parser.parse_known_args(argv)
+    if args.help:
+        sys.stdout.write(HELP_TOPICS["fetch"])
+        return 0
+
+    # URL form: delegate to the bare-URL download flow with all the
+    # rest-args passed through (-l, -s, -e, --furigana, etc.).
+    if _looks_like_url(args.target):
+        if args.subdirectory:
+            raise CliError("--subdirectory only applies to PATH targets, not URLs.")
+        return main([args.target] + rest)
+
+    # PATH form.
+    target_path = Path(args.target).expanduser()
+    if not target_path.exists():
+        raise CliError(f"path not found: {target_path}")
+
+    if args.subdirectory:
+        if not target_path.is_dir():
+            raise CliError(f"--subdirectory requires a directory: {target_path}")
+        roots = _immediate_subdirs(target_path)
+        if not roots:
+            print(f"No subdirectories found under {target_path}")
+            return 1
+    else:
+        roots = [target_path]
+
+    dry_run = not args.run
+
+    mode = "DRY RUN (no writes)" if dry_run else "LIVE"
+    print(f"fetch — root: {target_path}")
+    print(f"mode: {mode}")
+    if args.profile:
+        print(f"profile override: {args.profile}")
+    elif not get_provider_api_key("tmdb"):
+        print("note: no TMDB key — profile detection falls back to char-set heuristics.")
+        print("      Set one with: getsubtitle --set-key tmdb")
+
+    total_targets = 0
+    for show in roots:
+        # Each `show` is one show folder (or one bare file). Walk inside
+        # to find video-bearing folders / loose files; reuse the batch
+        # walker since it already handles Plex Season subdirs.
+        if show.is_dir():
+            targets = _batch_walk_targets(show)
+            if not targets:
+                # No video files found anywhere inside — treat the show
+                # folder itself as the target (user may want to download
+                # before videos exist).
+                targets = [(show, show, None)]
+        else:
+            targets = [(show, show, None)]
+        for target, show_folder, season in targets:
+            profile = args.profile or detect_profile_from_title(show_folder.name)
+            _batch_fetch_one(
+                target=target, show_folder=show_folder, season=season,
+                profile=profile, dry_run=dry_run,
+            )
+            total_targets += 1
+
+    print()
+    print(f"Processed {total_targets} target(s).")
+    return 0
+
+
+def build_merge_parser() -> argparse.ArgumentParser:
+    """Parser for the `merge` subcommand. Internally still implemented
+    on top of build_combine_parser() since the flag surface is identical."""
+    p = build_combine_parser()
+    p.prog = "getsubtitle merge"
+    return p
+
+
+def merge_main(argv: list[str]) -> int:
+    """`merge` subcommand. Internally dispatched through combine_main
+    (which carries the --subdirectory wrapper and the core algorithm)."""
+    return combine_main(argv)
 
 
 def _batch_describe_target(target: "Path", show_folder: "Path", season: int | None,
@@ -5447,8 +5964,13 @@ def _batch_describe_target(target: "Path", show_folder: "Path", season: int | No
 
 
 def _batch_fetch_one(target: "Path", show_folder: "Path", season: int | None,
-                     profile: str, mt_engine: str | None, dry_run: bool) -> None:
-    """Run fetch for one disk target (folder or bare file)."""
+                     profile: str, dry_run: bool) -> None:
+    """Run fetch for one disk target (folder or bare file).
+
+    Fetch-only — does NOT auto-translate. Users wanting MT to fill missing
+    languages chain it via the pipeline form:
+      getsubtitle --fetch PATH --subdirectory --translate ollama
+    """
     _batch_heading(_batch_describe_target(target, show_folder, season, profile))
 
     title = show_folder.name
@@ -5456,9 +5978,7 @@ def _batch_fetch_one(target: "Path", show_folder: "Path", season: int | None,
     output_dir = target if is_folder else target.parent
 
     fetch_langs = _BATCH_FETCH_LANGS.get(profile, _BATCH_FETCH_LANGS["en"])
-    mt_source = _BATCH_MT_SOURCE.get(profile, "en")
 
-    # Step 1: human-quality fetch via providers.
     fetch_cmd = [
         sys.executable, "-m", "getsubtitle",
     ] if not shutil.which("getsubtitle") else ["getsubtitle"]
@@ -5469,20 +5989,6 @@ def _batch_fetch_one(target: "Path", show_folder: "Path", season: int | None,
                   "--layout", "flat", "-o", str(output_dir), "-y"]
     print(f"  fetch: -l {','.join(fetch_langs)}")
     _batch_run(fetch_cmd, dry_run=dry_run)
-
-    # Step 2: MT fallback for anything that came back empty. translate skips
-    # langs that already have a file on disk, so this is idempotent.
-    if mt_engine:
-        translate_cmd = (["getsubtitle"] if shutil.which("getsubtitle")
-                         else [sys.executable, "-m", "getsubtitle"])
-        translate_cmd += [
-            "translate", str(output_dir),
-            "-l", ",".join(fetch_langs),
-            "--mt-engine", mt_engine,
-            "--mt-source-lang", mt_source,
-        ]
-        print(f"  mt fallback: -l {','.join(fetch_langs)} via {mt_engine} ({mt_source}→targets)")
-        _batch_run(translate_cmd, dry_run=dry_run)
 
 
 def _batch_merge_one(target: "Path", show_folder: "Path", season: int | None,
@@ -5504,24 +6010,1097 @@ def _batch_merge_one(target: "Path", show_folder: "Path", season: int | None,
     base = (["getsubtitle"] if shutil.which("getsubtitle")
             else [sys.executable, "-m", "getsubtitle"])
 
-    def combine(langs: list[str], master: str, with_furigana: bool, label: str) -> None:
-        cmd = base + ["combine", str(target), "-l", ",".join(langs), "--master", master]
+    def merge(langs: list[str], master: str, with_furigana: bool, label: str) -> None:
+        cmd = base + ["merge", str(target), "-l", ",".join(langs), "--master", master]
         if with_furigana:
             cmd.append("--furigana")
         if fmt:
             cmd += ["--format", fmt]
-        print(f"  combine ({label}): -l {','.join(langs)}  master={master}"
+        print(f"  merge ({label}): -l {','.join(langs)}  master={master}"
               + ("  +furigana" if with_furigana else ""))
         _batch_run(cmd, dry_run=dry_run)
 
     if profile == "ja":
-        combine(["ja", "ko"], master="ja", with_furigana=True, label="JP master dual")
+        merge(["ja", "ko"], master="ja", with_furigana=True, label="JP master dual")
     elif profile == "ko":
-        combine(["ko", "ja"], master="ko", with_furigana=True, label="KR master dual")
-        combine(["ko", "ja", "en", "es"], master="ko", with_furigana=True, label="KR master quad")
+        merge(["ko", "ja"], master="ko", with_furigana=True, label="KR master dual")
+        merge(["ko", "ja", "en", "es"], master="ko", with_furigana=True, label="KR master quad")
     else:  # en (and zh/fr/etc treated as en for our workflow)
-        combine(["en", "es"], master="en", with_furigana=False, label="EN master dual")
-        combine(["ja", "ko", "en", "es"], master="en", with_furigana=True, label="EN master quad")
+        merge(["en", "es"], master="en", with_furigana=False, label="EN master dual")
+        merge(["ja", "ko", "en", "es"], master="en", with_furigana=True, label="EN master quad")
+
+
+def _looks_like_url(s: str) -> bool:
+    """True if `s` looks like a URL (http/https). Used by fetch to route
+    URL → URL-form download vs. PATH → folder-based bulk mode."""
+    return s.startswith(("http://", "https://", "HTTP://", "HTTPS://"))
+
+
+def _expand_url_form_season_range(argv: list[str]) -> list[list[str]] | None:
+    """If argv contains `--season 1-2` (or `-s 1,2,3`) with a multi-season
+    range/list, return a list of argv copies, each with one expanded season.
+    Returns None for single-season, "all", or "auto" — caller continues
+    with the original argv unchanged.
+
+    Only used for the URL-form download flow. The PATH-based subcommands
+    (translate, merge, modify, fetch PATH) already accept ranges via
+    parse_episode_selector inside filter_episode_keys.
+    """
+    for i, tok in enumerate(argv):
+        if tok in ("-s", "--season") and i + 1 < len(argv):
+            value = argv[i + 1].strip()
+            if value.lower() in ("all", "auto") or value.isdigit():
+                return None
+            try:
+                seasons = parse_episode_selector(value)
+            except (ValueError, TypeError):
+                return None
+            if len(seasons) <= 1 or seasons in (["all"], ["auto"]):
+                return None
+            expanded: list[list[str]] = []
+            for s in seasons:
+                sub = list(argv)
+                sub[i + 1] = s
+                expanded.append(sub)
+            return expanded
+    return None
+
+
+def _immediate_subdirs(root: "Path") -> list["Path"]:
+    """Sorted immediate subdirectories of root. Used by --subdirectory mode
+    to iterate one level deep per show."""
+    if not root.is_dir():
+        return []
+    return sorted(p for p in root.iterdir() if p.is_dir() and not p.name.startswith("."))
+
+
+def _strip_flag(argv: list[str], flag: str) -> list[str]:
+    """Return argv with all occurrences of `flag` removed (use for boolean
+    --subdirectory style flags that take no value)."""
+    return [a for a in argv if a != flag]
+
+
+def _replace_paths_in_argv(argv: list[str], old_paths: list[str], new_path: str) -> list[str]:
+    """Replace the first occurrence of any path in `old_paths` with new_path
+    in argv, dropping the rest. Other arguments preserved in order."""
+    out: list[str] = []
+    seen_first = False
+    for a in argv:
+        if a in old_paths and not seen_first:
+            out.append(new_path)
+            seen_first = True
+        elif a in old_paths:
+            continue  # drop duplicate paths
+        else:
+            out.append(a)
+    return out
+
+
+# ─────────────────────────────────────────────────────────────────────────
+# Pipeline form: getsubtitle [--fetch X opts] [--translate ENGINE opts]
+#                            [--modify opts] [--merge opts] [--output PATH]
+# Verbs run in canonical order regardless of typing order:
+#   fetch → translate → modify → merge
+# ─────────────────────────────────────────────────────────────────────────
+
+PIPELINE_VERB_FLAGS = ("--fetch", "--translate", "--modify", "--merge")
+PIPELINE_SHARED_FLAGS = {"--output", "--dry-run", "--config"}
+
+
+def _is_pipeline_argv(argv: list[str]) -> bool:
+    """True if argv contains any pipeline verb flag — caller routes to
+    pipeline_main instead of the single-verb subcommand dispatch."""
+    return any(a in PIPELINE_VERB_FLAGS for a in argv)
+
+
+# Pipeline-shared flags that are global regardless of position in argv.
+# Users tend to write them at the end of long commands (after the last
+# verb block), so we extract them out of whichever verb block they
+# accidentally land in and put them in "shared".
+_PIPELINE_GLOBAL_VALUED_FLAGS = {"--output"}     # take next token as value
+_PIPELINE_GLOBAL_BOOL_FLAGS = {"--dry-run", "--force"}
+
+
+def split_pipeline_argv(argv: list[str]) -> dict[str, list[str]]:
+    """Split argv into per-verb blocks by scanning for verb-flag boundaries.
+
+    Returns a dict like:
+      {"shared": [...], "fetch": [...], "translate": [...], ...}
+    where each verb's list is its private flag/positional block (NOT
+    including the verb flag itself). Args appearing before any verb flag
+    go into "shared".
+
+    `--output PATH`, `--dry-run`, and `--force` are always treated as
+    shared pipeline flags regardless of where they appear in argv —
+    users typically write them at the end (after the last verb block),
+    which would otherwise misroute them.
+
+    Example:
+      argv = ["--fetch", "URL", "-l", "ja",
+              "--merge", "-l", "ja,en", "--format", "vtt",
+              "--output", "/tmp/out"]
+      → {"shared": ["--output", "/tmp/out"],
+         "fetch":  ["URL", "-l", "ja"],
+         "merge":  ["-l", "ja,en", "--format", "vtt"]}
+    """
+    blocks: dict[str, list[str]] = {"shared": []}
+    current = "shared"
+    i = 0
+    while i < len(argv):
+        tok = argv[i]
+        if tok in PIPELINE_VERB_FLAGS:
+            current = tok[2:]  # "--fetch" → "fetch"
+            blocks.setdefault(current, [])
+            i += 1
+            continue
+        # Globally-shared valued flag (e.g. --output PATH): consume the
+        # following token as its value and place the pair in "shared".
+        if tok in _PIPELINE_GLOBAL_VALUED_FLAGS and i + 1 < len(argv):
+            blocks["shared"].extend([tok, argv[i + 1]])
+            i += 2
+            continue
+        # Globally-shared bool flag (e.g. --dry-run, --force).
+        if tok in _PIPELINE_GLOBAL_BOOL_FLAGS:
+            blocks["shared"].append(tok)
+            i += 1
+            continue
+        blocks[current].append(tok)
+        i += 1
+    return blocks
+
+
+def _parse_engine_spec(spec: str) -> tuple[str, str | None]:
+    """Split an engine spec like "ollama:qwen3:8b" into (engine, model).
+    Bare "ollama" or "argos"/"deepl" → (engine, None). Empty string → ("", None).
+    Anything else with a colon → first segment is engine, rest is model.
+    Engine must be one of argos/ollama/deepl (or empty)."""
+    if not spec:
+        return ("", None)
+    engine, sep, model = spec.partition(":")
+    engine = engine.strip().lower()
+    if engine not in ("argos", "ollama", "deepl"):
+        raise CliError(
+            f"Unknown engine: {engine!r}. Use argos, ollama[:model], or deepl. "
+            "Pass an empty string to disable."
+        )
+    return (engine, model if sep else None)
+
+
+def _rewrite_translate_block(block: list[str]) -> list[str]:
+    """Pipeline `--translate ENGINE [opts]` → translate_main argv flags.
+
+    ENGINE is the first non-flag token in the block. It's stripped and
+    rewritten as `--mt-engine ENGINE` (with `--mt-model NAME` appended if
+    the spec was `engine:model`). Empty string → `--no-mt-engine`.
+
+    Other tokens pass through unchanged so existing flags like
+    --mt-source-lang, --force, --dry-run still work.
+    """
+    if not block:
+        raise CliError(
+            "--translate needs an engine. Use --translate argos, "
+            "--translate ollama[:model], or --translate deepl."
+        )
+    # First non-flag token is the engine spec.
+    engine_spec = block[0]
+    if engine_spec.startswith("-"):
+        raise CliError(
+            "--translate needs an engine before its options. "
+            "Example: --translate ollama --mt-source-lang en"
+        )
+    engine, model = _parse_engine_spec(engine_spec)
+    rest = block[1:]
+    rewritten: list[str] = []
+    if engine == "":
+        rewritten += ["--no-mt-engine"]
+    else:
+        rewritten += ["--mt-engine", engine]
+        if model:
+            rewritten += ["--mt-model", model]
+    rewritten += rest
+    return rewritten
+
+
+def _pipeline_resolve_target(fetch_block: list[str]) -> tuple[str | None, list[str]]:
+    """Pull TARGET out of the --fetch block. TARGET is the first non-flag
+    token. Returns (target, remaining_fetch_options). target=None means
+    no fetch verb in this pipeline."""
+    if not fetch_block:
+        raise CliError(
+            "--fetch needs a TARGET (URL or PATH). "
+            "Example: --fetch https://... or --fetch /Plex/Anime --subdirectory"
+        )
+    target = fetch_block[0]
+    return (target, fetch_block[1:])
+
+
+def pipeline_main(argv: list[str]) -> int:
+    """Run a getsubtitle pipeline of verbs in canonical order.
+
+    Layout:
+      [shared options] [--fetch TARGET opts] [--translate ENGINE opts]
+      [--modify opts] [--merge opts]
+
+    Shared options:
+      --output PATH   final output directory (applied to merge if present;
+                      passed to translate/modify via -o where supported)
+      --dry-run       propagated to every verb that supports it
+
+    Verb execution order is always fetch → translate → modify → merge,
+    regardless of the order they were typed on the command line. Each
+    verb's block is parsed by that verb's existing *_main function, so
+    flag surfaces remain identical to the single-verb form.
+    """
+    blocks = split_pipeline_argv(argv)
+    shared = blocks.pop("shared", [])
+
+    # Parse shared options out of `shared`.
+    shared_output: str | None = None
+    shared_dry_run = False
+    i = 0
+    leftover_shared: list[str] = []
+    while i < len(shared):
+        tok = shared[i]
+        if tok == "--output":
+            if i + 1 >= len(shared):
+                raise CliError("--output needs a PATH argument.")
+            shared_output = shared[i + 1]
+            i += 2
+            continue
+        if tok == "--dry-run":
+            shared_dry_run = True
+            i += 1
+            continue
+        leftover_shared.append(tok)
+        i += 1
+    if leftover_shared:
+        raise CliError(
+            f"Unrecognized pipeline argument(s) before any verb: "
+            f"{' '.join(leftover_shared)}. "
+            "Place per-verb flags after their verb (--fetch / --translate / "
+            "--modify / --merge)."
+        )
+
+    # Determine the working target for verbs that don't have their own TARGET.
+    # fetch's TARGET is the pipeline target. If no --fetch, translate/modify/merge
+    # need a TARGET passed via --output (or fall back to . — current dir).
+    fetch_target: str | None = None
+    fetch_options: list[str] = []
+    if "fetch" in blocks:
+        fetch_target, fetch_options = _pipeline_resolve_target(blocks["fetch"])
+
+    # The "downstream target" — where translate/modify/merge operate — is:
+    #   1. --output PATH if given
+    #   2. fetch's TARGET (when fetch is a PATH, not a URL)
+    #   3. error otherwise (URL fetch with no --output means we don't know
+    #      where the SRTs landed; user must specify)
+    downstream_target: str | None = shared_output
+    if downstream_target is None and fetch_target is not None and not _looks_like_url(fetch_target):
+        downstream_target = fetch_target
+    if downstream_target is None and any(v in blocks for v in ("translate", "modify", "merge")):
+        if fetch_target and _looks_like_url(fetch_target):
+            raise CliError(
+                "Pipeline has --fetch URL + downstream verb(s) but no --output PATH. "
+                "Add --output /path/to/folder so translate/modify/merge know where "
+                "the fetched SRTs landed."
+            )
+        raise CliError(
+            "Pipeline needs at least --fetch TARGET or --output PATH so the "
+            "downstream verb(s) know which folder to operate on."
+        )
+
+    # Build per-verb argvs (in canonical exec order) and run them.
+    rc_total = 0
+    printed_any = False
+
+    def _heading(name: str) -> None:
+        nonlocal printed_any
+        if printed_any:
+            print()
+        printed_any = True
+        print(f"━━ {name} ━━")
+
+    if "fetch" in blocks:
+        assert fetch_target is not None  # checked above
+        _heading(f"fetch {fetch_target}")
+        sub_argv = [fetch_target] + fetch_options
+        # Propagate shared --dry-run by adding to fetch's args if not already
+        # there. URL form respects --dry-run via the URL parser. PATH form
+        # is already dry-run by default unless --run; --dry-run is harmless.
+        if shared_dry_run and "--dry-run" not in sub_argv:
+            sub_argv.append("--dry-run")
+        rc = fetch_main(sub_argv)
+        rc_total = rc or rc_total
+
+    if "translate" in blocks:
+        if downstream_target is None:
+            raise CliError("--translate needs --output PATH or a PATH --fetch target.")
+        _heading(f"translate {downstream_target}")
+        tr_args = _rewrite_translate_block(blocks["translate"])
+        sub_argv = [downstream_target] + tr_args
+        if shared_dry_run and "--dry-run" not in sub_argv:
+            sub_argv.append("--dry-run")
+        rc = translate_main(sub_argv)
+        rc_total = rc or rc_total
+
+    if "modify" in blocks:
+        if downstream_target is None:
+            raise CliError("--modify needs --output PATH or a PATH --fetch target.")
+        _heading(f"modify {downstream_target}")
+        sub_argv = [downstream_target] + blocks["modify"]
+        if shared_dry_run and "--dry-run" not in sub_argv:
+            sub_argv.append("--dry-run")
+        rc = modify_main(sub_argv)
+        rc_total = rc or rc_total
+
+    if "merge" in blocks:
+        if downstream_target is None:
+            raise CliError("--merge needs --output PATH or a PATH --fetch target.")
+        _heading(f"merge {downstream_target}")
+        sub_argv = [downstream_target] + blocks["merge"]
+        if shared_dry_run and "--dry-run" not in sub_argv:
+            sub_argv.append("--dry-run")
+        # combine_main is the underlying impl for merge.
+        rc = combine_main(sub_argv)
+        rc_total = rc or rc_total
+
+    return rc_total
+
+
+# Per-pair Ollama model overrides picked up by ollama_model_for_pair when set.
+# Pipeline TOML's [translate]."src:tgt" = "model" entries write here for the
+# duration of the run and are cleared at the end (session-only override).
+_PIPELINE_TRANSLATE_PAIR_MODELS: dict[str, str] = {}
+
+
+def _flag_from_key(key: str) -> str:
+    """TOML key (underscore form) → CLI flag (dash form)."""
+    return "--" + key.replace("_", "-")
+
+
+# Plural-form TOML aliases mapped to the canonical singular CLI flag.
+_TOML_KEY_ALIASES: dict[str, str] = {
+    "episodes": "episode",
+    "seasons": "season",
+    "langs": "langs",            # already canonical
+    "language": "langs",         # singular convenience alias
+    "languages": "langs",        # plural convenience alias
+}
+
+
+def _canonicalize_toml_key(key: str) -> str:
+    """Apply common plural/singular aliases so `episodes` works the same
+    as `episode`, etc."""
+    return _TOML_KEY_ALIASES.get(key, key)
+
+
+def _emit_pipeline_flag(key: str, value) -> list[str]:
+    """Emit one CLI flag-and-maybe-value pair from a TOML key/value.
+
+    Rules:
+      - Booleans → emit the flag when true; omit when false.
+      - Lists/tuples → emit `--flag a,b,c` (comma-joined).
+      - Strings/numbers → emit `--flag value`.
+    """
+    canon = _canonicalize_toml_key(key)
+    flag = _flag_from_key(canon)
+    if isinstance(value, bool):
+        return [flag] if value else []
+    if isinstance(value, (list, tuple)):
+        return [flag, ",".join(str(v) for v in value)]
+    return [flag, str(value)]
+
+
+def _split_translate_pair_models(block: dict) -> tuple[dict, dict[str, str]]:
+    """Pull out per-pair Ollama model overrides like "ja:ko" = "qwen3:4b"
+    from a [translate] block. Returns (remaining_block, pair_models).
+    Pair keys are detected by the presence of `:` in the key name."""
+    remaining: dict = {}
+    pair_models: dict[str, str] = {}
+    for key, value in block.items():
+        if isinstance(key, str) and ":" in key:
+            pair_models[key] = str(value)
+        else:
+            remaining[key] = value
+    return remaining, pair_models
+
+
+def _resolve_modify_furigana(value) -> list[str]:
+    """Pipeline `[modify].furigana = "off"|"hiragana"|"romaji"|true|false`
+    → CLI flag emission. Japanese-specific shorthand kept for back-compat
+    with users who set this before the v1.1 romanization umbrella shipped.
+
+    - "off" or false → no --furigana emitted
+    - "hiragana" / "romaji" → --furigana hiragana / --furigana romaji
+    - true (boolean) → bare --furigana (uses default mode)
+    """
+    if isinstance(value, bool):
+        return ["--furigana"] if value else []
+    s = str(value).strip().lower()
+    if s in ("off", "false", "none", "no", ""):
+        return []
+    if s in ("on", "true", "yes"):
+        return ["--furigana"]
+    if s in ("hiragana", "romaji"):
+        return ["--furigana", s]
+    raise CliError(
+        f"[modify].furigana must be off | hiragana | romaji (got {value!r})."
+    )
+
+
+# Default romanization mode per language. When the user writes "ko:true" we
+# resolve to this dictionary to pick the sensible default. Each language
+# uses its own native term — Japanese is "furigana" not "romanization-ja",
+# Chinese is "pinyin", Cantonese is "jyutping", etc.
+_ROMANIZATION_DEFAULTS: dict[str, str] = {
+    "ja": "hiragana",      # furigana with hiragana script
+    "ko": "revised",       # Revised Romanization (with G2P)
+    "zh": "marks",         # pinyin with tone marks
+    "yue": "numbers",      # jyutping with numbered tones
+    "th": "royal-thai",
+    "ar": "ala-lc",
+    "hi": "iast",
+    "ru": "iso-9",
+}
+
+# Accepted modes per language. The parser rejects unknown modes with a
+# helpful error. Extend this table as new romanization backends ship.
+_ROMANIZATION_ACCEPTED_MODES: dict[str, set[str]] = {
+    "ja": {"hiragana", "katakana", "romaji", "furigana"},
+    "ko": {"revised", "yale", "mr", "true"},
+    "zh": {"marks", "numbers", "letters", "true"},
+    "yue": {"numbers", "marks", "true"},
+    "th": {"royal-thai", "iso-11940", "true"},
+    "ar": {"ala-lc", "dmg", "true"},
+    "hi": {"iast", "iso-15919", "itrans", "true"},
+    "ru": {"iso-9", "bgn-pcgn", "true"},
+}
+
+
+def _parse_romanization_spec(value) -> list[tuple[str, str]]:
+    """Pipeline `[modify].romanization = "ko:true, ja:hiragana"` (string OR list)
+    → list of (lang_iso, mode) pairs.
+
+    Accepted forms:
+      "ko:true, ja:hiragana, zh:true"               (comma string)
+      ["ko:true", "ja:hiragana"]                    (list)
+      "ja:hiragana|romaji"                           (pipe expands to two entries)
+      true / "true"                                  (every supported lang's default)
+
+    Each entry's mode "true" resolves to the default for that language
+    (see _ROMANIZATION_DEFAULTS). Language codes accept ISO codes (ja, ko,
+    zh, yue, …) or common typos (jp, kr, cn) via LANGUAGE_ALIASES.
+    """
+    # Convert input to a flat list of "lang:mode" entries.
+    if isinstance(value, bool):
+        if not value:
+            return []
+        # `true` alone → every supported lang at its default. Usually not
+        # what the user wants (most folks have one or two target langs),
+        # but it makes "turn everything on" trivial.
+        return [(lang, mode) for lang, mode in _ROMANIZATION_DEFAULTS.items()]
+    if isinstance(value, (list, tuple)):
+        entries = [str(v).strip() for v in value]
+    else:
+        entries = [s.strip() for s in str(value).split(",")]
+    out: list[tuple[str, str]] = []
+    for entry in entries:
+        if not entry:
+            continue
+        if ":" not in entry:
+            # Bare lang code (e.g. "ko") → use its default.
+            lang = entry
+            mode = "true"
+        else:
+            lang, _, mode = entry.partition(":")
+            lang = lang.strip().lower()
+            mode = mode.strip().lower()
+        # Normalise lang code: jp → ja, kr → ko, cn → zh, etc.
+        lang = LANGUAGE_ALIASES.get(lang, lang)
+        # Expand pipe-mode shorthand (e.g. "ja:hiragana|romaji" → two pairs).
+        modes = mode.split("|") if "|" in mode else [mode]
+        for m in modes:
+            m = m.strip()
+            if m in ("true", "on", "yes", ""):
+                m = _ROMANIZATION_DEFAULTS.get(lang)
+                if m is None:
+                    raise CliError(
+                        f"[modify].romanization: language {lang!r} has no built-in "
+                        f"default. Specify a mode explicitly (e.g. {lang}:romanized)."
+                    )
+            accepted = _ROMANIZATION_ACCEPTED_MODES.get(lang)
+            if accepted and m not in accepted:
+                raise CliError(
+                    f"[modify].romanization: {lang!r} doesn't support mode {m!r}. "
+                    f"Try one of: {', '.join(sorted(accepted - {'true'}))}."
+                )
+            out.append((lang, m))
+    return out
+
+
+def _apply_romanization_to_args(args) -> None:
+    """Translate `args.romanization` (the v1.1 SPEC string) onto the
+    legacy `args.furigana` attribute the downstream code reads. Routes
+    Japanese entries through the existing furigana code path; raises a
+    clear CliError for non-Japanese languages still to ship.
+
+    A no-op when `args.romanization` is unset or empty. Used by
+    combine_main and the URL-form download flow so the SPEC layer above
+    feeds the same generator below.
+    """
+    spec = getattr(args, "romanization", None)
+    if not spec:
+        return
+    if spec == "":
+        # --no-romanization → explicit disable.
+        args.furigana = None
+        return
+    pairs = _parse_romanization_spec(spec)
+    ja_modes = [m for l, m in pairs if l == "ja"]
+    non_ja = [(l, m) for l, m in pairs if l != "ja"]
+    if non_ja:
+        langs = ", ".join(f"{l}:{m}" for l, m in non_ja)
+        raise CliError(
+            f"--romanization for non-Japanese languages ({langs}) is not yet "
+            "implemented. Korean (Revised Romanization with G2P) and Chinese "
+            "pinyin are on the roadmap; see ROADMAP.md > Romanization expansion."
+        )
+    if ja_modes:
+        # Map the first ja-mode onto --furigana's value (the downstream
+        # generator handles only one mode at a time; multi-mode |-pipe
+        # support comes with the per-language backend rollout).
+        mode = ja_modes[0]
+        args.furigana = "romaji" if mode == "romaji" else "hiragana"
+
+
+def _resolve_modify_romanization(value) -> list[str]:
+    """Pipeline `[modify].romanization = "ko:true, ja:hiragana"` → CLI flag
+    emission. The CLI flag is `--romanization SPEC` (a comma string), so
+    this just normalises and re-serializes the spec for the downstream
+    parser, with backward-compat to the older `[modify].furigana` key
+    handled separately in _toml_to_pipeline_argv."""
+    pairs = _parse_romanization_spec(value)
+    if not pairs:
+        return []
+    spec = ",".join(f"{lang}:{mode}" for lang, mode in pairs)
+    return ["--romanization", spec]
+
+
+def _normalize_merge_langs(value) -> tuple[str, dict[str, str]]:
+    """Pipeline `[merge].langs = "ja:vtt, en, ko:smi"` (string OR list)
+    → (langs_string_for_-l, {lang: format_hint, ...}).
+
+    The :format hint is stripped from the langs argument (so `-l` only
+    sees language codes) and returned separately so the merge scanner
+    can pick the right file when multiple formats coexist on disk.
+
+    Accepts both:
+      langs = "ja:vtt, en, ko:smi"          (comma string)
+      langs = ["ja:vtt", "en", "ko:smi"]    (list of entries)
+    """
+    if isinstance(value, (list, tuple)):
+        entries = [str(v).strip() for v in value]
+    else:
+        entries = [s.strip() for s in str(value).split(",")]
+    langs: list[str] = []
+    hints: dict[str, str] = {}
+    for entry in entries:
+        if not entry:
+            continue
+        if ":" in entry:
+            lang, _, fmt = entry.partition(":")
+            lang = lang.strip().lower()
+            fmt = fmt.strip().lower()
+            if fmt in ("ass",):
+                raise CliError(
+                    f"merge :format hint {entry!r} — ASS as a merge input "
+                    "is not yet supported. Use :srt or :vtt."
+                )
+            if fmt not in ("srt", "vtt", "smi"):
+                raise CliError(
+                    f"merge :format hint {entry!r}: unknown format {fmt!r}. "
+                    "Use :srt, :vtt, or :smi."
+                )
+            langs.append(lang)
+            hints[lang] = fmt
+        else:
+            langs.append(entry.lower())
+    return ",".join(langs), hints
+
+
+def _normalize_mt_source(value) -> str:
+    """Normalize the [translate].mt_source value into the comma-list string
+    accepted by --mt-source-lang.
+
+    Accepts:
+      - string: "ja" (global) or "ko:ja,es:en" (per-target)
+      - dict: { ko = "ja", es = "en" } (per-target, cleaner)
+              { en = ["ko", "ja"] } (fallback list — first item used today;
+              future round will pick first AVAILABLE on disk)
+    """
+    if isinstance(value, str):
+        return value
+    if isinstance(value, dict):
+        parts: list[str] = []
+        for target, source in value.items():
+            if isinstance(source, (list, tuple)):
+                # First-listed source is the canonical pick for today's CLI.
+                if not source:
+                    continue
+                source = source[0]
+            parts.append(f"{target}:{source}")
+        return ",".join(parts)
+    raise CliError(f"[translate].mt_source must be a string or dict (got {type(value).__name__}).")
+
+
+def _toml_to_pipeline_argv(toml_data: dict) -> tuple[list[str], dict]:
+    """Convert a parsed pipeline TOML document into:
+      (argv for pipeline_main, extras dict)
+    where extras carries side-channel info that doesn't fit on argv:
+      {
+        "translate_pair_models": {"ja:ko": "qwen3:4b", ...},
+        "merge_format_hints":   {"ja": "vtt", "ko": "smi", ...},
+        "output_layout":        "plex" | "archive" | "flat" | None,
+        "output_format":        "vtt" | None,    # overrides per-verb format
+        "force_live_run":       bool,             # propagate to PATH-form fetch
+      }
+    pipeline_main consumes both.
+
+    Schema (sections in pipeline execution order):
+
+      [fetch]
+      source = "/Plex/Anime"          # required (was: target, kept as alias)
+      subdirectory = true             # bool flags: true → --flag, false → omit
+      season = "1-2"                  # range OK; also `seasons = ...`
+      episode = "all"                 # also `episodes = ...`
+      languages = "japanese,english"  # full names normalize; alias: langs
+
+      [translate]
+      engine = "ollama"               # required: argos | ollama[:model] | deepl
+      mt_source = { ko = "ja", es = "en" }   # per-target source (dict form)
+      # or: mt_source = "ko:ja,es:en"        # comma-string form (mt_source_lang accepted as alias)
+      "ja:ko" = "qwen3:4b"            # per-pair Ollama overrides (session-only)
+      "en:es" = "llama3.2:3b"
+
+      [modify]
+      strip_cc_noise = true
+      single_line = true
+      furigana = "hiragana"           # off | hiragana | romaji
+      reading_format = "all"          # srt | ass | vtt | all (alias: furigana_output_format)
+      convert = "smi-to-srt"          # "none" or omitted = no conversion
+
+      [merge]
+      languages = "ja:vtt, en, ko:smi"   # per-lang :format input hints
+      master = "ja"
+      sync = "strict"
+      furigana = true                 # inline 漢字（かんじ） into merged ja
+      format = "vtt"                  # final stacked-output format
+
+      [output]
+      target = "/Plex/Output"         # final output folder (was: root, kept as alias)
+      layout = "plex"                 # archive | flat | plex
+      retain_folder_structure = true  # alias for layout = "plex"
+      format = "srt"                  # global override; per-verb wins if NOT set here
+      dry_run = false                 # false = live run (auto-adds --run to fetch)
+      force = false                   # propagates to translate / modify / merge
+      yes = false                     # propagates to fetch (skip bulk confirm)
+      debug_providers = false         # propagates to fetch
+    """
+    argv: list[str] = []
+    extras: dict = {
+        "translate_pair_models": {},
+        "merge_format_hints": {},
+        "output_layout": None,
+        "output_format": None,
+        "force_live_run": False,
+    }
+
+    # Normalize hyphen→underscore in every section's top-level keys so users
+    # can write `dry-run` or `dry_run` interchangeably in --config TOMLs.
+    toml_data = {
+        k: (_normalize_section_keys(v) if isinstance(v, dict) else v)
+        for k, v in toml_data.items()
+    }
+
+    # [output] section — read first so its globals can propagate into the
+    # individual verb blocks below. NOT emitted via the generic flag walker
+    # because every key here is special-cased.
+    out_block = toml_data.get("output") or {}
+    out_target = out_block.get("target") or out_block.get("root")  # canonical + alias
+    if out_target is not None:
+        argv += ["--output", str(out_target)]
+    out_dry_run = bool(out_block.get("dry_run", False))
+    if out_dry_run:
+        argv.append("--dry-run")
+    else:
+        # Absent / explicitly false → live run. Pipeline_main will auto-add
+        # --run to PATH-form fetch so [output].dry_run is the single source
+        # of truth (no more [fetch].run = true duplication).
+        extras["force_live_run"] = True
+    if "format" in out_block:
+        extras["output_format"] = str(out_block["format"])
+    layout = out_block.get("layout")
+    # Accept both `retain_folder_structure` (canonical snake_case) and the
+    # historical hyphen form `retain-folder-structure`.
+    if not layout and (
+        out_block.get("retain_folder_structure") is True
+        or out_block.get("retain-folder-structure") is True
+    ):
+        layout = "plex"
+    if layout:
+        extras["output_layout"] = str(layout)
+    # Propagated booleans from [output] → verbs that support them.
+    out_force = bool(out_block.get("force", False))
+    out_yes = bool(out_block.get("yes", False))
+    out_debug = bool(out_block.get("debug_providers", False))
+
+    if "fetch" in toml_data:
+        fb = dict(toml_data["fetch"])
+        # Canonical key: source. Aliases: target (legacy), url.
+        fetch_src = fb.pop("source", None) or fb.pop("target", None) or fb.pop("url", None)
+        if fetch_src is None:
+            raise CliError("Pipeline TOML [fetch] section needs a `source` key.")
+        argv.append("--fetch")
+        argv.append(str(fetch_src))
+        # Strip [fetch].run if present — superseded by [output].dry_run.
+        fb.pop("run", None)
+        # Auto-add --run for PATH-form fetch when [output].dry_run is false.
+        if extras["force_live_run"] and not _looks_like_url(str(fetch_src)):
+            argv.append("--run")
+        # Layout from [output] flows into fetch when present and fetch
+        # didn't set its own.
+        if extras["output_layout"] and "layout" not in fb:
+            argv += ["--layout", extras["output_layout"]]
+        # Global --yes / --debug-providers propagate to fetch.
+        if out_yes:
+            argv.append("-y")
+        if out_debug:
+            argv.append("--debug-providers")
+        for key, value in fb.items():
+            argv += _emit_pipeline_flag(key, value)
+
+    if "translate" in toml_data:
+        tb = dict(toml_data["translate"])
+        if "engine" not in tb:
+            raise CliError("Pipeline TOML [translate] section needs an `engine` key.")
+        remaining, pair_models = _split_translate_pair_models(tb)
+        extras["translate_pair_models"] = pair_models
+        argv.append("--translate")
+        argv.append(str(remaining.pop("engine")))
+        # Canonical: mt_source. Alias: mt_source_lang (kept for back-compat).
+        # Both forms accept string ("ko:ja,es:en") or dict ({ko = "ja"}).
+        _mt_src_val = (
+            remaining.pop("mt_source", None)
+            if "mt_source" in remaining
+            else remaining.pop("mt_source_lang", None)
+        )
+        if _mt_src_val is not None:
+            argv += ["--mt-source", _normalize_mt_source(_mt_src_val)]
+        # Global --force propagates to translate.
+        if out_force:
+            argv.append("--force")
+        for key, value in remaining.items():
+            argv += _emit_pipeline_flag(key, value)
+
+    if "modify" in toml_data:
+        mb = dict(toml_data["modify"])
+        argv.append("--modify")
+        # `romanization` is the v1.1 multi-language umbrella; takes precedence
+        # over the older `furigana` key when both are present.
+        if "romanization" in mb:
+            argv += _resolve_modify_romanization(mb.pop("romanization"))
+            mb.pop("furigana", None)  # romanization wins; drop the legacy key
+        elif "furigana" in mb:
+            argv += _resolve_modify_furigana(mb.pop("furigana"))
+        # Canonical: reading_format.
+        # Aliases: furigana_output_format, romanization_output_format,
+        #          furigana_format, format.
+        out_fmt = (
+            mb.pop("reading_format", None)
+            or mb.pop("romanization_output_format", None)
+            or mb.pop("furigana_output_format", None)
+            or mb.pop("furigana_format", None)
+            or mb.pop("format", None)
+        )
+        if out_fmt:
+            argv += ["--reading-format", str(out_fmt)]
+        # convert = "none" treated as omitted.
+        convert_val = mb.pop("convert", None)
+        if convert_val and str(convert_val).lower() != "none":
+            argv += ["--convert", str(convert_val)]
+        if out_force:
+            argv.append("--force")
+        for key, value in mb.items():
+            argv += _emit_pipeline_flag(key, value)
+
+    if "merge" in toml_data:
+        mb = dict(toml_data["merge"])
+        argv.append("--merge")
+        # Canonical: languages. Aliases: langs, language. Strip :format hints.
+        langs_val = mb.pop("languages", None) or mb.pop("langs", None) or mb.pop("language", None)
+        if langs_val is not None:
+            langs_str, hints = _normalize_merge_langs(langs_val)
+            extras["merge_format_hints"] = hints
+            argv += ["-l", langs_str]
+        # [output].format overrides per-verb merge format unless merge has its own.
+        merge_format = mb.pop("format", None)
+        if merge_format is None and extras["output_format"]:
+            merge_format = extras["output_format"]
+        if merge_format:
+            argv += ["--format", str(merge_format)]
+        if out_force:
+            argv.append("--force")
+        for key, value in mb.items():
+            argv += _emit_pipeline_flag(key, value)
+
+    return argv, extras
+
+
+def _extract_config_flag(argv: list[str]) -> str | None:
+    """Scan argv for `--config FILE.toml` (anywhere in argv). Returns the
+    file path if present, else None. Recommended position is at the end:
+        getsubtitle --source X --output Y --config ./anime.toml
+    but the parser accepts it anywhere. Raises CliError if --config
+    appears with no following path argument."""
+    for i, tok in enumerate(argv):
+        if tok == "--config":
+            if i + 1 >= len(argv):
+                raise CliError(
+                    "--config needs a TOML file path. "
+                    "Example: getsubtitle --config ~/.getsubtitle/anime.toml"
+                )
+            return argv[i + 1]
+        if tok.startswith("--config="):
+            return tok.split("=", 1)[1]
+    return None
+
+
+# Top-level CLI flags that override fields in --config TOML data. These
+# are the "common knobs" users want per-run without editing the TOML.
+# Each maps to a (section, key) pair in the pipeline TOML structure.
+_PIPELINE_CLI_OVERRIDE_MAP: dict[str, tuple[str, str]] = {
+    "--source": ("fetch", "source"),
+    "--season": ("fetch", "season"),
+    "--episode": ("fetch", "episode"),
+    "--languages": ("fetch", "languages"),
+    "--langs": ("fetch", "languages"),
+    "-l": ("fetch", "languages"),
+    "--subdirectory": ("fetch", "subdirectory"),  # boolean
+    "--output": ("output", "target"),
+    "--format": ("output", "format"),
+    "--dry-run": ("output", "dry_run"),           # boolean
+    "--force": ("output", "force"),               # boolean
+}
+_PIPELINE_CLI_BOOLEAN_OVERRIDES = {"--subdirectory", "--dry-run", "--force"}
+
+
+def _extract_cli_overrides(argv: list[str]) -> tuple[dict, list[str], dict[str, list[str]]]:
+    """Pull the top-level override flags out of argv. Returns:
+      (top_level_overrides, residual_argv, verb_blocks)
+    where:
+      top_level_overrides — {(section, key): value} dict for direct merge into TOML
+      residual_argv       — argv with consumed flags removed (and --config FILE pair)
+      verb_blocks         — {"fetch": [block_args...], ...} for inline --fetch etc.
+                            (passed to split_pipeline_argv-style merge)
+    """
+    overrides: dict = {}
+    residual: list[str] = []
+    i = 0
+    while i < len(argv):
+        tok = argv[i]
+        if tok == "--config" and i + 1 < len(argv):
+            # Drop --config and its arg entirely.
+            i += 2
+            continue
+        if tok.startswith("--config="):
+            i += 1
+            continue
+        # Boolean override (no value).
+        if tok in _PIPELINE_CLI_BOOLEAN_OVERRIDES:
+            section, key = _PIPELINE_CLI_OVERRIDE_MAP[tok]
+            overrides[(section, key)] = True
+            i += 1
+            continue
+        # Valued override (flag + arg, or flag=arg).
+        if tok in _PIPELINE_CLI_OVERRIDE_MAP and i + 1 < len(argv):
+            section, key = _PIPELINE_CLI_OVERRIDE_MAP[tok]
+            overrides[(section, key)] = argv[i + 1]
+            i += 2
+            continue
+        if "=" in tok:
+            flag, _, val = tok.partition("=")
+            if flag in _PIPELINE_CLI_OVERRIDE_MAP and flag not in _PIPELINE_CLI_BOOLEAN_OVERRIDES:
+                section, key = _PIPELINE_CLI_OVERRIDE_MAP[flag]
+                overrides[(section, key)] = val
+                i += 1
+                continue
+        residual.append(tok)
+        i += 1
+    # Now extract per-verb blocks (--fetch / --translate / --modify / --merge)
+    # from the residual. These merge into TOML per-section.
+    verb_blocks = split_pipeline_argv(residual)
+    verb_blocks.pop("shared", None)  # already consumed
+    return overrides, residual, verb_blocks
+
+
+def _merge_overrides_into_toml(data: dict, overrides: dict, verb_blocks: dict) -> dict:
+    """Layer CLI overrides into the parsed TOML data dict.
+
+    Order (lowest precedence first):
+      1. TOML as parsed
+      2. Inline --verb blocks (per-section, per-key; CLI wins on collision)
+      3. Top-level --source / --output / etc. overrides (CLI wins)
+
+    Returns a NEW dict (does not mutate the input)."""
+    out: dict = {k: (dict(v) if isinstance(v, dict) else v) for k, v in data.items()}
+
+    # Step 2: inline verb blocks. We don't re-parse argparse for each verb;
+    # we just convert the block argv into a small dict of {key: value}
+    # using heuristic flag-pair extraction. Recognised flags only; others
+    # are ignored (they wouldn't survive a TOML round-trip anyway).
+    # Map argparse flag → TOML key for each verb.
+    flag_to_key = {
+        "fetch": {
+            "--subdirectory": ("subdirectory", True),
+            "--profile": ("profile", None),
+            "--season": ("season", None),
+            "-s": ("season", None),
+            "--episode": ("episode", None),
+            "-e": ("episode", None),
+            "--languages": ("languages", None),
+            "--langs": ("languages", None),
+            "-l": ("languages", None),
+            "--release-source": ("release_source", None),
+            "--layout": ("layout", None),
+            "--run": ("run", True),
+        },
+        "translate": {
+            "--mt-source": ("mt_source", None),
+            "--mt-source-lang": ("mt_source", None),
+            "--engine": ("engine", None),
+            "--mt-engine": ("engine", None),
+            "--model": ("model", None),
+            "--mt-model": ("model", None),
+            "--force": ("force", True),
+        },
+        "modify": {
+            "--strip-cc-noise": ("strip_cc_noise", True),
+            "--single-line": ("single_line", True),
+            "--furigana": ("furigana", "hiragana"),  # bare → mode default
+            "--reading-format": ("reading_format", None),
+            "--furigana-format": ("reading_format", None),
+            "--convert": ("convert", None),
+            "--force": ("force", True),
+        },
+        "merge": {
+            "-l": ("languages", None),
+            "--langs": ("languages", None),
+            "--languages": ("languages", None),
+            "--master": ("master", None),
+            "--sync": ("sync", None),
+            "--furigana": ("furigana", True),
+            "--format": ("format", None),
+            "--force": ("force", True),
+            "--preserve-lines": ("preserve_lines", True),
+        },
+    }
+    for verb in ("fetch", "translate", "modify", "merge"):
+        block = verb_blocks.get(verb)
+        if not block:
+            continue
+        section_name = verb
+        out_section = dict(out.get(section_name) or {})
+        # For fetch and translate, the first non-flag token is the positional
+        # (source or engine respectively).
+        idx = 0
+        if verb == "fetch" and block and not block[0].startswith("-"):
+            out_section["source"] = block[0]
+            idx = 1
+        elif verb == "translate" and block and not block[0].startswith("-"):
+            # Use the colon-spec parser so engine:model works.
+            engine, model = _parse_engine_spec(block[0])
+            out_section["engine"] = engine if not model else f"{engine}:{model}"
+            idx = 1
+        while idx < len(block):
+            tok = block[idx]
+            spec = flag_to_key.get(verb, {}).get(tok)
+            if spec is None:
+                idx += 1
+                continue
+            key, fixed_value = spec
+            if isinstance(fixed_value, bool):
+                out_section[key] = fixed_value
+                idx += 1
+            elif idx + 1 < len(block) and not block[idx + 1].startswith("-"):
+                out_section[key] = block[idx + 1]
+                idx += 2
+            else:
+                # Flag with no value — for --furigana that's a bare flag.
+                if fixed_value is not None:
+                    out_section[key] = fixed_value
+                idx += 1
+        out[section_name] = out_section
+
+    # Step 3: top-level CLI overrides win over everything.
+    for (section, key), value in overrides.items():
+        out_section = dict(out.get(section) or {})
+        out_section[key] = value
+        out[section] = out_section
+    return out
+
+
+def pipeline_from_config_main(config_path: str, full_argv: list[str] | None = None) -> int:
+    """Load a pipeline TOML file, optionally layer CLI overrides from
+    `full_argv`, then run pipeline_main on the merged result.
+
+    Layering (lowest to highest precedence):
+      1. Built-in defaults (in _toml_to_pipeline_argv)
+      2. TOML data parsed from `config_path`
+      3. Inline --fetch / --translate / --modify / --merge blocks in full_argv
+      4. Top-level --source / --output / --format / --season / --episode /
+         -l / --subdirectory / --dry-run / --force overrides in full_argv
+    """
+    path = Path(config_path).expanduser()
+    if not path.exists():
+        raise CliError(f"Config not found: {path}")
+    tomllib = _import_tomllib()
+    try:
+        with path.open("rb") as f:
+            data = tomllib.load(f)
+    except Exception as e:
+        raise CliError(f"Could not parse config TOML {path}: {e}") from e
+    if full_argv:
+        overrides, _residual, verb_blocks = _extract_cli_overrides(full_argv)
+        data = _merge_overrides_into_toml(data, overrides, verb_blocks)
+    argv, extras = _toml_to_pipeline_argv(data)
+    if not argv or not _is_pipeline_argv(argv):
+        raise CliError(
+            f"Config {path} has no verb sections after merging CLI overrides. "
+            "Add at least one of [fetch], [translate], [modify], [merge] to the "
+            "TOML, or pass an inline --fetch / --translate / --modify / --merge "
+            "flag."
+        )
+    # Install session-only per-pair Ollama model overrides (cleared in finally).
+    pair_models = extras.get("translate_pair_models") or {}
+    saved = dict(_PIPELINE_TRANSLATE_PAIR_MODELS)
+    _PIPELINE_TRANSLATE_PAIR_MODELS.update(pair_models)
+    # Stash merge :format hints where the merge scanner can read them.
+    global _PIPELINE_MERGE_FORMAT_HINTS
+    saved_hints = _PIPELINE_MERGE_FORMAT_HINTS
+    _PIPELINE_MERGE_FORMAT_HINTS = dict(extras.get("merge_format_hints") or {})
+    try:
+        return pipeline_main(argv)
+    finally:
+        _PIPELINE_TRANSLATE_PAIR_MODELS.clear()
+        _PIPELINE_TRANSLATE_PAIR_MODELS.update(saved)
+        _PIPELINE_MERGE_FORMAT_HINTS = saved_hints
+
+
+# Session-only merge per-language format hint. Set by --config TOML
+# loader from `[merge].languages = "ja:vtt, en, ko:smi"` entries. The merge
+# scanner (scan_srt_files / its successor) consults this when choosing
+# which source file to read per language.
+_PIPELINE_MERGE_FORMAT_HINTS: dict[str, str] = {}
 
 
 def _batch_walk_targets(root: "Path") -> list[tuple["Path", "Path", int | None]]:
@@ -5538,55 +7117,6 @@ def _batch_walk_targets(root: "Path") -> list[tuple["Path", "Path", int | None]]
     return out
 
 
-def batch_main(argv: list[str]) -> int:
-    args = build_batch_parser().parse_args(argv)
-    root = _batch_resolve_root(args)
-    if not root.is_dir():
-        raise CliError(f"batch root is not a directory: {root}")
-
-    dry_run = not args.run
-    mode = "DRY RUN (no writes)" if dry_run else "LIVE"
-    print(f"batch {args.action} — root: {root}")
-    print(f"mode: {mode}", end="")
-    if args.action == "fetch":
-        mt = args.mt_engine or None
-        print(f"  |  MT engine: {mt or 'disabled'}")
-    elif args.action == "merge":
-        print(f"  |  format: {args.format or 'default (srt)'}")
-    else:
-        print()
-
-    if args.profile:
-        print(f"profile override: {args.profile} (applies to every folder)")
-    elif not get_provider_api_key("tmdb"):
-        print("note: no TMDB key configured — profile auto-detection falls back to")
-        print("      character-set heuristics. Set a key for better accuracy:")
-        print("      getsubtitle --set-key tmdb")
-
-    targets = _batch_walk_targets(root)
-    if not targets:
-        print("\nNo video files found under that root.")
-        return 1
-
-    for target, show_folder, season in targets:
-        profile = args.profile or detect_profile_from_title(show_folder.name)
-        if args.action == "fetch":
-            _batch_fetch_one(
-                target=target, show_folder=show_folder, season=season,
-                profile=profile, mt_engine=(args.mt_engine or None),
-                dry_run=dry_run,
-            )
-        else:  # merge
-            _batch_merge_one(
-                target=target, show_folder=show_folder, season=season,
-                profile=profile, fmt=args.format, dry_run=dry_run,
-            )
-
-    print()
-    print(f"Processed {len(targets)} target(s).")
-    return 0
-
-
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(
         prog="getsubtitle",
@@ -5601,7 +7131,7 @@ def build_parser() -> argparse.ArgumentParser:
             Examples (basic):
               getsubtitle URL -l ja
               getsubtitle URL -s 1 -e 3 -l ja,ko,en,es
-              getsubtitle URL -s 1 -e all -l ja --furigana --single
+              getsubtitle URL -s 1 -e all -l ja --romanization ja:hiragana --single
               getsubtitle "https://www.imdb.com/title/tt28299608/" -s 1 -e all -l ko,en,es --dry-run
 
             Examples (by source):
@@ -5651,7 +7181,7 @@ def build_parser() -> argparse.ArgumentParser:
     search = p.add_argument_group("Search")
     search.add_argument("-s", "--season", default="auto", metavar="N|all", help="Season to search. Default: infer from URL/metadata when possible.")
     search.add_argument("-e", "--episode", default="auto", metavar="N|N-M|all", help="Episode to search. Accepts one episode, a range, a comma list, or all. Default: infer from URL/metadata when possible.")
-    search.add_argument("-l", "--langs", "--lang", default="ja", metavar="CODES", help="Comma-separated language codes. Default: ja. Example: ja,ko,en,es")
+    search.add_argument("-l", "--languages", "--langs", "--lang", dest="langs", default="ja", metavar="CODES", help="Comma-separated language codes. Default: ja. Accepts ISO codes (ja,en) or full names (japanese,english). Example: ja,en,es")
     search.add_argument("--title", metavar="TEXT", help="Title override when URL metadata is missing or blocked.")
     search.add_argument("--anilist", type=int, metavar="ID", help="AniList ID override for anime.")
     search.add_argument("--browser", action="store_true", help="Open the URL in your browser first, useful for login/Cloudflare pages.")
@@ -5677,10 +7207,14 @@ def build_parser() -> argparse.ArgumentParser:
     output.add_argument("--no-open-folder-prompt", action="store_true", help="Never ask to open the output folder after saving.")
 
     learning = p.add_argument_group("Learning Helpers")
-    learning.add_argument("-f", "--furigana", nargs="?", const="hiragana", choices=["hiragana", "romaji"], help="Generate extra Japanese reading files (from downloaded .ja.srt only). Optional value: hiragana or romaji. Default when used: hiragana.")
-    learning.add_argument("--no-furigana", dest="furigana", action="store_const", const=None, help="Disable furigana for this run even if enabled in user_settings.toml.")
-    learning.add_argument("--format", "--furigana-format", dest="furigana_format", metavar="CODES", help="Furigana output format(s) — comma list of srt, ass, vtt, or 'all'. Default: srt (asbplayer-friendly; the other variants are experimental). Use this to override [furigana].format from user_settings.toml for a single run.")
+    # Hidden compat aliases for the pre-v1.1 --furigana flag. New code uses
+    # --romanization (which generalises to non-Japanese reading aids).
+    learning.add_argument("-f", "--furigana", nargs="?", const="hiragana", choices=["hiragana", "romaji"], help=argparse.SUPPRESS)
+    learning.add_argument("--no-furigana", dest="furigana", action="store_const", const=None, help=argparse.SUPPRESS)
+    learning.add_argument("--reading-format", "--format", "--furigana-format", "--romanization-format", dest="furigana_format", metavar="CODES", help="Reading-aid output format(s) — comma list of srt, ass, vtt, or 'all'. Default: srt. Overrides [modify].reading_format from user_settings.toml.")
     learning.add_argument("-furigana", dest="furigana", nargs="?", const="hiragana", choices=["hiragana", "romaji"], help=argparse.SUPPRESS)
+    learning.add_argument("--romanization", "--romanize", metavar="SPEC", help="Generate per-language reading aids from downloaded SRTs. SPEC is a comma list of LANG:MODE pairs, e.g. 'ja:hiragana' or 'ja:hiragana|romaji'. Japanese ships now; other languages land per the roadmap.")
+    learning.add_argument("--no-romanization", dest="romanization", action="store_const", const="", help="Disable romanization side-file generation for this run.")
     learning.add_argument("--single-line", "--single", action="store_true", default=False, help="Flatten SRT cues to one text line for cleaner asbplayer display. On by default; this flag is kept as an explicit readability marker.")
     learning.add_argument("--no-single-line", "--preserve-lines", dest="single_line", action="store_false", help="Keep each downloaded SRT's original line breaks (disables the default single-line flattening).")
     learning.add_argument("-single-line", "-single", dest="single_line", action="store_true", help=argparse.SUPPRESS)
@@ -5696,10 +7230,10 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--set-jimaku-key", action="store_true", help=argparse.SUPPRESS)
 
     translation = p.add_argument_group("Machine Translation", description="Runs AFTER download. Requires at least one other requested language to download successfully so MT has a source SRT to translate from. Output saved as <name>.<lang>.mt.srt.")
-    translation.add_argument("--mt-engine", choices=["argos", "ollama", "deepl"], help="Translate missing requested languages from the best available SRT. Engines: argos (offline; pip install argostranslate), ollama (offline LLM; needs Ollama daemon), deepl (online; free tier, needs DEEPL_API_KEY). Default: argos (via [translate].engine).")
-    translation.add_argument("--no-mt-engine", dest="mt_engine", action="store_const", const="", help="Disable machine translation for this run even when [translate].engine is set in user_settings.toml.")
-    translation.add_argument("--mt-model", metavar="NAME", help=f"Ollama model for --mt-engine ollama. Default: {DEFAULT_OLLAMA_MODEL}")
-    translation.add_argument("--mt-source-lang", metavar="CODES", help="Force the source language(s) for MT. Single code (ja) applies to all targets; target:source pairs (ko:ja,es:en) map per target.")
+    translation.add_argument("--engine", "--mt-engine", dest="mt_engine", choices=["argos", "ollama", "deepl"], help="Translate missing requested languages from the best available SRT. Engines: argos (offline; pip install argostranslate), ollama (offline LLM; needs Ollama daemon), deepl (online; free tier, needs DEEPL_API_KEY). Default: argos (via [translate].engine).")
+    translation.add_argument("--no-engine", "--no-mt-engine", dest="mt_engine", action="store_const", const="", help="Disable machine translation for this run even when [translate].engine is set in user_settings.toml.")
+    translation.add_argument("--model", "--mt-model", dest="mt_model", metavar="NAME", help=f"Ollama model for --engine ollama. Default: {DEFAULT_OLLAMA_MODEL}")
+    translation.add_argument("--mt-source", "--mt-source-lang", dest="mt_source_lang", metavar="CODES", help="Force the source language(s) for MT. Single code (ja) applies to all targets; target:source pairs (ko:ja,es:en) map per target.")
 
     advanced = p.add_argument_group("Advanced / Experimental")
     advanced.add_argument("--debug-providers", action="store_true", help="Show raw provider counts and language tags for missing-subtitle debugging.")
@@ -6013,40 +7547,24 @@ def _import_tomllib():
 # Schema-ish dict of built-in defaults. Used for `config --show` and as the
 # source of truth for the example template.
 BUILTIN_CONFIG_DEFAULTS: dict[str, dict[str, object]] = {
-    "download": {
-        "langs": "ja",
-        "output": DEFAULT_OUTPUT_TEXT,
-        "layout": "archive",
+    # Pipeline-aligned schema. Section names and keys match the pipeline
+    # TOML schema (--config FILE.toml) so users can copy-paste blocks
+    # between user_settings.toml and pipeline configs.
+    "fetch": {
+        "languages": "ja",
         "release_source": "auto",
-        "open_folder": False,
-        # On by default: getsubtitle's primary downstream is asbplayer, which
-        # prefers single-line cues. Override per-run with --preserve-lines.
-        "single_line": True,
-        # On by default: Japanese broadcast SRTs are full of ➡ continuation
-        # arrows that have no value for language learning.
-        "strip_cc_noise": True,
-    },
-    "combine": {
-        "langs": "ja,ko",
-        "sync": "auto",
-        "preserve_lines": False,
-        "force": False,
-        "priority": [],
-    },
-    "furigana": {
-        # On by default: language-learning is getsubtitle's headline use case.
-        "enabled": True,
-        "combine": True,
-        "mode": "hiragana",
-        "format": "srt",
-        "strip_before_mt": True,
     },
     "translate": {
         # Default engine: argos (offline, free, no daemon). Users without
         # argostranslate installed see a one-line setup hint, not a crash.
         "engine": "argos",
         "model": DEFAULT_OLLAMA_MODEL,
-        "source_lang": "auto",
+        # Per-target source spec. Either a single string ("auto" or "ja" or
+        # "ko:ja,es:en") or a dict ({ ko = "ja", es = "en" }).
+        "mt_source_lang": "auto",
+        # Strip inline 漢字（かんじ） readings from ja before sending to MT.
+        # Was [furigana].strip_before_mt under the old schema.
+        "strip_furigana_before_mt": True,
         "ollama_models": {
             # Flags live alongside pair → model mappings in this nested table.
             # auto_load: pull a missing Ollama model automatically before MT.
@@ -6055,8 +7573,38 @@ BUILTIN_CONFIG_DEFAULTS: dict[str, dict[str, object]] = {
             "auto_unload": True,
         },
     },
-    "experimental": {
+    "modify": {
+        # On by default: getsubtitle's primary downstream is asbplayer, which
+        # prefers single-line cues. Override per-run with --preserve-lines.
+        "single_line": True,
+        # On by default: Japanese broadcast SRTs are full of ➡ continuation
+        # arrows that have no value for language learning.
+        "strip_cc_noise": True,
+        # Tristate: "off" | "hiragana" | "romaji". Replaces the old
+        # [furigana].enabled+mode pair.
+        "furigana": "hiragana",
+        "furigana_output_format": "srt",
+    },
+    "merge": {
+        # Target language (ja) on top, English (likely native) below.
+        # Western learners are the largest audience; override for other targets.
+        "languages": "ja,en",
+        "sync": "auto",
+        "preserve_lines": False,
+        "priority": [],
+        # Inline 漢字（かんじ） readings into the merged ja line.
+        # Was [furigana].combine under the old schema.
+        "furigana": True,
+    },
+    "output": {
+        "target": DEFAULT_OUTPUT_TEXT,
+        "layout": "archive",
+        "open_folder": False,
+        "force": False,
+        # Was [experimental].debug_providers under the old schema.
         "debug_providers": False,
+    },
+    "experimental": {
         "subdivx": False,
         "addic7ed": False,
     },
@@ -6126,93 +7674,186 @@ def _validate_ollama_model_map(value, key: str = "translate.ollama_models") -> d
     return out
 
 
+def _normalize_section_keys(section: dict) -> dict:
+    """Return a copy with hyphens in top-level keys normalized to underscores.
+
+    Lets users write either `dry-run` or `dry_run` in any TOML section without
+    knowing which spelling is canonical. Nested dicts (e.g. translate.ollama_models)
+    are walked one level too so per-pair `"ja:ko"` keys aren't mangled.
+    On collision (both `dry-run` and `dry_run` present), the underscore form
+    wins silently — it's the canonical spelling."""
+    if not isinstance(section, dict):
+        return section
+    out: dict = {}
+    for k, v in section.items():
+        if isinstance(k, str) and "-" in k and ":" not in k:
+            canon = k.replace("-", "_")
+            if canon in section and canon != k:
+                # underscore form already present — let it win, skip hyphen form
+                continue
+            out[canon] = v
+        else:
+            out[k] = v
+    # Walk nested tables one level so things like [translate.ollama_models]
+    # also get the same treatment.
+    for k, v in list(out.items()):
+        if isinstance(v, dict):
+            out[k] = _normalize_section_keys(v)
+    return out
+
+
 def _validate_section(raw: dict, name: str) -> dict:
     section = raw.get(name, {})
     if not isinstance(section, dict):
         raise CliError(f"[{name}]: expected a table, got {type(section).__name__}")
-    return section
+    return _normalize_section_keys(section)
+
+
+_VALID_CONFIG_SECTIONS = ("fetch", "translate", "modify", "merge", "output", "experimental")
+
+
+def _reject_unknown_sections(raw: dict) -> None:
+    """Reject any top-level section that isn't part of the v1.0 schema.
+    Point the user at the example template and `config --show`."""
+    unknown = [
+        s for s in raw
+        if isinstance(raw[s], dict) and s not in _VALID_CONFIG_SECTIONS
+    ]
+    if not unknown:
+        return
+    raise CliError(
+        f"user_settings.toml has unknown section(s): {', '.join(f'[{s}]' for s in unknown)}. "
+        f"Valid sections: {', '.join(f'[{s}]' for s in _VALID_CONFIG_SECTIONS)}. "
+        "Run `getsubtitle --help config` for the schema, or "
+        "`getsubtitle config --init --force` to regenerate the template."
+    )
 
 
 def validate_user_config(raw: dict) -> dict:
     """Validate a raw TOML dict and return only the recognised, validated
-    settings. Unknown keys are silently ignored so the file can evolve."""
+    settings. Unknown keys are silently ignored so the file can evolve.
+
+    Schema (sections in pipeline-execution order):
+      [fetch] / [translate] / [modify] / [merge] / [output] / [experimental]
+
+    Pre-pipeline section names ([download] / [combine] / [furigana]) are
+    rejected with a migration hint."""
+    _reject_unknown_sections(raw)
     out: dict[str, dict] = {}
 
-    dl = _validate_section(raw, "download")
-    dl_out: dict[str, object] = {}
-    if "langs" in dl:
-        dl_out["langs"] = _validate_lang_list(dl["langs"], "download.langs")
-    if "output" in dl:
-        dl_out["output"] = _validate_str(dl["output"], "download.output")
-    if "layout" in dl:
-        dl_out["layout"] = _validate_enum(dl["layout"], "download.layout", {"archive", "flat", "plex"})
-    if "release_source" in dl:
-        dl_out["release_source"] = _validate_enum(
-            dl["release_source"], "download.release_source",
-            {"auto", "any", "netflix", "crunchyroll"},
+    # [fetch]
+    f = _validate_section(raw, "fetch")
+    f_out: dict[str, object] = {}
+    if "languages" in f:
+        f_out["languages"] = _validate_lang_list(f["languages"], "fetch.languages")
+    elif "langs" in f:  # alias
+        f_out["languages"] = _validate_lang_list(f["langs"], "fetch.langs")
+    if "release_source" in f:
+        f_out["release_source"] = _validate_enum(
+            f["release_source"], "fetch.release_source",
+            {"auto", "any", "netflix", "crunchyroll", "amazon",
+             "hulu", "hbo", "disney", "apple", "paramount", "peacock"},
         )
-    for bk in ("open_folder", "single_line", "strip_cc_noise"):
-        if bk in dl:
-            dl_out[bk] = _validate_bool(dl[bk], f"download.{bk}")
-    out["download"] = dl_out
+    out["fetch"] = f_out
 
-    cb = _validate_section(raw, "combine")
-    cb_out: dict[str, object] = {}
-    if "langs" in cb:
-        cb_out["langs"] = _validate_lang_list(cb["langs"], "combine.langs")
-    if "sync" in cb:
-        cb_out["sync"] = _validate_enum(cb["sync"], "combine.sync", {"auto", "strict", "loose"})
-    for bk in ("preserve_lines", "force"):
-        if bk in cb:
-            cb_out[bk] = _validate_bool(cb[bk], f"combine.{bk}")
-    if "priority" in cb:
-        value = cb["priority"]
-        if not (isinstance(value, list) and all(isinstance(x, str) for x in value)):
-            raise CliError("combine.priority: expected a list of language codes, e.g. ['ja', 'en']")
-        cb_out["priority"] = [x.lower() for x in value]
-    out["combine"] = cb_out
-
-    fur = _validate_section(raw, "furigana")
-    fur_out: dict[str, object] = {}
-    if "enabled" in fur:
-        fur_out["enabled"] = _validate_bool(fur["enabled"], "furigana.enabled")
-    if "combine" in fur:
-        fur_out["combine"] = _validate_bool(fur["combine"], "furigana.combine")
-    if "mode" in fur:
-        fur_out["mode"] = _validate_enum(fur["mode"], "furigana.mode", {"hiragana", "romaji"})
-    if "strip_before_mt" in fur:
-        fur_out["strip_before_mt"] = _validate_bool(
-            fur["strip_before_mt"], "furigana.strip_before_mt"
-        )
-    if "format" in fur:
-        if not isinstance(fur["format"], str):
-            raise CliError("furigana.format: expected string (srt, ass, vtt, or comma-list, or 'all')")
-        # Validate by running through the parser; raises CliError on bad values.
-        parse_furigana_formats(fur["format"])
-        fur_out["format"] = fur["format"]
-    out["furigana"] = fur_out
-
+    # [translate]
     tr = _validate_section(raw, "translate")
     tr_out: dict[str, object] = {}
     if "engine" in tr:
         if not isinstance(tr["engine"], str):
-            raise CliError("translate.engine: expected string ('', 'argos', 'ollama', or 'deepl')")
-        if tr["engine"] and tr["engine"] not in {"argos", "ollama", "deepl"}:
+            raise CliError("translate.engine: expected string ('', 'argos', 'ollama'[':MODEL'], or 'deepl')")
+        # Accept "ollama:qwen3:8b" colon-spec.
+        engine_head = tr["engine"].split(":", 1)[0] if tr["engine"] else ""
+        if tr["engine"] and engine_head not in {"argos", "ollama", "deepl"}:
             raise CliError(
                 f"translate.engine: expected one of ['argos', 'ollama', 'deepl'] or empty, got {tr['engine']!r}"
             )
         tr_out["engine"] = tr["engine"]
     if "model" in tr:
         tr_out["model"] = _validate_str(tr["model"], "translate.model")
-    if "source_lang" in tr:
-        tr_out["source_lang"] = _validate_str(tr["source_lang"], "translate.source_lang")
+    # mt_source accepts string ("ja" / "ko:ja,es:en") or dict ({ko = "ja"}).
+    # mt_source_lang remains a silent alias for back-compat.
+    _mt_source_key = "mt_source" if "mt_source" in tr else ("mt_source_lang" if "mt_source_lang" in tr else None)
+    if _mt_source_key is not None:
+        val = tr[_mt_source_key]
+        if isinstance(val, str):
+            tr_out["mt_source_lang"] = val
+        elif isinstance(val, dict):
+            tr_out["mt_source_lang"] = val   # left as dict; _normalize_mt_source converts at use
+        else:
+            raise CliError(f"translate.{_mt_source_key}: expected string or dict")
+    if "strip_furigana_before_mt" in tr:
+        tr_out["strip_furigana_before_mt"] = _validate_bool(
+            tr["strip_furigana_before_mt"], "translate.strip_furigana_before_mt"
+        )
     if "ollama_models" in tr:
         tr_out["ollama_models"] = _validate_ollama_model_map(tr["ollama_models"])
     out["translate"] = tr_out
 
+    # [modify]
+    m = _validate_section(raw, "modify")
+    m_out: dict[str, object] = {}
+    for bk in ("single_line", "strip_cc_noise"):
+        if bk in m:
+            m_out[bk] = _validate_bool(m[bk], f"modify.{bk}")
+    if "furigana" in m:
+        val = m["furigana"]
+        if isinstance(val, bool):
+            m_out["furigana"] = val
+        elif isinstance(val, str) and val.lower() in {"off", "hiragana", "romaji", "true", "false", "on", "yes", "no", "none"}:
+            m_out["furigana"] = val.lower()
+        else:
+            raise CliError("modify.furigana: expected off | hiragana | romaji (or bool)")
+    # `reading_format` (canonical) — aliases: `furigana_output_format`, `format`.
+    _reading_fmt_key = next(
+        (k for k in ("reading_format", "furigana_output_format", "format") if k in m),
+        None,
+    )
+    if _reading_fmt_key is not None:
+        if not isinstance(m[_reading_fmt_key], str):
+            raise CliError(f"modify.{_reading_fmt_key}: expected string (srt, ass, vtt, or 'all')")
+        parse_furigana_formats(m[_reading_fmt_key])
+        m_out["furigana_output_format"] = m[_reading_fmt_key]
+    out["modify"] = m_out
+
+    # [merge]
+    mg = _validate_section(raw, "merge")
+    mg_out: dict[str, object] = {}
+    if "languages" in mg:
+        mg_out["languages"] = _validate_lang_list(mg["languages"], "merge.languages")
+    elif "langs" in mg:
+        mg_out["languages"] = _validate_lang_list(mg["langs"], "merge.langs")
+    if "sync" in mg:
+        mg_out["sync"] = _validate_enum(mg["sync"], "merge.sync", {"auto", "strict", "loose"})
+    for bk in ("preserve_lines", "furigana"):
+        if bk in mg:
+            mg_out[bk] = _validate_bool(mg[bk], f"merge.{bk}")
+    if "priority" in mg:
+        value = mg["priority"]
+        if not (isinstance(value, list) and all(isinstance(x, str) for x in value)):
+            raise CliError("merge.priority: expected a list of language codes, e.g. ['ja', 'en']")
+        mg_out["priority"] = [x.lower() for x in value]
+    out["merge"] = mg_out
+
+    # [output]
+    o = _validate_section(raw, "output")
+    o_out: dict[str, object] = {}
+    # target (canonical) or root (alias)
+    if "target" in o:
+        o_out["target"] = _validate_str(o["target"], "output.target")
+    elif "root" in o:
+        o_out["target"] = _validate_str(o["root"], "output.root")
+    if "layout" in o:
+        o_out["layout"] = _validate_enum(o["layout"], "output.layout", {"archive", "flat", "plex"})
+    for bk in ("open_folder", "force", "debug_providers"):
+        if bk in o:
+            o_out[bk] = _validate_bool(o[bk], f"output.{bk}")
+    out["output"] = o_out
+
+    # [experimental]
     exp = _validate_section(raw, "experimental")
     exp_out: dict[str, object] = {}
-    for bk in ("debug_providers", "subdivx", "addic7ed"):
+    for bk in ("subdivx", "addic7ed"):
         if bk in exp:
             exp_out[bk] = _validate_bool(exp[bk], f"experimental.{bk}")
     out["experimental"] = exp_out
@@ -6259,50 +7900,49 @@ def _example_template_text() -> str:
 # preferred whenever it can be located.
 _EMBEDDED_EXAMPLE_TEMPLATE = """\
 # getsubtitle user settings — minimal embedded fallback.
-# Every value below is set to the current built-in default; edit to change.
-# Command-line flags always win. DO NOT put API keys here
-# (set with: getsubtitle --set-key {jimaku|wyzie|deepl|tmdb}).
+# Schema mirrors the pipeline TOML: fetch → translate → modify → merge → output.
+# Edit any value to change the corresponding default. CLI flags always win.
+# DO NOT put API keys here (set with: getsubtitle --set-key {jimaku|wyzie|deepl|tmdb}).
 
-[download]
-langs = "ja"
-output = "~/Movies/Subtitles"
-layout = "archive"                # archive | flat | plex
-# auto = infer from URL host (Hulu/Max/Disney+/Apple/Paramount+/Peacock/
-# Amazon/Netflix/Crunchyroll all auto-prefer their own release tags).
+[fetch]
+languages = "ja"                  # full names also work: "japanese,english"
 release_source = "auto"           # auto | any | netflix | crunchyroll | amazon | hulu | hbo | disney | apple | paramount | peacock
-open_folder = false
-single_line = true                # asbplayer-friendly one-line cues
-strip_cc_noise = true             # remove broadcast ➡ continuation arrows
-
-[combine]
-langs = "ja,ko"
-sync = "auto"                     # auto | strict | loose
-preserve_lines = false
-force = false
-priority = []                     # e.g. ["ja", "en", "ko", "es"]
-
-[furigana]
-enabled = true                    # auto-generate furigana side files on download
-combine = true                    # inline furigana into combine outputs
-mode = "hiragana"                 # hiragana | romaji
-strip_before_mt = true            # strip 漢字（かんじ） readings before MT
-format = "srt"                    # srt | ass | vtt | all (or comma list)
 
 [translate]
-engine = "argos"                  # "" | argos | ollama | deepl
+engine = "argos"                  # "" | argos | ollama[:model] | deepl
 model = "qwen3:4b"                # default Ollama model
-source_lang = "auto"
+mt_source = "auto"                # "auto" | "ja" | "ko:ja,es:en" | { ko = "ja" }
+strip_furigana_before_mt = true   # strip 漢字（かんじ） readings before MT
 
 [translate.ollama_models]
 auto_load = true                  # pull missing models on demand
 auto_unload = true                # free model from RAM/VRAM after MT
+# Per-pair Ollama model overrides (uncomment to use):
 # "ja:ko" = "qwen3:4b"
-# "ko:ja" = "qwen3:4b"
+# "ja:en" = "qwen3:8b"
 # "en:es" = "llama3.2:3b"
-# "es:en" = "llama3.2:3b"
+
+[modify]
+single_line = true                # asbplayer-friendly one-line cues
+strip_cc_noise = true             # remove broadcast ➡ continuation arrows
+furigana = "hiragana"             # off | hiragana | romaji
+reading_format = "srt"            # srt | ass | vtt | all (alias: furigana_output_format)
+
+[merge]
+languages = "ja,en"
+sync = "auto"                     # auto | strict | loose
+preserve_lines = false
+priority = []                     # e.g. ["ja", "en", "ko"]
+furigana = true                   # inline ja readings into merged output
+
+[output]
+target = "~/Movies/Subtitles"
+layout = "archive"                # archive | flat | plex
+open_folder = false
+force = false
+debug_providers = false
 
 [experimental]
-debug_providers = false
 subdivx = false
 addic7ed = false
 """
@@ -6428,10 +8068,11 @@ def config_main(argv: list[str]) -> int:
 
 
 def _apply_download_config_defaults(parser: argparse.ArgumentParser) -> None:
-    """Push user_settings.toml [download] / [furigana] / [translate] /
-    [experimental] values into the download parser as argparse defaults.
+    """Push user_settings.toml pipeline-aligned values into the URL-form
+    download parser as argparse defaults.
 
-    Merges BUILTIN_CONFIG_DEFAULTS under any user_settings.toml overrides,
+    Reads from the new schema: [fetch] / [translate] / [modify] / [output] /
+    [experimental]. Merges BUILTIN_CONFIG_DEFAULTS under any user overrides
     so flips like single_line=true take effect even without a user TOML."""
     try:
         cfg = load_user_config()
@@ -6441,45 +8082,57 @@ def _apply_download_config_defaults(parser: argparse.ArgumentParser) -> None:
         # path the error will fire again at parse time below.
         cfg = {}
 
-    dl = {**BUILTIN_CONFIG_DEFAULTS["download"], **cfg.get("download", {})}
-    fur = {**BUILTIN_CONFIG_DEFAULTS["furigana"], **cfg.get("furigana", {})}
-    tr = {**BUILTIN_CONFIG_DEFAULTS["translate"], **cfg.get("translate", {})}
-    exp = {**BUILTIN_CONFIG_DEFAULTS["experimental"], **cfg.get("experimental", {})}
+    fetch_cfg = {**BUILTIN_CONFIG_DEFAULTS["fetch"], **cfg.get("fetch", {})}
+    tr_cfg = {**BUILTIN_CONFIG_DEFAULTS["translate"], **cfg.get("translate", {})}
+    mod_cfg = {**BUILTIN_CONFIG_DEFAULTS["modify"], **cfg.get("modify", {})}
+    out_cfg = {**BUILTIN_CONFIG_DEFAULTS["output"], **cfg.get("output", {})}
+    exp_cfg = {**BUILTIN_CONFIG_DEFAULTS["experimental"], **cfg.get("experimental", {})}
 
     overrides: dict[str, object] = {}
-    if dl.get("langs"):
-        overrides["langs"] = dl["langs"]
-    if dl.get("output"):
-        overrides["output"] = str(Path(str(dl["output"])).expanduser())
-    if dl.get("layout"):
-        overrides["layout"] = dl["layout"]
-    if dl.get("release_source"):
-        overrides["release_source"] = dl["release_source"]
-    if dl.get("open_folder"):
+    # [fetch] → URL-form download defaults.
+    if fetch_cfg.get("languages"):
+        overrides["langs"] = fetch_cfg["languages"]
+    if fetch_cfg.get("release_source"):
+        overrides["release_source"] = fetch_cfg["release_source"]
+    # [output] → output dir / layout / open_folder.
+    if out_cfg.get("target"):
+        overrides["output"] = str(Path(str(out_cfg["target"])).expanduser())
+    if out_cfg.get("layout"):
+        overrides["layout"] = out_cfg["layout"]
+    if out_cfg.get("open_folder"):
         overrides["open_folder"] = True
-    # Booleans below: explicit set in either direction so the BUILTIN flip
-    # actually reaches argparse (store_true defaults to False otherwise).
-    overrides["single_line"] = bool(dl.get("single_line", False))
-    overrides["strip_cc_noise"] = bool(dl.get("strip_cc_noise", False))
-
-    if fur.get("enabled"):
-        overrides["furigana"] = fur.get("mode", "hiragana")
-    if fur.get("format"):
-        overrides["furigana_format"] = fur["format"]
-
-    if tr.get("engine"):
-        overrides["mt_engine"] = tr["engine"]
-    if tr.get("model"):
-        overrides["mt_model"] = tr["model"]
-    src = tr.get("source_lang", "")
+    if out_cfg.get("debug_providers"):
+        overrides["debug_providers"] = True
+    # [modify] → URL-form post-download cleanup defaults. Booleans set
+    # explicitly so the BUILTIN flip reaches argparse.
+    overrides["single_line"] = bool(mod_cfg.get("single_line", False))
+    overrides["strip_cc_noise"] = bool(mod_cfg.get("strip_cc_noise", False))
+    # furigana tristate → only "off"/false skips the side files.
+    fur_mode = mod_cfg.get("furigana", False)
+    if isinstance(fur_mode, str) and fur_mode.lower() not in ("off", "false", "none", "no", ""):
+        overrides["furigana"] = fur_mode if fur_mode in ("hiragana", "romaji") else "hiragana"
+    elif fur_mode is True:
+        overrides["furigana"] = "hiragana"
+    if mod_cfg.get("furigana_output_format"):
+        overrides["furigana_format"] = mod_cfg["furigana_output_format"]
+    # [translate] → MT defaults.
+    if tr_cfg.get("engine"):
+        engine_spec = str(tr_cfg["engine"])
+        engine_head, _sep, model_part = engine_spec.partition(":")
+        overrides["mt_engine"] = engine_head if engine_head else engine_spec
+        if model_part:
+            overrides["mt_model"] = model_part
+    if tr_cfg.get("model") and "mt_model" not in overrides:
+        overrides["mt_model"] = tr_cfg["model"]
+    src = tr_cfg.get("mt_source_lang", "auto")
+    if isinstance(src, dict):
+        src = _normalize_mt_source(src)
     if src and src != "auto":
         overrides["mt_source_lang"] = src
-
-    if exp.get("debug_providers"):
-        overrides["debug_providers"] = True
-    if exp.get("subdivx"):
+    # [experimental] → experimental provider toggles.
+    if exp_cfg.get("subdivx"):
         overrides["experimental_subdivx"] = True
-    if exp.get("addic7ed"):
+    if exp_cfg.get("addic7ed"):
         overrides["experimental_addic7ed"] = True
 
     if overrides:
@@ -6487,40 +8140,52 @@ def _apply_download_config_defaults(parser: argparse.ArgumentParser) -> None:
 
 
 def _apply_combine_config_defaults(parser: argparse.ArgumentParser) -> None:
+    """Push [merge] / [modify] values into the merge parser as argparse
+    defaults. (The internal function name stays as combine_* since the
+    underlying implementation hasn't been renamed.)"""
     try:
         cfg = load_user_config()
     except CliError:
         cfg = {}
 
     overrides: dict[str, object] = {}
-    cb = cfg.get("combine", {})
-    if "langs" in cb:
-        overrides["langs"] = cb["langs"]
-    if "sync" in cb:
-        overrides["sync"] = cb["sync"]
-    if cb.get("preserve_lines"):
+    mg = cfg.get("merge", {})
+    if "languages" in mg:
+        overrides["langs"] = mg["languages"]
+    if "sync" in mg:
+        overrides["sync"] = mg["sync"]
+    if mg.get("preserve_lines"):
         overrides["preserve_lines"] = True
-    if cb.get("force"):
+    out_cfg = cfg.get("output", {})
+    if out_cfg.get("force"):
         overrides["force"] = True
 
-    fur = cfg.get("furigana", {})
-    if fur.get("enabled") or fur.get("combine"):
-        overrides["furigana"] = fur.get("mode", "hiragana")
-    if fur.get("format"):
-        overrides["furigana_format"] = fur["format"]
+    # Inline ja furigana into merged output when [merge].furigana is true.
+    if mg.get("furigana", False):
+        mod_cfg = cfg.get("modify", {})
+        fur_mode = mod_cfg.get("furigana", "hiragana")
+        if isinstance(fur_mode, str) and fur_mode in ("hiragana", "romaji"):
+            overrides["furigana"] = fur_mode
+        elif fur_mode is True:
+            overrides["furigana"] = "hiragana"
+        else:
+            overrides["furigana"] = "hiragana"
+    mod = cfg.get("modify", {})
+    if mod.get("furigana_output_format"):
+        overrides["furigana_format"] = mod["furigana_output_format"]
 
     if overrides:
         parser.set_defaults(**overrides)
 
 
 def _combine_master_from_config(langs: list[str]) -> str | None:
-    """Apply [combine].priority: return the first priority lang that's also
+    """Apply [merge].priority: return the first priority lang that's also
     in `langs`, or None if no priority is set or no overlap."""
     try:
         cfg = load_user_config()
     except CliError:
         return None
-    priority = cfg.get("combine", {}).get("priority", []) or []
+    priority = cfg.get("merge", {}).get("priority", []) or []
     for p in priority:
         if p in langs:
             return p
@@ -6530,137 +8195,39 @@ def _combine_master_from_config(langs: list[str]) -> str | None:
 HELP_MAIN = """\
 getsubtitle — Find and prepare subtitles for language learning.
 
-Usage:
-  getsubtitle URL [options]
-  getsubtitle combine PATH -l LANGS [options]
-  getsubtitle translate PATH -l LANGS --mt-engine ENGINE [options]
-  getsubtitle modify PATH [--strip-cc-noise] [--single-line] [--furigana [MODE]]
+Quick start:
+  getsubtitle URL                                 # download from a URL
+  getsubtitle merge PATH -l ja,en                 # stack downloaded SRTs
+  getsubtitle --config FILE.toml                  # run a saved workflow
 
-Common examples:
-  getsubtitle URL -l ja
-  getsubtitle URL -s 1 -e all -l ja,ko,en
-  getsubtitle URL -l ja -furigana
-  getsubtitle combine ~/Movies/Subtitles/MF\\ Ghost -l ja,ko
-  getsubtitle translate ~/Movies/Subtitles/MF\\ Ghost -l ja,ko --mt-engine argos
-  getsubtitle modify ~/Movies/Subtitles/MF\\ Ghost --strip-cc-noise --single-line
+Subcommands (each has its own --help):
+  fetch       Download from URL, or scan a folder. (Bare URL works too.)
+  translate   Fill missing-language SRTs via MT (argos / ollama / deepl).
+  modify      Cleanup, romanization (furigana / pinyin / jyutping / hangul / …), SAMI→SRT conversion.
+  merge       Stack 2+ language SRTs into one study file.
+  config      Manage user_settings.toml defaults.
 
-Core options:
-  -l, --langs CODES        Languages, e.g. ja,ko,en,es. Default: ja
-  -s, --season N|all       Season to search
-  -e, --episode N|N-M|all  Episode, range, list, or all
-  -o, --output DIR         Output folder
-  --dry-run                Show what would happen without writing files
-  -y, --yes                Skip confirmation
+Pipeline — chain verbs in one call:
+  getsubtitle --fetch X --translate ollama --merge -l ja,en
+  getsubtitle --source X --output Y --format vtt --config FILE.toml
 
-Preferences:
-  getsubtitle config --path     Show where user_settings.toml lives
-  getsubtitle config --init     Create user_settings.toml from the template
-  edit user_settings.toml       Set your defaults; CLI flags still win
+Two example configs ship in this repo. Copy and tweak:
+  simpsons-s1-en-fr.toml          URL → download an entire season
+  plex-movies-fill-merge.toml     PATH → bulk fetch + MT + merge in-place
 
-More help:
-  getsubtitle --help download
-  getsubtitle --help combine
-  getsubtitle --help translate
-  getsubtitle --help modify
-  getsubtitle --help config
-  getsubtitle --help keys
-  getsubtitle --help furigana
-  getsubtitle --help batch
-  getsubtitle --help advanced
+  getsubtitle --config simpsons-s1-en-fr.toml
+  getsubtitle --config plex-movies-fill-merge.toml
+
+Layered config (lowest → highest priority):
+  built-in defaults  <  user_settings.toml  <  --config FILE.toml  <  CLI flags
+
+Topic help:
+  getsubtitle --help fetch | translate | modify | merge | pipeline
+  getsubtitle --help config | keys | furigana | advanced
 """
 
 
 HELP_TOPICS: dict[str, str] = {
-    "download": """\
-Download subtitles from a streaming or metadata URL.
-
-Usage:
-  getsubtitle URL [download options]
-
-Supported URL types:
-  Streaming:  Crunchyroll, Netflix, Hulu, Max (HBO), Disney+,
-              Apple TV+, Paramount+, Peacock, Prime Video
-  Catalog:    IMDb, TMDB, AniList, MyAnimeList, TheTVDB,
-              Letterboxd, Rotten Tomatoes, Trakt
-
-For Crunchyroll and Netflix we extract IDs directly. For the other
-streaming services we pull the title from the URL slug and (where
-available) `og:title` from the page, then resolve IDs via TMDB —
-configure a key once with `getsubtitle --set-key tmdb` so the
-title-only path lights up. Catalog-site URLs are direct ID extracts.
-
-Examples:
-  getsubtitle "https://www.crunchyroll.com/watch/..." -l ja
-  getsubtitle "https://www.imdb.com/title/tt28299608/" -s 1 -e all -l ko,en,es
-  getsubtitle "https://www.hulu.com/series/the-bear-12345" -s 1 -e all -l es,ko
-  getsubtitle "https://www.max.com/show/house-of-the-dragon" -l en,es
-  getsubtitle URL -s 1 -e 7 -l ja,ko --dry-run
-  getsubtitle URL --title "MF Ghost" --anilist 143327 -l ja
-
-Episode-range expansion (`-e all`):
-  - Anime: episode count comes from AniList (no extra setup).
-  - Live-action TV: episode count comes from TMDB. Needs a TMDB API
-    key; set one with `getsubtitle --set-key tmdb` or
-    `TMDB_API_KEY=...`. Without it, pass an explicit range like
-    `-e 1-12`.
-
-URL-inferred fields (auto-defaults):
-  - Crunchyroll URLs with trailing `...-season-2` (etc.) default to
-    -s 2 unless you pass an explicit -s.
-  - The same applies to inferred -e values from URLs that include
-    `/episode-N/` or similar markers.
-  - User-supplied -s/-e always wins.
-
-Download options:
-  -l, --langs CODES        Languages to download. Default: ja
-  -s, --season N|all       Season number. If omitted, infer when possible
-  -e, --episode N|N-M|all  Episode, range, list, or all. If omitted, infer when possible
-  -o, --output DIR         Output folder. Default: ~/Movies/Subtitles
-  --layout MODE            archive, flat, or plex. Default: archive
-  --title TEXT             Title override when URL metadata is missing
-  --anilist ID             AniList ID override for anime
-  --browser                Open URL first for login/Cloudflare pages
-  --release-source MODE    auto | any | netflix | crunchyroll | amazon |
-                           hulu | hbo | disney | apple | paramount |
-                           peacock. Default: auto = infer from the URL's
-                           host (HBO/Hulu/etc. → prefer matching rips).
-  --dry-run                Search and show availability without downloading
-  -y, --yes                Skip bulk confirmation
-  --open-folder            Open output folder after saving
-""",
-    "combine": """\
-Combine multiple subtitle languages into one study-friendly subtitle file.
-
-Usage:
-  getsubtitle combine PATH -l LANGS [combine options]
-
-Examples:
-  getsubtitle combine ~/Movies/Subtitles/MF\\ Ghost -l ja,ko
-  getsubtitle combine ~/Movies/Subtitles/MF\\ Ghost -l en,es,ko
-  getsubtitle combine PATH -l ja,ko -furigana
-  getsubtitle combine PATH -l ja,ko --sync strict --dry-run
-
-Behavior:
-  The language order in -l controls display order.
-  Example: -l ja,ko puts Japanese above Korean.
-  Each language is flattened to one line by default:
-    Japanese line 1 Japanese line 2
-    Korean line 1 Korean line 2
-
-Combine options:
-  -l, --langs CODES        Required. Language order for output
-  -o, --output DIR         Output folder. Default: beside master subtitle
-  --dry-run                Show combine plan without writing files
-  --force                  Overwrite existing outputs and allow low-confidence matches
-  --open-folder            Open output folder after writing
-  --no-open-folder-prompt  Do not ask whether to open output folder
-  --format FORMAT          srt or vtt. vtt can render ruby furigana in asbplayer
-  --sync MODE              auto, strict, or loose. Default: auto
-  --master LANG            Timing master. Default: first language in -l
-  --single-line, --single  Flatten each language to one line. Default behavior
-  --preserve-lines         Keep original line breaks within each language
-  -f, --furigana [MODE]    Add Japanese readings. MODE: hiragana or romaji
-""",
     "keys": """\
 Manage API keys.
 
@@ -6700,23 +8267,34 @@ Notes:
     "furigana": """\
 Generate Japanese reading helpers.
 
-Usage:
-  getsubtitle URL -l ja -furigana [hiragana|romaji]
-  getsubtitle combine PATH -l ja,ko -furigana [hiragana|romaji]
+Furigana is the Japanese-specific case of getsubtitle's reading-aid
+system. For other languages (Korean romanization, Chinese pinyin,
+Cantonese jyutping, Thai/Arabic/Hindi/etc. transliterations), use the
+generalized --romanization flag instead — see `getsubtitle --help modify`
+and the ROADMAP. Japanese is what ships today; other backends land in
+v1.1+ per the roadmap.
+
+Usage (Japanese — works today):
+  getsubtitle URL -l ja --romanization ja:hiragana
+  getsubtitle merge PATH -l ja,en --romanization ja:hiragana
+  getsubtitle modify FOLDER --romanization ja:hiragana
+
+Multi-mode side files (pipe shorthand):
+  getsubtitle modify FOLDER --romanization "ja:hiragana|romaji"   # both side files
 
 Examples:
   getsubtitle URL -l ja -furigana
   getsubtitle URL -l ja -furigana romaji
   getsubtitle URL -l ja -furigana --single
-  getsubtitle combine PATH -l ja,ko -furigana
+  getsubtitle merge PATH -l ja,en --romanization ja:hiragana
 
 Modes:
-  hiragana                 Default. 漢字（かんじ）
+  hiragana                 Default for `ja:true`. 漢字（かんじ）
   romaji                   漢字（kanji）
 
-Output formats (--format):
-  srt                      Default. Broadly compatible, with parenthetical readings.
-                           One file per episode. Safest fallback.
+Output formats (--format / --romanization-format):
+  srt                      Default. Broadly compatible; inline parenthetical
+                           readings. One file per episode. Safest fallback.
   ass                      Stacked-line ASS. Experimental; player support varies.
   vtt                      Ruby VTT (<ruby><rt>). Works in asbplayer when
                            Settings > Misc > Subtitles > Subtitle HTML is Render.
@@ -6725,71 +8303,73 @@ Output formats (--format):
   all                      Generate all three. Same as srt,ass,vtt.
 
 Examples:
-  getsubtitle URL -l ja -furigana                       # just srt
-  getsubtitle URL -l ja -furigana --format srt,ass      # srt + ass for this run
-  getsubtitle URL -l ja -furigana --format all          # all three
-  getsubtitle modify FOLDER --furigana --format srt     # post-process existing files
-
-(--furigana-format still works as an alias for --format.)
+  getsubtitle URL -l ja --romanization ja:hiragana                       # just srt
+  getsubtitle URL -l ja --romanization ja:hiragana --format srt,ass      # srt + ass
+  getsubtitle URL -l ja --romanization ja:hiragana --format all          # all three
+  getsubtitle modify FOLDER --romanization ja:hiragana --format srt      # existing files
 
 Set defaults in user_settings.toml:
-  [furigana]
-  combine = true         # inline readings into getsubtitle combine outputs
-  mode = "hiragana"      # or "romaji"
-  format = "srt"          # or "srt,ass" / "all"
-  strip_before_mt = true # strip 漢字（かんじ） readings from ja before MT
-                          # (on by default; turn off only if you want the
-                          # translator to see the parentheticals)
+  [modify]
+  romanization = "ja:hiragana"         # also: "ja:hiragana, ko:true" (Korean — v1.1)
+  romanization_output_format = "srt"   # srt | ass | vtt | all (or comma list)
 
-Use --no-furigana to disable a configured default for one command.
-Use --format to override side-file formats for download/modify runs.
+  [merge]
+  romanization = true                  # inline reading aids on the merged ja line
+
+  [translate]
+  strip_furigana_before_mt = true      # strip 漢字（かんじ） readings before MT
+                                       # (default true; only meaningful for ja sources)
+
+Use --no-romanization to disable a configured default for one command.
+Use --format to override side-file formats per run.
 
 MT-source notes:
   When a .ja.srt has inline 漢字（かんじ） readings and is used as an MT
-  source (translate or download --mt-engine), strip_before_mt=true (the
-  default) removes the parentheticals before sending to the engine. This
-  prevents output like "Specifically (especially) the legs (legs) ..."
+  source (translate or fetch --mt-engine), strip_furigana_before_mt=true
+  (the default) removes the parentheticals before sending to the engine.
+  Prevents output like "Specifically (especially) the legs (legs) ..."
   caused by the engine translating the readings as extra content. The
-  normal pipeline keeps furigana in side files only, so this is a defence
-  for third-party or hand-edited Japanese sources.
+  normal pipeline keeps furigana in side files only, so this is a
+  defence for third-party or hand-edited Japanese sources.
 
 Output notes:
   SRT is the safest fallback across players.
   VTT gives true furigana in asbplayer with Subtitle HTML set to Render.
   ASS support depends on the player.
-  Furigana is added only for Japanese text.
+  Furigana is added only for Japanese text. For non-Japanese reading
+  aids, use --romanization (see `getsubtitle --help modify`).
 """,
     "translate": """\
 Machine-translate missing subtitles.
 
 Two ways to use it:
-  1. Inside a download, as a fallback:
+  1. Inside a fetch, as a fallback:
        getsubtitle URL -l LANGS --mt-engine ENGINE
-     MTs any requested language that the download couldn't find, sourcing
-     from the just-downloaded files.
+     MTs any requested language that fetch couldn't find, sourcing from
+     the just-downloaded files.
 
-  2. Standalone on an existing folder (no URL, no re-download):
+  2. Standalone on an existing folder (no URL, no re-fetch):
        getsubtitle translate PATH -l LANGS --mt-engine ENGINE
      Scans PATH for *.srt files and MTs any requested language that's
      missing from each episode's set, sourcing from the best available
      local SRT.
 
-Examples (inline with download):
-  getsubtitle URL -l ja,ko,en --mt-engine ollama
+Examples (inline with fetch):
+  getsubtitle URL -l ja,en --mt-engine ollama
   getsubtitle URL -l en,es --mt-engine deepl
-  getsubtitle URL -l ko --mt-engine ollama --mt-source-lang ja
+  getsubtitle URL -l ja --mt-engine ollama --mt-source-lang en
 
 Examples (standalone translate subcommand):
-  getsubtitle translate ~/Movies/Subtitles/MF\\ Ghost -l ja,ko --mt-engine argos
-  getsubtitle translate FOLDER -s 1 -e 11 -l ko --mt-engine deepl
-  getsubtitle translate FOLDER -l ja,ko,en,es --mt-engine deepl --dry-run
-  getsubtitle translate FOLDER -s 1 -e 1-3 -l ko --mt-source-lang ja --mt-engine ollama --force
+  getsubtitle translate ~/Movies/Subtitles/MF\\ Ghost -l ja,en --mt-engine argos
+  getsubtitle translate FOLDER -s 1 -e 11 -l en --mt-engine deepl
+  getsubtitle translate FOLDER -l ja,en,es --mt-engine deepl --dry-run
+  getsubtitle translate FOLDER -s 1 -e 1-3 -l en --mt-source-lang ja --mt-engine ollama --force
 
 Explicit source mapping (per-target):
-  # Force ko<-ja and es<-en regardless of what auto-pick would do.
-  getsubtitle translate FOLDER -l ja,ko,en,es --mt-engine argos --mt-source-lang ko:ja,es:en
-  # Inside a download, same syntax:
-  getsubtitle URL -l ja,ko,en,es --mt-engine deepl --mt-source-lang ko:ja,es:en
+  # Force en<-ja and es<-en regardless of what auto-pick would do.
+  getsubtitle translate FOLDER -l ja,en,es --mt-engine argos --mt-source-lang en:ja,es:en
+  # Inside a fetch, same syntax:
+  getsubtitle URL -l ja,en,es --mt-engine deepl --mt-source-lang en:ja,es:en
 
 Engines:
   argos                    Offline translation. Requires argostranslate
@@ -6840,11 +8420,12 @@ Examples:
   getsubtitle modify FOLDER --strip-cc-noise
   getsubtitle modify FOLDER --single-line
   getsubtitle modify FOLDER --strip-cc-noise --single-line
-  getsubtitle modify FOLDER --furigana
-  getsubtitle modify FOLDER --furigana romaji
+  getsubtitle modify FOLDER --romanization ja:hiragana          # Japanese furigana
+  getsubtitle modify FOLDER --romanization ja:romaji            # Japanese romaji
+  getsubtitle modify FOLDER --romanization "ja:hiragana|romaji" # both side files
   getsubtitle modify FOLDER --convert smi-to-srt
   getsubtitle modify FOLDER --convert smi-to-srt --force
-  getsubtitle modify FOLDER --strip-cc-noise --single-line --furigana --dry-run
+  getsubtitle modify FOLDER --strip-cc-noise --single-line --romanization ja:hiragana --dry-run
 
 Operations (run in this order; pick at least one):
   --convert PAIR           Convert subtitle file format. Currently supports:
@@ -6857,13 +8438,21 @@ Operations (run in this order; pick at least one):
                            in place. Idempotent.
   --single-line, --single  Flatten each cue to one text line in place.
                            Idempotent. Useful for asbplayer.
-  -f, --furigana [MODE]    Generate Japanese reading variants from each .ja.srt.
-                           MODE = hiragana (default) or romaji.
-                           Creates new side files; does not modify source.
-  --format CODES           Which furigana files to generate. Comma list of
-                           srt, ass, vtt, or 'all'. Default: srt only
-                           (one file per episode instead of three).
-                           (Also accepts --furigana-format.)
+  --romanization SPEC      Generate per-language reading aids. SPEC is a
+                           comma list of LANG:MODE pairs.
+                             ja:hiragana, ja:katakana, ja:romaji   (Japanese)
+                             ja:hiragana|romaji                    (both side files)
+                             ko:true | ko:revised                  (Korean — soon)
+                             zh:true | zh:marks | zh:numbers       (pinyin — soon)
+                             yue:true | yue:numbers                (jyutping — soon)
+                           "true" picks the language's sensible default.
+                           Japanese (furigana / romaji) ships now; other
+                           languages land per-language as backends arrive
+                           (see ROADMAP).
+  --no-romanization        Disable reading-aid generation for this run.
+  --format CODES           Which reading-aid side files to generate. Comma
+                           list of srt, ass, vtt, or 'all'. Default: srt.
+                           (Also accepts --romanization-format.)
 
 Other:
   --force                  With --convert: overwrite existing sibling .srt files.
@@ -6873,9 +8462,9 @@ Other:
 
 Composes with the other subcommands:
   getsubtitle modify    FOLDER --convert smi-to-srt
-  getsubtitle translate FOLDER -l ja,ko --mt-engine argos
-  getsubtitle modify    FOLDER --strip-cc-noise --single-line --furigana
-  getsubtitle combine   FOLDER -l ja,ko
+  getsubtitle translate FOLDER -l ja,en --mt-engine argos
+  getsubtitle modify    FOLDER --strip-cc-noise --single-line --romanization ja:hiragana
+  getsubtitle merge     FOLDER -l ja,en
 """,
     "config": """\
 User settings (non-secret defaults).
@@ -6891,16 +8480,20 @@ File location:
   macOS/Linux: ~/.config/getsubtitle/user_settings.toml
   Windows:     %APPDATA%\\getsubtitle\\user_settings.toml
 
-Precedence:
-  command-line flags > environment variables > user_settings.toml > built-in defaults
+Precedence (lowest → highest):
+  built-in defaults  <  user_settings.toml  <  --config FILE.toml  <  CLI flags
 
-Sections (see the example template):
-  [download]      langs, output, layout, release_source, open_folder,
-                  single_line, strip_cc_noise
-  [combine]       langs, sync, preserve_lines, force, priority
-  [furigana]      enabled, combine, mode, format, strip_before_mt
-  [translate]     engine, model, source_lang
-  [experimental]  debug_providers, subdivx, addic7ed
+Sections — same names as the pipeline (--config) TOML so blocks
+copy-paste between this file and any workflow config. In execution order:
+
+  [fetch]         languages, release_source
+  [translate]     engine, model, mt_source, strip_furigana_before_mt
+                  [translate.ollama_models] — per-pair model overrides +
+                                              auto_load / auto_unload flags
+  [modify]        single_line, strip_cc_noise, furigana, reading_format
+  [merge]         languages, sync, preserve_lines, priority, furigana
+  [output]        target, layout, open_folder, force, debug_providers
+  [experimental]  subdivx, addic7ed
 
 Notes:
   API keys are NEVER read from this file — keep them in macOS Keychain or
@@ -6908,69 +8501,305 @@ Notes:
   TMDB_API_KEY).
   Run `getsubtitle config --show` to see what's currently active.
 """,
-    "batch": """\
-Bulk subtitle workflows over a whole library.
+    "fetch": """\
+Fetch subtitles for a URL or for folder(s) on disk.
 
-Two sub-actions, both walk the current directory (or --root) and
-shell out to the regular getsubtitle commands per folder:
+Usage:
+  getsubtitle URL [options]                              (URL form, no subcommand)
+  getsubtitle fetch URL [options]                        (URL form, explicit verb)
+  getsubtitle fetch PATH [--profile ja|ko|en] [--run]
+  getsubtitle fetch PATH --subdirectory [--profile ...] [--run]
 
-  getsubtitle batch fetch [PATH] [--run] [--mt-engine ENGINE]
-      Download missing subtitles for every show / movie folder under
-      PATH. Detects the show's origin language automatically (TMDB
-      original_language with a character-set fallback) and picks the
-      right fetch + MT chain per profile.
+With a URL, fetch resolves IDs from the URL and downloads matching
+subtitles from providers (Jimaku for anime; Wyzie for movies/TV).
 
-  getsubtitle batch merge [PATH] [--run] [--format vtt|srt]
-      For every folder: convert any .smi to .ko.srt, then combine the
-      language stacks per the profile. JP/KR master → master+furigana
-      dual. EN master → en+es dual AND ja+ko+en+es quad.
+With a PATH, fetch treats the folder as one show: derives the title
+from the folder name, auto-detects the show's origin language via
+TMDB (or character-set heuristic when no TMDB key), and runs the
+right per-profile fetch chain. Add --subdirectory to walk one level
+of subdirs and treat each as its own show — the whole-library mode.
 
-Both default to dry-run; pass --run to actually do work.
+`fetch` is download-only. To fill in missing languages via MT, modify
+the cleanup pass, or stack a merge afterward, use the pipeline form
+(see `getsubtitle --help pipeline`):
+  getsubtitle --fetch /Plex/Anime --subdirectory \\
+              --translate ollama \\
+              --merge -l ja,en --format vtt
 
-Profiles (auto-detected, override with --profile):
-  ja  Japanese-origin. fetch grabs ko (then MTs ja→ko if missing).
-      merge: combine -l ja,ko --master ja --furigana.
-  ko  Korean-origin. fetch grabs ja (then MTs ko→ja). merge: combine
-      -l ko,ja and -l ko,ja,en,es, both --master ko --furigana.
-  en  English / Western / other. fetch grabs es+ko (then MTs from en
-      for any that came back empty). merge: combine -l en,es AND
-      -l ja,ko,en,es, both --master en.
+Supported URL types:
+  Streaming:  Crunchyroll, Netflix, Hulu, Max (HBO), Disney+,
+              Apple TV+, Paramount+, Peacock, Prime Video
+  Catalog:    IMDb, TMDB, AniList, MyAnimeList, TheTVDB,
+              Letterboxd, Rotten Tomatoes, Trakt
 
-Profile detection runs in this order:
-  1. --profile flag (applies to every folder; useful when offline).
+For Crunchyroll and Netflix we extract IDs directly. For the other
+streaming services we pull the title from the URL slug and (where
+available) `og:title` from the page, then resolve IDs via TMDB —
+configure a key once with `getsubtitle --set-key tmdb`.
+
+Profiles (auto-detected on PATH form; override with --profile):
+  ja  Japanese-origin. fetch ko first; MT ja→ko fallback.
+  ko  Korean-origin. fetch ja first; MT ko→ja fallback.
+  en  English / Western / other. fetch es+ko first; MT from en
+      for whichever target came back empty.
+
+Profile detection chain:
+  1. --profile flag (applies to every folder).
   2. Japanese kana in the folder name → ja (fast path; never wrong).
   3. TMDB search by folder name → original_language → ja/ko/en.
      Recommended setup: getsubtitle --set-key tmdb
   4. Character-set fallback: Hangul-only → ko; otherwise → en.
 
-Quickstart:
-  # 1. (Recommended) free TMDB key for accurate profile detection
-  getsubtitle --set-key tmdb
+Examples (URL form):
+  getsubtitle "https://www.crunchyroll.com/watch/..." -l ja
+  getsubtitle "https://www.imdb.com/title/tt28299608/" -s 1 -e all -l ko,en,es
+  getsubtitle "https://www.hulu.com/series/the-bear-12345" -s 1 -e all -l es,ko
+  getsubtitle URL -s 1 -e 7 -l ja,ko --dry-run
+  getsubtitle URL --title "MF Ghost" --anilist 143327 -l ja
 
-  # 2. Walk your library, see what would be fetched (default: dry-run)
-  cd /path/to/your/plex/library
-  getsubtitle batch fetch
+Examples (PATH single-show form):
+  getsubtitle fetch ~/Movies/Subtitles/MF\\ Ghost --run
+  getsubtitle fetch "~/Movies/유포니움/1기" --profile ja --run
 
-  # 3. If the plan looks right, run for real
-  getsubtitle batch fetch --run
+Examples (PATH library-walk form):
+  getsubtitle fetch ~/Movies/Subtitles --subdirectory          # dry-run
+  getsubtitle fetch ~/Movies/Subtitles --subdirectory --run    # do it
 
-  # 4. Build combined study files
-  getsubtitle batch merge --run --format vtt
+Episode-range expansion (`-e all`):
+  - Anime: episode count comes from AniList (no extra setup).
+  - Live-action TV: episode count comes from TMDB. Needs a TMDB API
+    key; set one with `getsubtitle --set-key tmdb` or
+    `TMDB_API_KEY=...`. Without it, pass an explicit range like
+    `-e 1-12`.
 
-Folder layout handling:
+URL-inferred fields (auto-defaults):
+  - Crunchyroll URLs with trailing `...-season-2` (etc.) default to
+    -s 2 unless you pass an explicit -s.
+  - The same applies to inferred -e values from URLs that include
+    `/episode-N/` or similar markers.
+  - User-supplied -s/-e always wins.
+
+Folder layout handling (PATH form):
   Show/Season 01/      → show=Show, season=1
   Show/1기/           → show=Show, season=1 (Korean form)
   Show/                → show=Show, season=None (single-folder shows)
   loose-movie.mkv      → treated as a movie, fetched into the same dir
 
+Fetch options:
+  -l, --langs CODES        Languages to download. Default: ja
+  -s, --season N|all       Season number. If omitted, infer when possible
+  -e, --episode N|N-M|all  Episode, range, list, or all
+  -o, --output DIR         Output folder. Default: ~/Movies/Subtitles
+  --layout MODE            archive, flat, or plex. Default: archive
+  --title TEXT             Title override when URL metadata is missing
+  --anilist ID             AniList ID override for anime
+  --browser                Open URL first for login/Cloudflare pages
+  --release-source MODE    auto | any | netflix | crunchyroll | amazon |
+                           hulu | hbo | disney | apple | paramount |
+                           peacock. Default: auto = infer from the URL's
+                           host (HBO/Hulu/etc. → prefer matching rips).
+  --dry-run                Search and show availability without downloading
+  -y, --yes                Skip bulk confirmation
+  --open-folder            Open output folder after saving
+
 Notes:
-  - merge runs `getsubtitle modify --convert smi-to-srt --force` on
-    each folder first, so legacy Korean .smi files become .ko.srt
-    automatically before combine.
-  - No reference.json / no setup files required. Profile detection,
-    title parsing, and ID resolution all happen at runtime.
-  - All of getsubtitle's own defaults (engine, model, auto_load,
-    furigana, strip_before_mt) apply to every shelled-out call.
+  - PATH form defaults to dry-run. Add --run to actually fetch.
+  - URL form does NOT default to dry-run — it's opt-in via --dry-run.
+""",
+    "merge": """\
+Merge multiple language SRT files into one study-friendly cue stack.
+
+Usage:
+  getsubtitle merge PATH -l LANGS [merge options]
+  getsubtitle merge PATH --subdirectory [-l LANGS] [merge options]
+
+Without --subdirectory, PATH is one show: scan it recursively for
+single-language SRTs, group by season/episode, write the combined
+.<lang1>-<lang2>.srt files alongside.
+
+With --subdirectory, treat each immediate subdir of PATH as its own
+show and run merge once per subdir. Useful for whole-library passes
+after `fetch --subdirectory` has populated the per-show SRTs.
+
+Behavior:
+  The language order in -l controls display order.
+  Example: -l ja,en puts Japanese above English.
+  Each language is flattened to one line by default:
+    Japanese line 1 Japanese line 2
+    English line 1 English line 2
+
+Examples:
+  getsubtitle merge ~/Movies/Subtitles/MF\\ Ghost -l ja,en
+  getsubtitle merge ~/Movies/Subtitles/MF\\ Ghost -l ja,en --master ja --romanization ja:hiragana
+  getsubtitle merge ~/Movies/Subtitles --subdirectory -l ja,en --format vtt
+
+Merge options:
+  -l, --langs CODES        Required. Language order for output
+  -o, --output DIR         Output folder. Default: beside master subtitle
+  --dry-run                Show merge plan without writing files
+  --force                  Overwrite existing outputs and allow low-confidence matches
+  --open-folder            Open output folder after writing
+  --no-open-folder-prompt  Do not ask whether to open output folder
+  --format FORMAT          srt or vtt. vtt can render ruby reading aids in asbplayer
+  --sync MODE              auto, strict, or loose. Default: auto
+  --master LANG            Timing master. Default: first language in -l
+  --single-line, --single  Flatten each language to one line. Default behavior
+  --preserve-lines         Keep original line breaks within each language
+  --romanization SPEC      Inline reading aids on the matching language line
+                           (e.g. `ja:hiragana` inlines 漢字（かんじ） onto ja cues).
+                           See `getsubtitle --help modify` for the full SPEC syntax.
+  --subdirectory           Walk immediate subdirs and run merge per show
+
+Notes:
+  - First language in -l is the timing master unless --master is set.
+  - --romanization ja:hiragana inlines Japanese readings before merging.
+  - --sync auto|strict|loose controls how strictly cues match.
+""",
+    "pipeline": """\
+Chain fetch / translate / modify / merge into one call.
+
+Usage (inline form):
+  getsubtitle [shared options] \\
+      [--fetch TARGET [fetch-only options]] \\
+      [--translate ENGINE [translate-only options]] \\
+      [--modify [modify-only options]] \\
+      [--merge [merge-only options]] \\
+      [--output PATH] [--dry-run]
+
+Usage (config-file form, with optional inline CLI overrides):
+  getsubtitle [--source X] [--output Y] [--format vtt] [other overrides] --config FILE.toml
+
+The `--config` flag can appear anywhere in argv; we recommend at the end
+for readability. CLI flags override matching TOML values. Layer order:
+  built-in defaults  <  user_settings.toml  <  --config FILE.toml  <  CLI flags
+
+Top-level CLI overrides (layered onto the --config TOML):
+  --source X        overrides [fetch].source
+  --output X        overrides [output].target
+  --format X        overrides [output].format
+  --season X        overrides [fetch].season
+  --episode X       overrides [fetch].episode
+  -l X, --languages X  overrides [fetch].languages
+  --subdirectory    overrides [fetch].subdirectory = true
+  --dry-run         overrides [output].dry_run = true
+  --force           overrides [output].force = true
+
+Inline verb blocks (--fetch / --translate / --modify / --merge) layer on
+top of the TOML per-section: keys you set inline win on collision; keys
+not set inline come from the TOML.
+
+Verbs always run in canonical order regardless of typing order:
+  fetch → translate → modify → merge
+
+Each verb's flag block is parsed by that verb's existing argument
+surface, so per-verb options work exactly like the standalone subcommands.
+The verb's block starts at the verb flag and ends at the next verb flag
+or end-of-argv. Shared options (--output, --dry-run) appear once,
+before any verb flag.
+
+Shared options:
+  --output PATH   Working folder for downstream verbs. Required when
+                  --fetch is a URL and --translate / --modify / --merge
+                  are present. Otherwise defaults to --fetch's PATH.
+  --dry-run       Propagated to every verb that supports it.
+
+Translate engine spec (positional after --translate):
+  --translate argos               Offline. Requires argostranslate.
+  --translate ollama              Offline LLM. Uses default model.
+  --translate ollama:qwen3:8b     Pin a specific Ollama model.
+  --translate deepl               Online. Requires DEEPL_API_KEY.
+  --translate ""                  Disable MT for this run.
+
+Examples (inline):
+  # Whole-library bilingual pass: fetch each show, MT missing langs,
+  # clean broadcast noise, then merge into ja+en study files.
+  getsubtitle --fetch /Plex/Anime --subdirectory \\
+              --translate ollama \\
+              --modify --strip-cc-noise --single-line \\
+              --merge -l ja,en --format vtt
+
+  # URL → study deck via DeepL into an explicit output folder.
+  getsubtitle --fetch "https://www.imdb.com/title/tt28299608/" -s 1 -e all \\
+              --translate deepl \\
+              --merge -l ja,en --format vtt \\
+              --output ~/Movies/StudyDeck
+
+  # Just fetch + merge (no MT), single show.
+  getsubtitle --fetch ~/Movies/Subtitles/MF\\ Ghost \\
+              --merge -l ja,en
+
+Examples (config file with CLI overrides):
+  getsubtitle --config simpsons-s1-en-fr.toml
+  getsubtitle --config plex-movies-fill-merge.toml
+  getsubtitle --source /Plex/Anime --format vtt --config plex-movies-fill-merge.toml
+  getsubtitle --season 2 --config simpsons-s1-en-fr.toml
+
+Pipeline TOML schema (sections in execution order):
+
+  [fetch]
+  source = "/Plex/Anime"           # required: URL or PATH
+  subdirectory = true              # walk immediate subdirs (PATH only)
+  season = "1-2"                   # range OK; also `seasons = ...`
+  episode = "all"                  # also `episodes = ...`
+  languages = "japanese,english,korean"
+                                   # full names normalize to ja,en,ko;
+                                   # alias keys: `langs`, `language`
+
+  [translate]
+  engine = "ollama"                # required: argos | ollama[:model] | deepl
+  mt_source = { ko = "ja", es = "en", ja = "ko" }
+                                   # per-target source map (dict form);
+                                   # comma-string `mt_source = "ko:ja,es:en"` also works
+                                   # (`mt_source_lang` kept as alias)
+  "ja:ko" = "qwen3:4b"             # per-pair Ollama models (session-only;
+  "en:es" = "llama3.2:3b"          # don't touch user_settings.toml)
+
+  [modify]
+  strip_cc_noise = true
+  single_line = true
+  furigana = "hiragana"            # off | hiragana | romaji
+  reading_format = "all"           # srt | ass | vtt | all
+                                   # aliases: furigana_output_format, format
+  convert = "smi-to-srt"           # or "none"
+
+  [merge]
+  languages = "ja:vtt, en, ko:smi" # `:format` is an INPUT hint when multiple
+                                   # source formats exist on disk for one lang
+                                   # (supports :srt, :vtt, :smi; ASS not yet)
+  master = "ja"
+  sync = "strict"                  # auto | strict | loose
+  furigana = true                  # inline 漢字（かんじ） into the merged ja line
+  format = "vtt"                   # final stacked output format
+
+  [output]
+  target = "/Plex/Output"          # final output folder (alias: `root`)
+  layout = "plex"                  # archive | flat | plex (Plex preserves Show/Season XX)
+  retain_folder_structure = true   # alias for layout = "plex" (hyphen form also accepted)
+  format = "vtt"                   # global default; per-verb format wins when set
+  dry_run = false                  # false (default) → live run; auto-adds
+                                   # --run to PATH-form fetch
+  force = false                    # propagates to translate / modify / merge
+  yes = false                      # propagates to fetch (skip bulk confirmation)
+  debug_providers = false          # propagates to fetch
+
+Naming conventions:
+  - CLI uses kebab-case (--mt-source, --reading-format, --strip-cc-noise).
+    TOML uses snake_case (mt_source, reading_format, strip_cc_noise).
+    Either spelling works in TOML — hyphens normalize to underscores so
+    `dry-run` and `dry_run` are interchangeable.
+  - Canonical TOML keys (v1.1):
+      [translate]  mt_source           (was: mt_source_lang)
+      [modify]     reading_format      (was: furigana_output_format)
+      [output]     target              (was: root)
+      [fetch]      source              (was: target/url)
+      (anywhere)   languages           (was: langs)
+    The old names remain as silent aliases.
+  - Other aliases: `language`/`langs` for `languages`,
+    `seasons`/`episodes` for `season`/`episode`,
+    `format`/`furigana_format`/`furigana_output_format` for `reading_format`.
+  - Language values accept ISO codes (ja, en, ko, es, fr, zh, de, it, pt, ru)
+    OR full names (japanese, english, korean, spanish, french, chinese, …)
+  - Boolean true → flag emitted, false → flag omitted
 """,
     "advanced": """\
 Advanced and experimental options.
@@ -6998,7 +8827,6 @@ Output / cleanup:
   --single-line            Flatten SRT cues to one line
 
 Compatibility aliases (still accepted):
-  -furigana                Same as --furigana
   -single, --single        Same as --single-line
   -release-source          Same as --release-source
   --strip-cc-arrows        Same as --strip-cc-noise
@@ -7013,13 +8841,6 @@ def _is_topic_help_request(argv: list[str]) -> bool:
         return False
     if argv[0] in ("-h", "--help"):
         return True
-    if argv[0] == "combine":
-        if any(a in ("-h", "--help") for a in argv[1:]):
-            return True
-        if len(argv) == 1:
-            # `getsubtitle combine` with no args -> show combine help instead
-            # of failing in argparse on missing PATH.
-            return True
     if argv[0] == "translate":
         if any(a in ("-h", "--help") for a in argv[1:]):
             return True
@@ -7031,7 +8852,7 @@ def _is_topic_help_request(argv: list[str]) -> bool:
             return True
         if len(argv) == 1:
             return True
-    if argv[0] == "batch":
+    if argv[0] in ("merge", "fetch"):
         if any(a in ("-h", "--help") for a in argv[1:]):
             return True
         if len(argv) == 1:
@@ -7046,17 +8867,20 @@ def _is_topic_help_request(argv: list[str]) -> bool:
 
 
 def _show_topic_help(argv: list[str]) -> int:
-    if argv and argv[0] == "combine":
-        sys.stdout.write(HELP_TOPICS["combine"])
-        return 0
     if argv and argv[0] == "translate":
         sys.stdout.write(HELP_TOPICS["translate"])
         return 0
     if argv and argv[0] == "modify":
         sys.stdout.write(HELP_TOPICS["modify"])
         return 0
-    if argv and argv[0] == "batch":
-        sys.stdout.write(HELP_TOPICS["batch"])
+    if argv and argv[0] == "merge":
+        sys.stdout.write(HELP_TOPICS["merge"])
+        return 0
+    if argv and argv[0] == "fetch":
+        sys.stdout.write(HELP_TOPICS["fetch"])
+        return 0
+    if argv and argv[0] in ("--config", "pipeline"):
+        sys.stdout.write(HELP_TOPICS["pipeline"])
         return 0
     if argv and argv[0] == "config":
         sys.stdout.write(HELP_TOPICS["config"])
@@ -7087,19 +8911,45 @@ def main(argv: list[str] | None = None) -> int:
     # Topic-help dispatch — handled before argparse so we own the help UX.
     if _is_topic_help_request(raw_argv):
         return _show_topic_help(raw_argv)
-    # Subcommand dispatch — preserve the existing 'getsubtitle URL ...' shape
-    # by sniffing the first positional. Add more subcommands here as needed.
-    if raw_argv[0] == "combine":
+    # --config FILE.toml form (anywhere in argv): load TOML, layer CLI
+    # overrides on top, run pipeline. Takes precedence over inline pipeline
+    # form because the user has chosen to source the workflow from a file.
+    config_path = _extract_config_flag(raw_argv)
+    if config_path is not None:
+        return pipeline_from_config_main(config_path, raw_argv)
+    # Inline pipeline form (--fetch / --translate / --modify / --merge).
+    if _is_pipeline_argv(raw_argv):
+        return pipeline_main(raw_argv)
+    # Subcommand dispatch — sniff the first positional. The bare
+    # `getsubtitle URL ...` shape (no subcommand) falls through to the
+    # URL-form download flow below.
+    if raw_argv[0] == "merge":
         return combine_main(raw_argv[1:])
     if raw_argv[0] == "translate":
         return translate_main(raw_argv[1:])
     if raw_argv[0] == "modify":
         return modify_main(raw_argv[1:])
-    if raw_argv[0] == "batch":
-        return batch_main(raw_argv[1:])
+    if raw_argv[0] == "fetch":
+        return fetch_main(raw_argv[1:])
     if raw_argv[0] == "config":
         return config_main(raw_argv[1:])
+    # URL-form season-range expansion: `--season 1-2` / `-s 1,2,3` →
+    # run the URL flow once per expanded season.
+    expanded_seasons = _expand_url_form_season_range(raw_argv)
+    if expanded_seasons is not None:
+        rc_total = 0
+        for idx, sub_argv in enumerate(expanded_seasons, start=1):
+            if idx > 1:
+                print()
+            print(f"━━ season {sub_argv[sub_argv.index('--season' if '--season' in sub_argv else '-s') + 1]} ━━")
+            rc = main(sub_argv)
+            rc_total = rc or rc_total
+        return rc_total
     args = build_parser().parse_args(raw_argv)
+    # --romanization (the v1.1 generalised flag) routes through the legacy
+    # --furigana attribute for Japanese; non-Japanese languages raise a
+    # clear "not yet implemented" error.
+    _apply_romanization_to_args(args)
     if args.reset_key is not None:
         return reset_api_keys(args.reset_key or None)
     if args.set_key is not None:
@@ -7412,13 +9262,13 @@ def main(argv: list[str] | None = None) -> int:
     if args.mt_engine:
         explicit_mt_model = args.mt_model if option_was_passed(raw_argv, "--mt-model") else None
         translator_cache: dict[tuple[str, str | None], _BaseTranslator] = {}
-        # [furigana].strip_before_mt: same defense as translate_main. Default
-        # true; only meaningful when an MT source is ja.
+        # [translate].strip_furigana_before_mt: same defense as translate_main.
+        # Default true; only meaningful when an MT source is ja.
         try:
-            _cfg_furi = load_user_config().get("furigana", {})
+            _cfg_tr = load_user_config().get("translate", {})
         except CliError:
-            _cfg_furi = {}
-        strip_furigana_before_mt = bool(_cfg_furi.get("strip_before_mt", True))
+            _cfg_tr = {}
+        strip_furigana_before_mt = bool(_cfg_tr.get("strip_furigana_before_mt", True))
 
         def translator_for(src_lang: str, target_lang: str) -> _BaseTranslator:
             model = ollama_model_for_pair(src_lang, target_lang, explicit_mt_model) if args.mt_engine == "ollama" else args.mt_model
