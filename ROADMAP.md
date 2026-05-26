@@ -6,6 +6,12 @@ What's shipped, what's experimental, what's planned next, and what's intentional
 
 Highlights from the most recent round of work:
 
+- **Hulu / Max (HBO) / Disney+ / Apple TV+ / Paramount+ / Peacock / Prime Video URL recognition.** Single generic handler that pulls a title from the URL slug and (where available) scrapes `og:title` from the page. The TMDB enrichment hook then resolves the title to IMDb/TMDB IDs so the existing Wyzie path lights up. Auth-wall boilerplate ("Sign in to Hulu" etc.) is filtered out — never used as a show title.
+- **`--release-source` understands the new services.** `normalized_release_source()` now detects HULU / HMAX / MAX / DSNP / ATVP / PMTP / PCOK release tags. `--release-source auto` (the default) infers from the URL host, so pasting a `hulu.com` URL automatically prefers HULU-tagged subs over generic web-dl rips.
+- **TMDB title-resolution support in the main app.** `getsubtitle --set-key tmdb` adds TMDB to the keyring alongside Jimaku/Wyzie/DeepL. When you pass `--title "..."` without a URL or IDs, the main flow auto-resolves IMDb/TMDB IDs from TMDB so Wyzie has solid IDs to search. Japanese-origin results are skipped when `ja` is requested, preserving the AniList → Jimaku path for anime.
+- **`-e all` works for live-action TV.** When AniList can't supply an episode count, the main download flow asks TMDB via `tmdb_tv_season_episode_count()`. Lifts the long-standing "Episode count is unknown" error for non-anime shows.
+- **Crunchyroll: series ID + season suffix parsing.** Captures the alphanumeric series ID (e.g. `GEXH3W2W7`) onto the MediaInfo. Strips trailing `Season N` / `Sn` / `Part N` / `Cour N` markers from slug-derived titles so AniList search hits the right base title, and the parsed season number becomes the default `-s`. URLs like `.../mashle-magic-and-muscles-season-2` now default to `-s 2`.
+- **Netflix: `og:title` fallback when Wikidata misses.** Even on `/watch/` URLs (where the scraped title is the episode title), we keep it as a last-resort fallback if `external_ids_from_netflix_id()` returns nothing. Better than printing "unknown" and forcing the AniList prompt. Same auth-wall filter applies.
 - **Default flip to language-learner-friendly settings**: `[download].single_line`, `[download].strip_cc_noise`, `[furigana].enabled`, and `[furigana].combine` now default to `true`; `[translate].engine` defaults to `"argos"`; `DEFAULT_OLLAMA_MODEL` is `"qwen3:4b"`. Added opt-out flags (`--no-single-line`/`--preserve-lines`, `--no-strip-cc-noise`, `--no-mt-engine`) so the on-by-default behavior can still be turned off at the CLI.
 - **`user_settings.example.toml` rewritten in active-value style** — every setting uncommented at its default with a descriptive "Default: X" comment, quickstart recipes block at the top, expanded per-language model recommendations, fuller `[combine].priority` worked example.
 - **`modify --convert smi-to-srt`** — parse Microsoft SAMI `.smi` files and emit one sibling `.<lang>.srt` per language found inside. Class → ISO-639-1 mapping (KRCC→ko, ENCC→en, JPCC→ja, …, KOKRCC→ko); unknown classes default to `ko`. Encoding auto-detect (UTF-8 / UTF-16-BOM / CP949). Existing targets protected unless `--force` is passed.
@@ -32,21 +38,30 @@ Highlights from the most recent round of work:
 
 - Cross-platform Python CLI with editable install support
 - Subcommands: `combine` (with internal dispatch; existing `getsubtitle URL ...` shape unchanged)
-- Topic-based help: `--help`, `--help download|combine|keys|furigana|translate|advanced`
-- Guided API key setup/reset for Jimaku, Wyzie, DeepL (`--set-key`, `--reset-key`)
+- Topic-based help: `--help`, `--help download|combine|translate|modify|config|keys|furigana|batch|advanced`
+- Guided API key setup/reset for Jimaku, Wyzie, DeepL, TMDB (`--set-key`, `--reset-key`)
 - macOS Keychain for API keys; env-var fallback on Linux/Windows
 - Smart AniList prompt — accepts a title, AniList ID, or AniList URL
 - Compact search summaries, red-block warnings, no tracebacks for expected errors
 
 ### URL recognition
 
-- Crunchyroll (`/watch/`, `/series/`), Netflix (incl. `?jbv=`), IMDb, TMDB, Letterboxd, Rotten Tomatoes, MyAnimeList, AniList, TheTVDB, Trakt
+- Streaming services:
+  - Crunchyroll (`/watch/`, `/series/<ID>/<slug>`) — captures series ID, strips trailing `Season N` markers from the slug
+  - Netflix (`/watch/<id>`, `/title/<id>`, `?jbv=<id>`)
+  - Hulu, Max (HBO), Disney+, Apple TV+, Paramount+, Peacock, Prime Video — generic handler with slug parsing + `og:title` scrape + auth-wall filtering
+- Catalog sites:
+  - IMDb, TMDB, AniList, MyAnimeList, TheTVDB, Letterboxd, Rotten Tomatoes, Trakt
 - Metadata bridges:
   - AniList ↔ IMDb/TMDB/TVDB via Anime-IDs + Wikidata
   - MyAnimeList → AniList directly via Anime-IDs
   - Netflix work ID → IMDb/TMDB/TVDB via Wikidata P1874
   - TheTVDB slug → ID via page scrape, then Wikidata bridge to IMDb/TMDB
-- IMDb anime URLs expand `-e all` via reverse AniList bridge
+  - TMDB title → IMDb/TMDB IDs (powers title-only fallback for every streaming service)
+- Episode-count expansion for `-e all`:
+  - Anime: AniList (no extra setup)
+  - Live-action TV: TMDB (requires a TMDB key)
+  - IMDb anime URLs expand via reverse AniList bridge
 - Slug-to-title preserves common acronyms ("mf-ghost" → "MF Ghost")
 
 ### Providers
@@ -98,7 +113,7 @@ Highlights from the most recent round of work:
 
 ### Testing
 
-- 250+ automated tests covering URL parsing, slug-to-ID extraction, provider response parsing (Wyzie/Subdivx/Addic7ed), SAMI parsing + smi-to-srt conversion (encoding sniff, multi-language, blank-line collapse, stem-strip), combine logic (file scanning/grouping, time overlap, sync presets, language ordering, missing-language skip, master override, force overwrite), MT helpers (round-trip, source-pick, Ollama response parsing, release_resources, auto_load/auto_unload, strip-before-MT), config validation (mixed-schema ollama_models, BUILTIN-default merge), help system, and dispatch routing
+- 275+ automated tests covering URL parsing (incl. Crunchyroll season suffix + the generic streaming handler for Hulu/Max/Disney+/Apple/Paramount+/Peacock), TMDB title resolution + `-e all` expansion, slug-to-ID extraction, provider response parsing (Wyzie/Subdivx/Addic7ed), SAMI parsing + smi-to-srt conversion (encoding sniff, multi-language, blank-line collapse, stem-strip), combine logic (file scanning/grouping, time overlap, sync presets, language ordering, missing-language skip, master override, force overwrite), MT helpers (round-trip, source-pick, Ollama response parsing, release_resources, auto_load/auto_unload, strip-before-MT), config validation (mixed-schema ollama_models, BUILTIN-default merge), help system, and dispatch routing
 
 ## In progress / first-release polish
 

@@ -6197,14 +6197,38 @@ Usage:
   getsubtitle URL [download options]
 
 Supported URL types:
-  Crunchyroll, Netflix, IMDb, TMDB, Letterboxd, Rotten Tomatoes,
-  MyAnimeList, AniList, TheTVDB, Trakt
+  Streaming:  Crunchyroll, Netflix, Hulu, Max (HBO), Disney+,
+              Apple TV+, Paramount+, Peacock, Prime Video
+  Catalog:    IMDb, TMDB, AniList, MyAnimeList, TheTVDB,
+              Letterboxd, Rotten Tomatoes, Trakt
+
+For Crunchyroll and Netflix we extract IDs directly. For the other
+streaming services we pull the title from the URL slug and (where
+available) `og:title` from the page, then resolve IDs via TMDB —
+configure a key once with `getsubtitle --set-key tmdb` so the
+title-only path lights up. Catalog-site URLs are direct ID extracts.
 
 Examples:
   getsubtitle "https://www.crunchyroll.com/watch/..." -l ja
   getsubtitle "https://www.imdb.com/title/tt28299608/" -s 1 -e all -l ko,en,es
+  getsubtitle "https://www.hulu.com/series/the-bear-12345" -s 1 -e all -l es,ko
+  getsubtitle "https://www.max.com/show/house-of-the-dragon" -l en,es
   getsubtitle URL -s 1 -e 7 -l ja,ko --dry-run
   getsubtitle URL --title "MF Ghost" --anilist 143327 -l ja
+
+Episode-range expansion (`-e all`):
+  - Anime: episode count comes from AniList (no extra setup).
+  - Live-action TV: episode count comes from TMDB. Needs a TMDB API
+    key; set one with `getsubtitle --set-key tmdb` or
+    `TMDB_API_KEY=...`. Without it, pass an explicit range like
+    `-e 1-12`.
+
+URL-inferred fields (auto-defaults):
+  - Crunchyroll URLs with trailing `...-season-2` (etc.) default to
+    -s 2 unless you pass an explicit -s.
+  - The same applies to inferred -e values from URLs that include
+    `/episode-N/` or similar markers.
+  - User-supplied -s/-e always wins.
 
 Download options:
   -l, --langs CODES        Languages to download. Default: ja
@@ -6215,7 +6239,10 @@ Download options:
   --title TEXT             Title override when URL metadata is missing
   --anilist ID             AniList ID override for anime
   --browser                Open URL first for login/Cloudflare pages
-  --release-source MODE    auto, any, netflix, crunchyroll. Default: auto
+  --release-source MODE    auto | any | netflix | crunchyroll | amazon |
+                           hulu | hbo | disney | apple | paramount |
+                           peacock. Default: auto = infer from the URL's
+                           host (HBO/Hulu/etc. → prefer matching rips).
   --dry-run                Search and show availability without downloading
   -y, --yes                Skip bulk confirmation
   --open-folder            Open output folder after saving
@@ -6589,9 +6616,13 @@ Troubleshooting:
   --browser                Open URL first for login/Cloudflare pages
 
 Provider selection:
-  --release-source MODE    auto, any, netflix, crunchyroll
-                            auto prefers the URL source when useful
-                            any disables source preference
+  --release-source MODE    auto | any | netflix | crunchyroll | amazon |
+                           hulu | hbo | disney | apple | paramount | peacock
+                            auto = infer from the URL host (works for all
+                                   the listed services)
+                            any  = disable source preference
+                            Or pin an explicit source name to bias toward
+                            releases tagged accordingly (HULU, DSNP, ATVP, ...)
 
 Experimental providers:
   --experimental-subdivx   Enable Spanish Subdivx fallback

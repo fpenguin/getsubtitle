@@ -186,11 +186,25 @@ Reset a saved key with `getsubtitle --reset-key <provider>`. See `getsubtitle --
 
 The CLI recognises and extracts what it can from each:
 
+**Streaming services** (title resolved to IMDb/TMDB via the integrated TMDB lookup, then handed to providers):
+
 | Host | What it gives us |
 |---|---|
 | `crunchyroll.com/watch/...` | Title from page (when Cloudflare allows); pair with `--anilist` for reliability |
-| `crunchyroll.com/series/...` | Title from slug (acronym-aware) → AniList |
-| `netflix.com/.../?jbv=<id>` | Netflix work ID → IMDb/TMDB via Wikidata |
+| `crunchyroll.com/series/<ID>/<slug>` | Slug → cleaned title (trailing "Season N" / "Part N" stripped and used as `-s`), series ID captured |
+| `netflix.com/title/<id>`, `netflix.com/.../?jbv=<id>` | Netflix work ID → IMDb/TMDB/TVDB via Wikidata, `og:title` as fallback |
+| `hulu.com/series/<slug>-<id>` | Slug → title; auto-prefer HULU-tagged releases |
+| `max.com/show/<slug>` / `hbomax.com/...` | Slug → title; auto-prefer HMAX/MAX-tagged releases |
+| `disneyplus.com/...` | Slug → title; auto-prefer DSNP-tagged releases |
+| `tv.apple.com/.../show/<slug>/...` | Slug → title; auto-prefer ATVP-tagged releases |
+| `paramountplus.com/shows/<slug>` | Slug → title; auto-prefer PMTP-tagged releases |
+| `peacocktv.com/...` | Slug → title; auto-prefer PCOK-tagged releases |
+| `amazon.com/.../dp/<asin>`, `primevideo.com/.../detail/<id>` | Slug/URL → title; auto-prefer AMZN-tagged releases |
+
+**Catalog sites** (direct ID extraction):
+
+| Host | What it gives us |
+|---|---|
 | `imdb.com/title/tt...` | IMDb ID directly |
 | `themoviedb.org/movie/N` / `/tv/N` | TMDB ID directly |
 | `anilist.co/anime/<id>/...` | AniList ID extracted from URL — no search prompt |
@@ -198,7 +212,18 @@ The CLI recognises and extracts what it can from each:
 | `thetvdb.com/series/...` | TheTVDB ID (numeric path or scraped from slug page) |
 | `letterboxd.com/film/...`, `rottentomatoes.com/...`, `trakt.tv/...` | Title fallback |
 
-If the URL is Cloudflare-blocked or otherwise opaque, pass `--title "Show Name"` or `--anilist <id>` to skip the title-inference prompt. At the prompt, you can paste a title, an AniList ID, or an AniList URL.
+For the streaming services, set up a free TMDB key once (`getsubtitle --set-key tmdb`) so the scraped/slug title gets resolved to IDs the providers can search by. Without a TMDB key these URLs still work but with lower match rates.
+
+If a streaming URL is Cloudflare-blocked / auth-walled and we can't read the title, pass `--title "Show Name"` or `--anilist <id>` to skip the title-inference prompt. At the prompt, you can paste a title, an AniList ID, or an AniList URL.
+
+### Episode-range expansion (`-e all`)
+
+| Show type | Episode count source | What you need |
+|---|---|---|
+| Anime | AniList (already integrated) | No extra setup — pass the AniList ID or let getsubtitle infer it |
+| Live-action TV | TMDB | Set a TMDB key once: `getsubtitle --set-key tmdb` |
+
+Without the relevant key, `-e all` errors with a clear setup hint. Pass an explicit range like `-e 1-12` to bypass.
 
 ## Common workflows
 
