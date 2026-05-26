@@ -1,6 +1,40 @@
-# Roadmap  · v1.0
+# Roadmap  · v1.1
 
-What ships in v1.0, what's experimental, and what's on the horizon.
+What ships in v1.0, what's new in v1.1, what's experimental, and what's
+on the horizon.
+
+## v1.1 — what's new
+
+- **Interactive workflow builder.** `getsubtitle -i` /
+  `getsubtitle --interactive` / `getsubtitle interactive` walks 11
+  learner-friendly questions and produces a CLI command, a reusable
+  TOML, or a live run with a dry-run preview. Runs a dependency probe
+  after Q10 and walks the user through fixing each gap (missing pip
+  extras, unreachable Ollama daemon, missing API keys). Auto-saves a
+  draft at `~/.cache/getsubtitle/wizard-draft.toml` so an interrupted
+  wizard can resume.
+- **Reading-aid umbrella.** `--romanization` replaces `--furigana` as
+  the canonical CLI flag (`--furigana` stays as a silent alias). The
+  spec now covers Japanese (ships now), plus Korean, Mandarin,
+  Cantonese, Thai, Arabic, Hindi, Russian (wired through to CLI/TOML
+  with backends landing per the planned section below).
+- **Naming-consistency renames** (Round 11): canonical TOML keys are
+  `[translate].mt_source`, `[modify].reading_format`,
+  `[output].retain_folder_structure`; canonical CLI flags are
+  `--languages`, `--engine`, `--model`, `--mt-source`,
+  `--reading-format`. Every legacy name is still accepted as a silent
+  alias so existing scripts and configs keep working. Hyphens and
+  underscores in TOML keys are now interchangeable
+  (`dry-run` ≡ `dry_run`).
+- **Source smoke diagnostics.** Developer scripts under `scripts/` probe
+  Korean, Chinese, and European-language subtitle coverage before new
+  providers are wired into the main downloader. They check Wyzie coverage,
+  candidate community reachability, and local format support such as
+  `.smi` conversion, `.ass/.ssa` input, and Unicode SRT parsing.
+- **Provider source/status diagnostics.** `getsubtitle sources --check`
+  reports Wyzie source availability for the user's configured key, and
+  `--debug-providers` now prints a compact table of provider/source counts,
+  language tags, formats, and quality flags.
 
 ## v1.0 — capabilities
 
@@ -43,7 +77,7 @@ What ships in v1.0, what's experimental, and what's on the horizon.
 
 ### Merge (stacking)
 
-- Reads `.srt`, `.vtt`, and `.smi` (multi-language SAMI) as input formats. Per-language `:format` hints in `-l ja:vtt,en,ko:smi` pick which source to use when multiple formats coexist.
+- Reads `.srt`, `.vtt`, `.ass/.ssa`, and `.smi` (multi-language SAMI) as input formats. Per-language `:format` hints in `-l ja:vtt,en,ko:smi` pick which source to use when multiple formats coexist.
 - VTT ruby `<ruby><rt>` markup collapses to `漢字（かんじ）` parentheticals so furigana survives the read.
 - Time-overlap matching with `--sync auto | strict | loose` presets.
 - Master language: `--master` flag > `[merge].priority` config > first language in `-l`.
@@ -74,7 +108,7 @@ What ships in v1.0, what's experimental, and what's on the horizon.
 
 ### Tests
 
-- 330+ automated tests covering URL parsing, provider response shapes, TMDB / AniList resolution, SAMI parsing, VTT input parsing, MT helpers + auto_load/auto_unload, merge with format hints, pipeline orchestration, `--config` CLI overrides, config validation, help system, and dispatch routing.
+- 380+ automated tests covering URL parsing, provider response shapes, TMDB / AniList resolution, SAMI parsing, VTT/ASS input parsing, MT helpers + auto_load/auto_unload, merge with format hints, pipeline orchestration, `--config` CLI overrides, config validation, source smoke diagnostics, help system, and dispatch routing.
 
 ## Planned (post-v1.0)
 
@@ -90,16 +124,10 @@ What ships in v1.0, what's experimental, and what's on the horizon.
   users only install the backends they need. Filename suffix stays
   language-native (`pinyin-marks`, `jyutping-numbers`, etc.) rather than
   unifying everything under "romanization".
-- **Installation wizard**: `getsubtitle setup` (interactive one-shot) walks a
-  new user through (a) detecting Python + installing the right optional
-  extras for their target language(s), (b) prompting for API keys
-  (Jimaku/Wyzie/DeepL/TMDB) and storing them via `--set-key`, (c)
-  generating a starter `user_settings.toml` from their answers, and
-  (d) running a smoke test against one example URL. Replaces the
-  current "read four topic pages first" onboarding.
-- **ASS as merge input**: today rejected with a clear error; planned to parse the Events section into the merger.
 - **Native SAMI per-language scoping**: `[modify].convert = "kr:smi-to-srt"` to convert only Korean SAMI streams.
-- **`--engine` flag rename**: drop the historical `--mt-engine` / `--mt-model` and adopt `--engine ENGINE` / `engine:model` everywhere.
+- **Help/doc cleanup for canonical aliases**: `--engine` / `--model` are the
+  canonical translate flags, while `--mt-engine` / `--mt-model` remain silent
+  compatibility aliases for existing scripts.
 - **`--pipeline run NAME`** registry: name a pipeline TOML and run it by short name without typing the path.
 
 ## Planned: merge improvements

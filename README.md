@@ -1,4 +1,4 @@
-# getsubtitle  · v1.0
+# getsubtitle  · v1.1
 
 Turn shows and movies into language-learning subtitle stacks.
 
@@ -33,7 +33,7 @@ One CLI can fetch, translate, clean, convert, and merge:
 
 Add `--subdirectory` to any PATH-based verb to walk a whole library and run it per show. Chain verbs in a pipeline (`--fetch X --translate ollama --merge -l ja,en`), or save a workflow once and re-run it (`--config FILE.toml`).
 
-Primary output is **SRT** for maximum compatibility. WebVTT is supported for asbplayer's true ruby/furigana rendering; ASS is experimental.
+Primary output is **SRT** for maximum compatibility. WebVTT is supported for asbplayer's true ruby/furigana rendering; ASS/SSA can be read as merge input, with ASS output still experimental.
 
 ## Who it's for
 
@@ -77,7 +77,17 @@ py -m pip install -e ".[furigana]"
 
 ## Quickstart
 
-Start with the language pair you actually want to watch with:
+The fastest path is the interactive wizard — it asks 11 questions, probes
+your environment for missing packages and API keys, and either prints the
+CLI command, saves a reusable TOML workflow, or runs it live with a
+dry-run preview:
+
+```sh
+getsubtitle -i
+```
+
+Or jump straight into the CLI with the language pair you actually want to
+watch with:
 
 ```sh
 # 1. Japanese movie night: Japanese + English
@@ -88,10 +98,10 @@ getsubtitle "https://www.imdb.com/title/tt0096283/" -l ja,en
 getsubtitle "https://www.imdb.com/title/tt28299608/" -s 1 -e all -l ja,ko,en,es --dry-run
 
 # 3. Download a season and fill missing Korean/Spanish with MT
-getsubtitle "https://www.imdb.com/title/tt28299608/" -s 1 -e all -l ja,ko,en,es --mt-engine argos
+getsubtitle "https://www.imdb.com/title/tt28299608/" -s 1 -e all -l ja,ko,en,es --engine argos
 
 # 4. Add Japanese furigana for asbplayer
-getsubtitle "https://www.imdb.com/title/tt28299608/" -s 1 -e 1 -l ja --format vtt
+getsubtitle "https://www.imdb.com/title/tt28299608/" -s 1 -e 1 -l ja --romanization ja:hiragana --format vtt
 
 # 5. Merge downloaded subtitle files into one study stack
 getsubtitle merge ~/Movies/Subtitles/MF\ Ghost -l ja,ko,en,es --format vtt
@@ -102,10 +112,60 @@ getsubtitle merge ~/Movies/Subtitles/MF\ Ghost -l ja,ko,en,es --format vtt
 For raw `.srt` with no learning helpers:
 
 ```sh
-getsubtitle "URL" -l ja --no-furigana --no-single-line --no-strip-cc-noise --no-mt-engine
+getsubtitle "URL" -l ja --no-romanization --no-single-line --no-strip-cc-noise --no-mt-engine
 ```
 
 `getsubtitle` (no args) prints a short overview and a topic-help index.
+
+## Interactive mode
+
+The wizard walks you through a workflow without needing to memorise
+flags or read a topic-help page first.
+
+```sh
+getsubtitle -i                # or: getsubtitle --interactive
+                              # or: getsubtitle interactive
+```
+
+What it asks (11 questions):
+
+| Q  | Topic | Maps to |
+|----|---|---|
+| 1  | URL or folder | `--fetch SOURCE` |
+| 2  | Languages to collect | `--languages ja,ko,en,…` |
+| 3  | Display order (top → bottom) | `--merge --languages …` |
+| 4  | Which language controls timing | `--master ja` |
+| 5  | Episode scope (URL only) | `--season`, `--episode` |
+| 6  | MT fallback engine | `--translate argos\|ollama\|deepl` |
+| 7  | Reading aids (multi-select) | `--romanization ja:hiragana,ko:revised,…` |
+| 8  | asbplayer preset | `--single-line --strip-cc-noise --format vtt` |
+| 9  | Output format | `--format srt\|vtt\|ass` |
+| 10 | Output folder | `--output PATH` |
+| 11 | Print / Save / Run / Edit | (final action) |
+
+After Q10 the wizard runs a dependency probe and points out anything
+missing — pykakasi for Japanese furigana, the Ollama daemon if you
+picked ollama, the DeepL key if you picked DeepL, missing
+Jimaku/Wyzie/TMDB keys — and walks you through fixing each gap with
+the right `--set-key` or `pip install` command before the final
+action.
+
+Reading-aid breadth (Q7) covers every language in the v1.1
+romanization umbrella:
+
+| Language | Modes | Status |
+|---|---|---|
+| Japanese (`ja`) | `hiragana`, `romaji` | Ships today (via `pykakasi`) |
+| Korean (`ko`) | `revised`, `yale` | Wired through; backend lands per ROADMAP |
+| Mandarin (`zh`) | `marks` (pinyin), `numbers` | Wired through; backend lands per ROADMAP |
+| Cantonese (`yue`) | `numbers` (jyutping) | Wired through; backend lands per ROADMAP |
+| Thai, Arabic, Hindi, Russian | Royal Thai / ALA-LC / IAST / ISO-9 | Wired through; backend lands per ROADMAP |
+
+Deferred options are flagged with `☆` (vs `★` for ships-now) in the
+wizard menu. The wizard happily saves a TOML referencing a deferred
+backend so you can re-run the same workflow once the backend lands.
+
+For full details: `getsubtitle --help interactive`.
 
 ## Example workflows (configs in this repo)
 
@@ -230,9 +290,32 @@ getsubtitle "URL" -l ja --format vtt
 getsubtitle merge ~/Movies/Subtitles/... -l ja,en --format vtt
 ```
 
+## Developer source smoke tests
+
+These scripts are diagnostic only; they do not wire new providers into the
+main downloader. Use them to decide whether a source is worth implementing:
+
+```sh
+.venv/bin/python scripts/test_korean_sources.py --live
+.venv/bin/python scripts/test_chinese_sources.py --live
+.venv/bin/python scripts/test_european_sources.py --live
+.venv/bin/python scripts/test_all_sources.py --live
+```
+
+They summarize provider coverage, candidate community reachability, and local
+format support such as Korean `.smi` conversion, Chinese `.ass/.ssa` parsing,
+and Chinese/European Unicode SRT parsing. Add `--json` for machine-readable
+output.
+
+To check which internal sources your Wyzie key can access:
+
+```sh
+getsubtitle sources --check
+```
+
 ## Status
 
-v1.0. Test suite covers URL parsing, provider response shapes, MT helpers, merge logic (incl. VTT/SAMI input), pipeline orchestration, --config CLI overrides, the help system, and dispatch routing.
+v1.1. Test suite covers URL parsing, provider response shapes, MT helpers, merge logic (incl. VTT/SAMI/ASS input), pipeline orchestration, --config CLI overrides, source smoke diagnostics, the help system, and dispatch routing.
 
 ## Responsible use
 

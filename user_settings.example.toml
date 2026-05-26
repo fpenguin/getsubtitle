@@ -92,7 +92,7 @@ release_source = "auto"
 
 
 # ─── [translate] ─── machine translation defaults ─────────────────────
-# These apply both when MT runs as a fallback after fetch (--mt-engine)
+# These apply both when MT runs as a fallback after fetch (--engine)
 # and when you run the standalone translate subcommand.
 
 [translate]
@@ -149,7 +149,7 @@ auto_load = true
 auto_unload = true
 
 # Optional per-language-pair Ollama model overrides. Keys are "src:tgt"
-# (colon or dash). --mt-model on the CLI still wins for one-off runs.
+# (colon or dash). --model on the CLI still wins for one-off runs.
 #
 # CJK pairs benefit from stronger multilingual models:
 # "en:ja" = "qwen3:4b"

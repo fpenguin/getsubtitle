@@ -19,7 +19,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 import zipfile
-from dataclasses import dataclass
+from dataclasses import dataclass, field, fields
 from html import unescape
 from pathlib import Path
 from typing import Iterable
@@ -30,6 +30,7 @@ ANILIST_API = "https://graphql.anilist.co"
 TMDB_API = "https://api.themoviedb.org/3"
 WIKIDATA_SPARQL_API = "https://query.wikidata.org/sparql"
 WYZIE_API = "https://sub.wyzie.io/search"
+WYZIE_SOURCES_API = "https://sub.wyzie.io/sources"
 ANIME_IDS_URL = "https://raw.githubusercontent.com/Kometa-Team/Anime-IDs/master/anime_ids.json"
 SUBDIVX_BASE = "https://www.subdivx.com"
 SUBDIVX_SEARCH_URL = SUBDIVX_BASE + "/inc/ajax.php"
@@ -242,6 +243,22 @@ class SearchResult:
     provider: str
     status: str
     file: SubtitleFile | None = None
+    error: str | None = None
+
+
+@dataclass
+class ProviderDebugRecord:
+    provider: str
+    episode: str
+    language: str
+    count: int
+    language_tags: dict[str, int] = field(default_factory=dict)
+    source_tags: dict[str, int] = field(default_factory=dict)
+    extensions: dict[str, int] = field(default_factory=dict)
+    ai_count: int = 0
+    hi_count: int = 0
+    dubbed_count: int = 0
+    example: str = ""
     error: str | None = None
 
 
@@ -780,6 +797,94 @@ def reset_api_keys(provider_value: str | None) -> int:
             print(f"Deleted saved {info['label']} API key." if deleted else f"No saved {info['label']} API key was found.")
         else:
             print(f"No macOS Keychain is available. Remove {info['env']} from your environment instead.")
+    return 0
+
+
+def parse_wyzie_sources_response(data: object) -> list[dict[str, str]]:
+    """Normalize Wyzie /sources responses into [{source, status, note}]."""
+    raw_items: object
+    if isinstance(data, dict):
+        raw_items = data.get("sources") or data.get("data") or data.get("results") or data
+        if isinstance(raw_items, dict):
+            out = []
+            for source, value in raw_items.items():
+                if isinstance(value, dict):
+                    status = str(value.get("status") or value.get("tier") or value.get("access") or value.get("enabled") or "unknown")
+                    note = str(value.get("note") or value.get("message") or "")
+                else:
+                    status = str(value)
+                    note = ""
+                out.append({"source": str(source), "status": status, "note": note})
+            return sorted(out, key=lambda item: item["source"].lower())
+    else:
+        raw_items = data
+    if isinstance(raw_items, list):
+        out = []
+        for item in raw_items:
+            if isinstance(item, str):
+                out.append({"source": item, "status": "available", "note": ""})
+            elif isinstance(item, dict):
+                source = item.get("source") or item.get("name") or item.get("id") or item.get("slug")
+                if not source:
+                    continue
+                status = str(item.get("status") or item.get("tier") or item.get("access") or item.get("enabled") or "unknown")
+                note = str(item.get("note") or item.get("message") or "")
+                out.append({"source": str(source), "status": status, "note": note})
+        return sorted(out, key=lambda item: item["source"].lower())
+    return []
+
+
+def fetch_wyzie_sources(api_key: str) -> list[dict[str, str]]:
+    url = WYZIE_SOURCES_API + "?" + urllib.parse.urlencode({"key": api_key})
+    return parse_wyzie_sources_response(request_json(url))
+
+
+def build_sources_parser() -> argparse.ArgumentParser:
+    p = argparse.ArgumentParser(
+        prog="getsubtitle sources",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        description="Check subtitle provider/source availability for configured API keys.",
+        epilog=textwrap.dedent(
+            """
+            Examples:
+              getsubtitle sources --check
+              getsubtitle sources --check --provider wyzie
+
+            Notes:
+              Wyzie source access can vary by key/tier. This command asks
+              Wyzie which internal sources your current key can use, so you
+              can see whether SubDL/OpenSubtitles/etc. are available before
+              adding direct provider integrations.
+            """
+        ),
+    )
+    p.add_argument("--check", action="store_true", help="Check configured provider/source access.")
+    p.add_argument("--provider", choices=["wyzie", "all"], default="all", help="Provider to check. Default: all.")
+    return p
+
+
+def sources_main(argv: list[str]) -> int:
+    args = build_sources_parser().parse_args(argv)
+    if not args.check:
+        args.check = True
+    if args.provider in {"wyzie", "all"}:
+        api_key = get_provider_api_key("wyzie", prompt_if_missing=False)
+        print("Wyzie sources:")
+        if not api_key:
+            print("  auth required - run: getsubtitle --set-key wyzie")
+            return 1
+        try:
+            sources = fetch_wyzie_sources(api_key)
+        except CliError as e:
+            print(f"  error - {e}")
+            return 1
+        if not sources:
+            print("  no source data returned")
+            return 1
+        width = max(6, *(len(item["source"]) for item in sources))
+        for item in sources:
+            note = f"  {item['note']}" if item.get("note") else ""
+            print(f"  {item['source']:<{width}}  {item['status']}{note}")
     return 0
 
 
@@ -2439,7 +2544,7 @@ class OllamaTranslator(_BaseTranslator):
             "  ollama serve                 # foreground server; run in a separate terminal\n"
             "  ollama list                  # confirm which models are installed\n"
             f"  ollama pull {self.model}\n"
-            f"Use a different installed model with: --mt-model NAME\n"
+            f"Use a different installed model with: --model NAME\n"
             f"(Daemon URL: {self.host})"
         )
 
@@ -2515,7 +2620,7 @@ class OllamaTranslator(_BaseTranslator):
                 f"  ollama pull {self.model}\n"
                 "Or choose an installed model:\n"
                 "  ollama list\n"
-                "  getsubtitle translate PATH -l ko --mt-engine ollama --mt-model NAME"
+                "  getsubtitle translate PATH -l ko --engine ollama --model NAME"
                 f"{detail}"
             ) from e
         except urllib.error.URLError as e:
@@ -2577,7 +2682,7 @@ class OllamaTranslator(_BaseTranslator):
                     "  ollama list\n"
                     f"  ollama pull {self.model}\n"
                     "Or choose an installed model:\n"
-                    "  getsubtitle translate PATH -l ko --mt-engine ollama --mt-model NAME"
+                    "  getsubtitle translate PATH -l ko --engine ollama --model NAME"
                     f"{detail}"
                 ) from e
             detail = f": {msg[:300]}" if msg else ""
@@ -3096,13 +3201,29 @@ def output_dir(base: Path, media: MediaInfo, season: str, layout: str) -> Path:
     return base / show / season_label
 
 
+def subtitle_quality_flags(file: SubtitleFile) -> tuple[bool, bool]:
+    searchable = " ".join(
+        str(part)
+        for part in [
+            file.name,
+            file.release or "",
+            file.origin or "",
+            file.source_provider or "",
+        ]
+        if part
+    ).lower()
+    hi = bool(re.search(r"\b(?:hi|sdh|cc|hearing[- ]?impaired|closed captions?)\b", searchable))
+    dubbed = bool(re.search(r"\b(?:dubbed|dub)\b", searchable))
+    return hi, dubbed
+
+
 def choose_best(files: list[SubtitleFile], preferred_source: str | None = None) -> SubtitleFile | None:
     if not files:
         return None
     preferred = [".srt", ".ass", ".vtt", ".ssa", ".zip"]
     source = preferred_source.lower() if preferred_source else None
 
-    def score(file: SubtitleFile) -> tuple[int, int, int, int, str]:
+    def score(file: SubtitleFile) -> tuple[int, int, int, int, int, int, str]:
         ext = Path(file.name).suffix.lower()
         searchable = " ".join(
             part
@@ -3117,11 +3238,96 @@ def choose_best(files: list[SubtitleFile], preferred_source: str | None = None) 
         ).lower()
         source_score = 0 if source and (source == file.release_source or source in searchable) else 1 if source else 0
         ai_score = 1 if file.ai else 0
+        hi, dubbed = subtitle_quality_flags(file)
+        hi_score = 1 if hi else 0
+        dubbed_score = 1 if dubbed else 0
         ext_score = preferred.index(ext) if ext in preferred else 99
         provider_score = 0 if file.source_provider in {"opensubtitles", "subdl", "podnapisi"} else 1
-        return source_score, ai_score, ext_score, provider_score, file.name.lower()
+        return source_score, ai_score, hi_score, dubbed_score, ext_score, provider_score, file.name.lower()
 
     return sorted(files, key=score)[0]
+
+
+def provider_debug_record(
+    provider: str,
+    episode: str,
+    language: str,
+    files: list[SubtitleFile],
+    *,
+    error: str | None = None,
+) -> ProviderDebugRecord:
+    lang_counts: dict[str, int] = {}
+    source_counts: dict[str, int] = {}
+    ext_counts: dict[str, int] = {}
+    ai_count = 0
+    hi_count = 0
+    dubbed_count = 0
+    for file in files:
+        lang_tag = file.provider_language or "(no tag)"
+        source_tag = file.source_provider or file.provider or "(no source)"
+        ext = Path(file.name).suffix.lower() or "(none)"
+        lang_counts[lang_tag] = lang_counts.get(lang_tag, 0) + 1
+        source_counts[source_tag] = source_counts.get(source_tag, 0) + 1
+        ext_counts[ext] = ext_counts.get(ext, 0) + 1
+        if file.ai:
+            ai_count += 1
+        hi, dubbed = subtitle_quality_flags(file)
+        if hi:
+            hi_count += 1
+        if dubbed:
+            dubbed_count += 1
+    return ProviderDebugRecord(
+        provider=provider,
+        episode=episode,
+        language=language,
+        count=len(files),
+        language_tags=lang_counts,
+        source_tags=source_counts,
+        extensions=ext_counts,
+        ai_count=ai_count,
+        hi_count=hi_count,
+        dubbed_count=dubbed_count,
+        example=files[0].name if files else "",
+        error=error,
+    )
+
+
+def _format_counts(counts: dict[str, int]) -> str:
+    return ", ".join(f"{k}:{v}" for k, v in sorted(counts.items())) or "-"
+
+
+def print_provider_debug(records: list[ProviderDebugRecord]) -> None:
+    if not records:
+        return
+    print("\nProvider debug:")
+    header = ("Provider", "Ep", "Lang", "Found", "Sources", "Tags", "Fmt", "Flags", "Example/Error")
+    rows = []
+    for r in records:
+        flags = []
+        if r.ai_count:
+            flags.append(f"AI:{r.ai_count}")
+        if r.hi_count:
+            flags.append(f"HI:{r.hi_count}")
+        if r.dubbed_count:
+            flags.append(f"dub:{r.dubbed_count}")
+        rows.append((
+            r.provider,
+            episode_label(r.episode),
+            r.language,
+            str(r.count),
+            _format_counts(r.source_tags),
+            _format_counts(r.language_tags),
+            _format_counts(r.extensions),
+            ",".join(flags) or "-",
+            (r.error or r.example or "-")[:80],
+        ))
+    widths = [len(h) for h in header]
+    for row in rows:
+        widths = [max(widths[i], len(row[i])) for i in range(len(header))]
+    print("  " + "  ".join(header[i].ljust(widths[i]) for i in range(len(header))))
+    print("  " + "  ".join("-" * widths[i] for i in range(len(header))))
+    for row in rows:
+        print("  " + "  ".join(row[i].ljust(widths[i]) for i in range(len(header))))
 
 
 def save_subtitle(sub: SubtitleFile, dest_dir: Path, media: MediaInfo, season: str, episode: str) -> list[Path]:
@@ -3447,6 +3653,83 @@ def _sami_cues_to_srt_cues(cues: list[tuple[int, int, str]]) -> list[SrtCue]:
     return out
 
 
+_ASS_SECTION_RE = re.compile(r"^\s*\[([^\]]+)\]\s*$")
+_ASS_EVENT_RE = re.compile(r"^(Dialogue|Comment)\s*:\s*(.*)$", re.IGNORECASE)
+
+
+def _ass_time_to_srt(value: str) -> str:
+    value = value.strip()
+    m = re.match(r"(?:(\d+):)?(\d{1,2}):(\d{2})(?:[.](\d{1,3}))?$", value)
+    if not m:
+        raise CliError(f"Invalid ASS timestamp: {value!r}")
+    hours = int(m.group(1) or 0)
+    minutes = int(m.group(2))
+    seconds = int(m.group(3))
+    frac = (m.group(4) or "0").ljust(3, "0")[:3]
+    # ASS commonly stores centiseconds; h:mm:ss.cc should become cc0 ms.
+    if len((m.group(4) or "")) == 2:
+        frac = (m.group(4) + "0")[:3]
+    return f"{hours:02d}:{minutes:02d}:{seconds:02d},{frac}"
+
+
+def _ass_clean_text(text: str) -> list[str]:
+    text = re.sub(r"\{[^}]*\}", "", text)
+    text = text.replace(r"\N", "\n").replace(r"\n", "\n").replace(r"\h", " ")
+    text = text.replace("\\N", "\n").replace("\\n", "\n").replace("\\h", " ")
+    return [line.strip() for line in text.split("\n") if line.strip()]
+
+
+def parse_ass(text: str) -> list[SrtCue]:
+    """Parse basic ASS/SSA Events into SrtCue objects.
+
+    This intentionally ignores styling and comments; it extracts Dialogue
+    Start/End/Text fields so downloaded community .ass/.ssa files can be used
+    as merge inputs.
+    """
+    section = ""
+    fields_order: list[str] = []
+    cues: list[SrtCue] = []
+    for raw_line in text.splitlines():
+        line = raw_line.strip("\ufeff")
+        sec = _ASS_SECTION_RE.match(line)
+        if sec:
+            section = sec.group(1).strip().lower()
+            fields_order = []
+            continue
+        if section != "events":
+            continue
+        if line.lower().startswith("format:"):
+            fields_order = [part.strip().lower() for part in line.split(":", 1)[1].split(",")]
+            continue
+        m = _ASS_EVENT_RE.match(line)
+        if not m or m.group(1).lower() == "comment":
+            continue
+        body = m.group(2)
+        if not fields_order:
+            fields_order = [
+                "layer", "start", "end", "style", "name",
+                "marginl", "marginr", "marginv", "effect", "text",
+            ]
+        parts = body.split(",", max(0, len(fields_order) - 1))
+        if len(parts) < len(fields_order):
+            continue
+        data = {field: parts[idx].strip() for idx, field in enumerate(fields_order)}
+        start = data.get("start")
+        end = data.get("end")
+        cue_text = data.get("text", "")
+        if not start or not end or not cue_text:
+            continue
+        try:
+            time_line = f"{_ass_time_to_srt(start)} --> {_ass_time_to_srt(end)}"
+        except CliError:
+            continue
+        text_lines = _ass_clean_text(cue_text)
+        if not text_lines:
+            continue
+        cues.append(SrtCue(index=str(len(cues) + 1), time_line=time_line, text_lines=text_lines))
+    return cues
+
+
 def parse_smi_for_lang(path: Path, lang: str) -> list[SrtCue]:
     """Read a .smi file and return SrtCues for the requested language only.
     Returns an empty list if the language isn't present in the SAMI body.
@@ -3466,6 +3749,7 @@ def read_cues_from_file(path: Path, *, lang_hint: str | None = None) -> list[Srt
     Dispatch by extension:
       .srt        → parse_srt
       .vtt        → parse_vtt (ruby collapsed to 漢字（かんじ）)
+      .ass/.ssa    → parse_ass (Events Dialogue timing/text; styling ignored)
       .smi/.sami  → parse_smi_for_lang (requires lang_hint)
     """
     suffix = path.suffix.lower()
@@ -3473,6 +3757,8 @@ def read_cues_from_file(path: Path, *, lang_hint: str | None = None) -> list[Srt
         return parse_srt(path.read_text(encoding="utf-8-sig", errors="replace"))
     if suffix == ".vtt":
         return parse_vtt(path.read_text(encoding="utf-8-sig", errors="replace"))
+    if suffix in (".ass", ".ssa"):
+        return parse_ass(path.read_text(encoding="utf-8-sig", errors="replace"))
     if suffix in (".smi", ".sami"):
         if not lang_hint:
             raise CliError(
@@ -3482,7 +3768,7 @@ def read_cues_from_file(path: Path, *, lang_hint: str | None = None) -> list[Srt
     raise CliError(
         f"Cannot read subtitles from {path.name}: extension {suffix!r} "
         "not supported. Convert to SRT first with `getsubtitle modify "
-        "--convert smi-to-srt` or `getsubtitle modify --convert vtt-to-srt`."
+        "--convert smi-to-srt` when applicable."
     )
 
 
@@ -4216,7 +4502,7 @@ _EPISODE_PATTERNS = (
 #   "Show.S01E07.es.sdh.srt"      -> ("es", "")
 #   "Show.S01E07.fr.forced.srt"   -> ("fr", "")
 _LANG_FILENAME_PATTERN = re.compile(
-    r"\.([a-z]{2,3})(\.mt)?(?:\.(?:hi|cc|sdh|forced))?\.srt$",
+    r"\.([a-z]{2,3})(\.mt)?(?:\.(?:hi|cc|sdh|forced))?\.(?:srt|vtt|ass|ssa)$",
     re.I,
 )
 # Combined output: hyphen-joined language token before .srt.
@@ -4337,13 +4623,29 @@ def _parse_vtt_filename(name: str) -> tuple[int, int, str, bool] | None:
     return season, episode, m.group(1).lower(), bool(m.group(2))
 
 
+def _parse_ass_filename(name: str) -> tuple[int, int, str, bool] | None:
+    """Like parse_srt_filename but for `<base>.<lang>.ass/.ssa`."""
+    if not name.lower().endswith((".ass", ".ssa")):
+        return None
+    if is_combined_output_name(name) or is_furigana_output_name(name):
+        return None
+    ep = parse_episode_marker(name)
+    if not ep:
+        return None
+    m = _LANG_FILENAME_PATTERN.search(name)
+    if not m:
+        return None
+    season, episode = ep
+    return season, episode, m.group(1).lower(), bool(m.group(2))
+
+
 def scan_subtitle_files_extended(
     paths: list[Path],
     *,
     format_hints: dict[str, str] | None = None,
     include_furigana: bool = False,
 ) -> list[tuple[Path, int, int, str, bool, str]]:
-    """Walk paths and find subtitle files in SRT, VTT, and optionally SAMI.
+    """Walk paths and find subtitle files in SRT, VTT, ASS/SSA, and optionally SAMI.
 
     SRT and VTT use the standard `<base>.<lang>.<ext>` filename convention.
     SAMI files are multi-language internally, so they're only scanned when
@@ -4352,7 +4654,7 @@ def scan_subtitle_files_extended(
     actually contains.
 
     Returns: list[(path, season, episode, lang, is_mt, source_format)]
-    where source_format is one of "srt" | "vtt" | "smi".
+    where source_format is one of "srt" | "vtt" | "ass" | "ssa" | "smi".
     """
     format_hints = format_hints or {}
     out: list[tuple[Path, int, int, str, bool, str]] = []
@@ -4375,6 +4677,22 @@ def scan_subtitle_files_extended(
         if parsed is None:
             continue
         out.append((path, *parsed, "vtt"))
+
+    # ASS/SSA.
+    discovered_ass: list[Path] = []
+    for root in paths:
+        if root.is_file() and root.suffix.lower() in (".ass", ".ssa"):
+            discovered_ass.append(root)
+        elif root.is_dir():
+            discovered_ass.extend(sorted(root.rglob("*.ass")))
+            discovered_ass.extend(sorted(root.rglob("*.ssa")))
+    for path in discovered_ass:
+        if not include_furigana and is_furigana_output_name(path.name):
+            continue
+        parsed = _parse_ass_filename(path.name)
+        if parsed is None:
+            continue
+        out.append((path, *parsed, path.suffix.lower().lstrip(".")))
 
     # SMI — only if a hint requests it (parsing every .smi file is
     # expensive, and the convention is multi-language-internal so we'd
@@ -4408,12 +4726,12 @@ def group_subtitle_files_with_hints(
     best candidate per language using:
 
       1. format_hints[lang] match wins over everything else
-      2. Otherwise format priority: srt > vtt > smi
+      2. Otherwise format priority: srt > vtt > ass/ssa > smi
       3. Within format, non-MT wins over MT
 
     Returns the same shape as group_srts_by_episode."""
     format_hints = format_hints or {}
-    fmt_priority = {"srt": 0, "vtt": 1, "smi": 2}
+    fmt_priority = {"srt": 0, "vtt": 1, "ass": 2, "ssa": 2, "smi": 3}
 
     def score(lang: str, source_format: str, is_mt: bool) -> tuple[int, int]:
         hint = format_hints.get(lang)
@@ -5153,7 +5471,9 @@ def translate_main(argv: list[str]) -> int:
                 rc_total = rc or rc_total
         return rc_total
     args = build_translate_parser().parse_args(argv)
-    explicit_mt_model = args.mt_model if option_was_passed(argv, "--mt-model") else None
+    explicit_mt_model = args.mt_model if (
+        option_was_passed(argv, "--model") or option_was_passed(argv, "--mt-model")
+    ) else None
     if not args.mt_engine:
         raise CliError(
             "translate needs an engine. Pass --mt-engine {argos|ollama|deepl} "
@@ -6190,11 +6510,11 @@ def _rewrite_translate_block(block: list[str]) -> list[str]:
     """Pipeline `--translate ENGINE [opts]` → translate_main argv flags.
 
     ENGINE is the first non-flag token in the block. It's stripped and
-    rewritten as `--mt-engine ENGINE` (with `--mt-model NAME` appended if
+    rewritten as `--engine ENGINE` (with `--model NAME` appended if
     the spec was `engine:model`). Empty string → `--no-mt-engine`.
 
     Other tokens pass through unchanged so existing flags like
-    --mt-source-lang, --force, --dry-run still work.
+    --mt-source, --force, --dry-run still work.
     """
     if not block:
         raise CliError(
@@ -6206,7 +6526,7 @@ def _rewrite_translate_block(block: list[str]) -> list[str]:
     if engine_spec.startswith("-"):
         raise CliError(
             "--translate needs an engine before its options. "
-            "Example: --translate ollama --mt-source-lang en"
+            "Example: --translate ollama --mt-source en"
         )
     engine, model = _parse_engine_spec(engine_spec)
     rest = block[1:]
@@ -6214,9 +6534,9 @@ def _rewrite_translate_block(block: list[str]) -> list[str]:
     if engine == "":
         rewritten += ["--no-mt-engine"]
     else:
-        rewritten += ["--mt-engine", engine]
+        rewritten += ["--engine", engine]
         if model:
-            rewritten += ["--mt-model", model]
+            rewritten += ["--model", model]
     rewritten += rest
     return rewritten
 
@@ -6611,15 +6931,10 @@ def _normalize_merge_langs(value) -> tuple[str, dict[str, str]]:
             lang, _, fmt = entry.partition(":")
             lang = lang.strip().lower()
             fmt = fmt.strip().lower()
-            if fmt in ("ass",):
-                raise CliError(
-                    f"merge :format hint {entry!r} — ASS as a merge input "
-                    "is not yet supported. Use :srt or :vtt."
-                )
-            if fmt not in ("srt", "vtt", "smi"):
+            if fmt not in ("srt", "vtt", "ass", "ssa", "smi"):
                 raise CliError(
                     f"merge :format hint {entry!r}: unknown format {fmt!r}. "
-                    "Use :srt, :vtt, or :smi."
+                    "Use :srt, :vtt, :ass, :ssa, or :smi."
                 )
             langs.append(lang)
             hints[lang] = fmt
@@ -7713,7 +8028,7 @@ _VALID_CONFIG_SECTIONS = ("fetch", "translate", "modify", "merge", "output", "ex
 
 
 def _reject_unknown_sections(raw: dict) -> None:
-    """Reject any top-level section that isn't part of the v1.0 schema.
+    """Reject any top-level section that isn't part of the v1.1 schema.
     Point the user at the example template and `config --show`."""
     unknown = [
         s for s in raw
@@ -8196,16 +8511,19 @@ HELP_MAIN = """\
 getsubtitle — Find and prepare subtitles for language learning.
 
 Quick start:
+  getsubtitle -i                                  # interactive wizard (recommended for first run)
   getsubtitle URL                                 # download from a URL
   getsubtitle merge PATH -l ja,en                 # stack downloaded SRTs
   getsubtitle --config FILE.toml                  # run a saved workflow
 
 Subcommands (each has its own --help):
-  fetch       Download from URL, or scan a folder. (Bare URL works too.)
-  translate   Fill missing-language SRTs via MT (argos / ollama / deepl).
-  modify      Cleanup, romanization (furigana / pinyin / jyutping / hangul / …), SAMI→SRT conversion.
-  merge       Stack 2+ language SRTs into one study file.
-  config      Manage user_settings.toml defaults.
+  interactive   Guided wizard — asks 11 questions, then prints / saves / runs.
+  fetch         Download from URL, or scan a folder. (Bare URL works too.)
+  translate     Fill missing-language SRTs via MT (argos / ollama / deepl).
+  modify        Cleanup, romanization (furigana / pinyin / jyutping / hangul / …), SAMI→SRT conversion.
+  merge         Stack 2+ language SRTs into one study file.
+  config        Manage user_settings.toml defaults.
+  sources       Check provider/source access for your configured API keys.
 
 Pipeline — chain verbs in one call:
   getsubtitle --fetch X --translate ollama --merge -l ja,en
@@ -8223,7 +8541,9 @@ Layered config (lowest → highest priority):
 
 Topic help:
   getsubtitle --help fetch | translate | modify | merge | pipeline
-  getsubtitle --help config | keys | furigana | advanced
+  getsubtitle --help interactive | config | keys | furigana | sources | advanced
+
+New here? Try `getsubtitle -i` for a guided setup wizard.
 """
 
 
@@ -8342,34 +8662,37 @@ Output notes:
     "translate": """\
 Machine-translate missing subtitles.
 
+Not sure which engine to pick? `getsubtitle -i` asks one question and
+checks whether the engine you choose is actually available.
+
 Two ways to use it:
   1. Inside a fetch, as a fallback:
-       getsubtitle URL -l LANGS --mt-engine ENGINE
+       getsubtitle URL -l LANGS --engine ENGINE
      MTs any requested language that fetch couldn't find, sourcing from
      the just-downloaded files.
 
   2. Standalone on an existing folder (no URL, no re-fetch):
-       getsubtitle translate PATH -l LANGS --mt-engine ENGINE
+       getsubtitle translate PATH -l LANGS --engine ENGINE
      Scans PATH for *.srt files and MTs any requested language that's
      missing from each episode's set, sourcing from the best available
      local SRT.
 
 Examples (inline with fetch):
-  getsubtitle URL -l ja,en --mt-engine ollama
-  getsubtitle URL -l en,es --mt-engine deepl
-  getsubtitle URL -l ja --mt-engine ollama --mt-source-lang en
+  getsubtitle URL -l ja,en --engine ollama
+  getsubtitle URL -l en,es --engine deepl
+  getsubtitle URL -l ja --engine ollama --mt-source en
 
 Examples (standalone translate subcommand):
-  getsubtitle translate ~/Movies/Subtitles/MF\\ Ghost -l ja,en --mt-engine argos
-  getsubtitle translate FOLDER -s 1 -e 11 -l en --mt-engine deepl
-  getsubtitle translate FOLDER -l ja,en,es --mt-engine deepl --dry-run
-  getsubtitle translate FOLDER -s 1 -e 1-3 -l en --mt-source-lang ja --mt-engine ollama --force
+  getsubtitle translate ~/Movies/Subtitles/MF\\ Ghost -l ja,en --engine argos
+  getsubtitle translate FOLDER -s 1 -e 11 -l en --engine deepl
+  getsubtitle translate FOLDER -l ja,en,es --engine deepl --dry-run
+  getsubtitle translate FOLDER -s 1 -e 1-3 -l en --mt-source ja --engine ollama --force
 
 Explicit source mapping (per-target):
   # Force en<-ja and es<-en regardless of what auto-pick would do.
-  getsubtitle translate FOLDER -l ja,en,es --mt-engine argos --mt-source-lang en:ja,es:en
+  getsubtitle translate FOLDER -l ja,en,es --engine argos --mt-source en:ja,es:en
   # Inside a fetch, same syntax:
-  getsubtitle URL -l ja,en,es --mt-engine deepl --mt-source-lang en:ja,es:en
+  getsubtitle URL -l ja,en,es --engine deepl --mt-source en:ja,es:en
 
 Engines:
   argos                    Offline translation. Requires argostranslate
@@ -8383,12 +8706,15 @@ Engines:
 Translation options:
   -s, --season N|all       (translate subcommand) season filter
   -e, --episode N|N-M|all  (translate subcommand) episode filter
-  --mt-engine ENGINE       argos, ollama, or deepl. Default: argos
+  --engine ENGINE          argos, ollama, or deepl. Default: argos
                            (via [translate].engine in user_settings.toml).
+                           --mt-engine is still accepted as a compatibility alias.
   --no-mt-engine           Disable MT for this run even when the config
                            has an engine set. Equivalent to engine = "".
-  --mt-model NAME          Ollama model. Default: qwen3:4b
-  --mt-source-lang CODE    Force translation source language (default: auto)
+  --model NAME             Ollama model. Default: qwen3:4b
+                           --mt-model is still accepted as an alias.
+  --mt-source CODE         Force translation source language (default: auto)
+                           --mt-source-lang is still accepted as an alias.
   -o DIR                   (translate subcommand) output directory
   --dry-run                (translate subcommand) show plan, write nothing
   --force                  (translate subcommand) overwrite existing .mt.srt
@@ -8403,10 +8729,13 @@ Notes:
     "en:es" = "llama3.2:3b"
   These model keys are source:target and need quotes. Dash form like
   ja-ko also works without quotes.
-  --mt-model NAME overrides pair-specific config for one command.
+  --model NAME overrides pair-specific config for one command.
 """,
     "modify": """\
 Post-process existing subtitle files on disk.
+
+Hint: `getsubtitle -i` walks you through reading-aid choices (ja, ko,
+zh, yue, th, ar, hi, ru) and the asbplayer preset in plain English.
 
 Usage:
   getsubtitle modify PATH [PATH ...] [options]
@@ -8469,6 +8798,9 @@ Composes with the other subcommands:
     "config": """\
 User settings (non-secret defaults).
 
+Easier first run: `getsubtitle -i` builds a workflow and offers to save
+it. The resulting TOML uses the same schema as user_settings.toml.
+
 Usage:
   getsubtitle config --path        Print the config file path
   getsubtitle config --init        Create the file from the example template
@@ -8501,8 +8833,27 @@ Notes:
   TMDB_API_KEY).
   Run `getsubtitle config --show` to see what's currently active.
 """,
+    "sources": """\
+Check subtitle provider/source access.
+
+Usage:
+  getsubtitle sources --check
+  getsubtitle sources --check --provider wyzie
+
+This is mainly for debugging provider coverage. Wyzie access can vary by
+API key/tier, so this command asks Wyzie which internal sources your key
+can currently use before you decide whether a direct SubDL/OpenSubtitles
+integration is worth adding.
+
+Notes:
+  - Requires a Wyzie key: getsubtitle --set-key wyzie
+  - Does not download subtitles.
+  - Source names and statuses are reported as Wyzie returns them.
+""",
     "fetch": """\
 Fetch subtitles for a URL or for folder(s) on disk.
+
+Not sure what flags you need? `getsubtitle -i` walks you through it.
 
 Usage:
   getsubtitle URL [options]                              (URL form, no subcommand)
@@ -8607,14 +8958,16 @@ Notes:
   - URL form does NOT default to dry-run — it's opt-in via --dry-run.
 """,
     "merge": """\
-Merge multiple language SRT files into one study-friendly cue stack.
+Merge multiple language subtitle files into one study-friendly cue stack.
+
+Quick way to figure out display order + master language: `getsubtitle -i`.
 
 Usage:
   getsubtitle merge PATH -l LANGS [merge options]
   getsubtitle merge PATH --subdirectory [-l LANGS] [merge options]
 
 Without --subdirectory, PATH is one show: scan it recursively for
-single-language SRTs, group by season/episode, write the combined
+single-language SRT/VTT/ASS/SSA/SMI inputs, group by season/episode, write the combined
 .<lang1>-<lang2>.srt files alongside.
 
 With --subdirectory, treat each immediate subdir of PATH as its own
@@ -8652,11 +9005,16 @@ Merge options:
 
 Notes:
   - First language in -l is the timing master unless --master is set.
+  - Input formats: srt, vtt, ass/ssa, smi. Use -l ja:vtt,en,ko:smi when
+    multiple formats exist for the same language.
   - --romanization ja:hiragana inlines Japanese readings before merging.
   - --sync auto|strict|loose controls how strictly cues match.
 """,
     "pipeline": """\
 Chain fetch / translate / modify / merge into one call.
+
+`getsubtitle -i` builds a pipeline for you and offers to save it as a
+TOML you can re-run with `--config FILE.toml`.
 
 Usage (inline form):
   getsubtitle [shared options] \\
@@ -8765,7 +9123,7 @@ Pipeline TOML schema (sections in execution order):
   [merge]
   languages = "ja:vtt, en, ko:smi" # `:format` is an INPUT hint when multiple
                                    # source formats exist on disk for one lang
-                                   # (supports :srt, :vtt, :smi; ASS not yet)
+                                   # (supports :srt, :vtt, :ass, :ssa, :smi)
   master = "ja"
   sync = "strict"                  # auto | strict | loose
   furigana = true                  # inline 漢字（かんじ） into the merged ja line
@@ -8800,6 +9158,55 @@ Naming conventions:
   - Language values accept ISO codes (ja, en, ko, es, fr, zh, de, it, pt, ru)
     OR full names (japanese, english, korean, spanish, french, chinese, …)
   - Boolean true → flag emitted, false → flag omitted
+""",
+    "interactive": """\
+Interactive workflow builder.
+
+  getsubtitle -i
+  getsubtitle --interactive
+  getsubtitle interactive
+
+Walks through a guided Q&A and produces one of three things:
+  1. The equivalent CLI command (copy-paste ready, shell-quoted)
+  2. A reusable TOML workflow (same schema as --config FILE.toml)
+  3. A live run (with a dry-run preview first)
+
+What it asks:
+  Q1.  URL or folder
+  Q2.  Languages to collect (comma list: ja,en,ko,es,…)
+  Q3.  Display order (top → bottom on screen)
+  Q4.  Which language controls timing (default: first displayed)
+  Q5.  Episode scope (URL only): movie / season+episode / all / auto
+  Q6.  MT fallback for missing languages: argos / ollama / deepl / skip
+  Q7.  Reading aids — phonetic guides above the original script:
+         ja:hiragana / ja:romaji            (★ ships now)
+         ko:revised / ko:yale               (☆ wired through; backend coming)
+         zh:marks / zh:numbers              (☆ wired through; backend coming)
+         yue:numbers (jyutping)             (☆ wired through; backend coming)
+         th:royal-thai / ar:ala-lc / etc.   (☆ wired through; backend coming)
+  Q8.  asbplayer preset (single-line + cleanup + ruby VTT)
+  Q9.  Final format: SRT / VTT / ASS
+  Q10. Output folder
+  Q11. Print CLI / Save TOML / Run now / Edit answers
+
+After Q10 the wizard probes your environment for missing pieces — the
+pykakasi package for Japanese furigana, the Ollama daemon if you picked
+ollama MT, the DeepL key if you picked DeepL, missing Jimaku/Wyzie/TMDB
+keys — and walks you through fixing each gap before the final action.
+
+Limitations:
+  - Requires an attached terminal (fails cleanly otherwise).
+  - One language alone skips Q3/Q4 and the merge step.
+  - Korean / Chinese / Cantonese / Thai / Arabic / Hindi / Russian
+    reading-aid backends are not yet shipped; the wizard still accepts
+    and saves them so you can re-run once the backend lands.
+
+Tips:
+  - Press 'q' at any prompt to quit; answers are auto-saved to
+    ~/.cache/getsubtitle/wizard-draft.toml so you can resume later.
+  - The wizard generates the v1.1 canonical names everywhere
+    (--languages, --engine, --mt-source, --romanization, --reading-format
+    on the CLI; mt_source / reading_format in TOML).
 """,
     "advanced": """\
 Advanced and experimental options.
@@ -8852,7 +9259,7 @@ def _is_topic_help_request(argv: list[str]) -> bool:
             return True
         if len(argv) == 1:
             return True
-    if argv[0] in ("merge", "fetch"):
+    if argv[0] in ("merge", "fetch", "sources"):
         if any(a in ("-h", "--help") for a in argv[1:]):
             return True
         if len(argv) == 1:
@@ -8885,6 +9292,9 @@ def _show_topic_help(argv: list[str]) -> int:
     if argv and argv[0] == "config":
         sys.stdout.write(HELP_TOPICS["config"])
         return 0
+    if argv and argv[0] == "sources":
+        sys.stdout.write(HELP_TOPICS["sources"])
+        return 0
     # `--help TOPIC` form: topic is the next non-flag arg.
     topic: str | None = None
     if len(argv) > 1 and not argv[1].startswith("-"):
@@ -8902,12 +9312,721 @@ def _show_topic_help(argv: list[str]) -> int:
     return 2
 
 
+# ═══════════════════════════════════════════════════════════════════════
+# Interactive wizard
+# ═══════════════════════════════════════════════════════════════════════
+# `getsubtitle --interactive` (or `getsubtitle interactive`, or `-i`) walks
+# a new user through a workflow and produces a CLI command, a saved TOML,
+# or a live run. Generated artifacts use the v1.1 canonical names
+# (--languages, --engine, --mt-source, --romanization, --reading-format
+# on the CLI; mt_source / reading_format in TOML).
+#
+# Romanization options exposed by the wizard cover every language in
+# _ROMANIZATION_DEFAULTS — Japanese ships now, Korean / Chinese /
+# Cantonese / Thai / Arabic / Hindi / Russian land per ROADMAP. The
+# wizard accepts those choices and emits the same `--romanization`
+# spec the CLI/TOML already validate; the parser raises a clear
+# "not yet implemented" error at run time for the deferred languages.
+
+_WIZARD_DRAFT_FILENAME = "wizard-draft.toml"
+
+
+# Per-language reading-aid menu. Each row: (lang_iso, spec_value, label,
+# is_shipping). `spec_value` is what we splice into the --romanization
+# spec (e.g. "ja:hiragana"). `is_shipping` controls whether we warn.
+_WIZARD_READING_AID_MENU: list[tuple[str, str, str, bool]] = [
+    ("ja", "ja:hiragana",       "Japanese — hiragana furigana above kanji", True),
+    ("ja", "ja:romaji",         "Japanese — romaji above kanji",            True),
+    ("ko", "ko:revised",        "Korean — Revised Romanization (G2P)",      False),
+    ("ko", "ko:yale",           "Korean — Yale Romanization",               False),
+    ("zh", "zh:marks",          "Mandarin — pinyin with tone marks",        False),
+    ("zh", "zh:numbers",        "Mandarin — pinyin with numbered tones",    False),
+    ("yue", "yue:numbers",      "Cantonese — jyutping with numbered tones", False),
+    ("th", "th:royal-thai",     "Thai — Royal Thai transliteration",        False),
+    ("ar", "ar:ala-lc",         "Arabic — ALA-LC romanization",             False),
+    ("hi", "hi:iast",           "Hindi — IAST transliteration",             False),
+    ("ru", "ru:iso-9",          "Russian — ISO-9 transliteration",          False),
+]
+
+
+class _WizardAbort(Exception):
+    """Raised when the user explicitly bails out (Ctrl-C / `q`)."""
+
+
+def _wizard_is_interactive() -> bool:
+    """True iff both stdin and stdout are a terminal. The wizard cannot
+    run in a pipeline because every question is a blocking prompt."""
+    try:
+        return sys.stdin.isatty() and sys.stdout.isatty()
+    except Exception:
+        return False
+
+
+def _wizard_prompt(question: str, default: str | None = None, *, choices: list[str] | None = None) -> str:
+    """Read one answer. Empty input → default (if any). Trims whitespace.
+
+    `choices` is informational — printed alongside the question; we do
+    NOT enforce it here (callers validate, since some questions accept
+    free-form input on top of suggestions)."""
+    suffix = ""
+    if default is not None:
+        suffix = f" [{default}]"
+    while True:
+        try:
+            raw = input(f"  {question}{suffix} > ").strip()
+        except EOFError as e:
+            raise _WizardAbort("stdin closed") from e
+        if not raw and default is not None:
+            return default
+        if raw.lower() in ("q", "quit", "exit"):
+            raise _WizardAbort("user quit")
+        if raw:
+            return raw
+        print("    (empty answer; please enter something, or 'q' to quit)")
+
+
+def _wizard_yesno(question: str, default: bool = True) -> bool:
+    suffix = "[Y/n]" if default else "[y/N]"
+    while True:
+        ans = _wizard_prompt(question, suffix).strip().lower()
+        if ans in ("y", "yes"):
+            return True
+        if ans in ("n", "no"):
+            return False
+        if ans == suffix:
+            return default
+        # Treat the first character as a guess if the user typed Y/N alone.
+        if ans and ans[0] in "yn":
+            return ans[0] == "y"
+        print("    (please answer y or n)")
+
+
+def _wizard_draft_path() -> Path:
+    base = os.environ.get("XDG_CACHE_HOME") or str(Path.home() / ".cache")
+    return Path(base) / "getsubtitle" / _WIZARD_DRAFT_FILENAME
+
+
+def _wizard_save_draft(state: "_WizardState") -> None:
+    """Persist current answers so an interrupted wizard can resume.
+    Best-effort — never fail the wizard over a cache-write hiccup."""
+    try:
+        path = _wizard_draft_path()
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(state.to_toml(), encoding="utf-8")
+    except OSError:
+        pass
+
+
+def _wizard_clear_draft() -> None:
+    try:
+        _wizard_draft_path().unlink()
+    except (OSError, FileNotFoundError):
+        pass
+
+
+@dataclass
+class _WizardState:
+    """Bag of answers for the interactive wizard. Each field maps to a
+    question and a single emitter rule, so the emitters stay declarative."""
+    source: str = ""                       # Q1: URL or path
+    source_kind: str = ""                  # "url" | "path"
+    languages: list[str] = field(default_factory=list)        # Q2
+    order: list[str] = field(default_factory=list)            # Q3
+    master: str = ""                       # Q4: "" | lang code | "auto"
+    season: str = ""                       # Q5
+    episode: str = ""                      # Q5
+    mt_engine: str = ""                    # Q6: "" | argos | ollama | deepl
+    reading_aids: list[str] = field(default_factory=list)     # Q7: spec entries
+    asbplayer: bool = False                # Q8
+    format: str = ""                       # Q9: srt | vtt | ass
+    output: str = ""                       # Q10
+    final_action: str = "print"            # Q11: print | run | save | edit
+    save_path: str = ""                    # Q11 sub-prompt
+
+    def to_toml(self) -> str:
+        """Serialize as a TOML draft for resume support. Quick-and-dirty
+        — only strings and bools; lists become comma-joined strings."""
+        lines = ["# getsubtitle wizard draft — auto-saved; safe to delete.\n"]
+        lines.append("[wizard]\n")
+        for f in fields(self):
+            v = getattr(self, f.name)
+            if isinstance(v, bool):
+                lines.append(f'{f.name} = {"true" if v else "false"}\n')
+            elif isinstance(v, list):
+                lines.append(f'{f.name} = "{",".join(v)}"\n')
+            else:
+                lines.append(f'{f.name} = "{v}"\n')
+        return "".join(lines)
+
+
+# ─── Wizard questions Q1-Q11 ────────────────────────────────────────────
+
+def _wizard_q1_source(state: _WizardState) -> None:
+    """Q1: URL or PATH. We auto-detect by sniffing for `://`."""
+    print()
+    print("Q1. What should getsubtitle work on?")
+    print("    a) A streaming/catalog URL (IMDb, AniList, Netflix, Crunchyroll, …)")
+    print("    b) A folder or file on disk (your Plex/Movies, ~/Downloads, …)")
+    src = _wizard_prompt("Paste a URL or filesystem path")
+    state.source = src
+    state.source_kind = "url" if _looks_like_url(src) else "path"
+
+
+def _wizard_q2_languages(state: _WizardState) -> None:
+    print()
+    print("Q2. Which subtitle languages do you want to collect?")
+    print("    Examples: ja,en   ja,ko,en,es   japanese,korean,english")
+    raw = _wizard_prompt("Languages (comma-separated)", "ja,en")
+    parts = [p.strip().lower() for p in raw.split(",") if p.strip()]
+    if not parts:
+        raise CliError("interactive: no languages provided.")
+    # Normalise via existing language alias map. Reject unknown codes early
+    # so the user fixes typos here rather than after a 60-second probe.
+    norm: list[str] = []
+    for p in parts:
+        canon = LANGUAGE_ALIASES.get(p, p)
+        if len(canon) > 3 and canon not in LANGUAGE_ALIASES.values():
+            raise CliError(f"interactive: unrecognised language code {p!r}.")
+        norm.append(canon)
+    # de-dupe preserving order
+    seen: set[str] = set()
+    state.languages = [c for c in norm if not (c in seen or seen.add(c))]
+
+
+def _wizard_q3_order(state: _WizardState) -> None:
+    """Confirm display order; only branch into custom-order on 'no'."""
+    if len(state.languages) <= 1:
+        state.order = list(state.languages)
+        return
+    default_order = ",".join(state.languages)
+    print()
+    print("Q3. Subtitle display order (top → bottom on screen).")
+    print(f"    Default: {default_order}")
+    print("    'ja,en' = Japanese on top, English below.")
+    keep = _wizard_yesno(f"Keep order {default_order}?", default=True)
+    if keep:
+        state.order = list(state.languages)
+        return
+    raw = _wizard_prompt("Custom order (comma-separated, top → bottom)", default_order)
+    order = [p.strip().lower() for p in raw.split(",") if p.strip()]
+    order = [LANGUAGE_ALIASES.get(p, p) for p in order]
+    # Must be a permutation of Q2's languages.
+    if set(order) != set(state.languages):
+        raise CliError(
+            "interactive: display order must contain the same languages as Q2 "
+            f"({','.join(state.languages)})."
+        )
+    state.order = order
+
+
+def _wizard_q4_master(state: _WizardState) -> None:
+    if len(state.order) <= 1:
+        state.master = ""
+        return
+    print()
+    print("Q4. Which language controls cue timing (the 'master' track)?")
+    print(f"    a) First displayed — {state.order[0]} (recommended)")
+    print("    b) Japanese (if collected)")
+    print("    c) Custom")
+    pick = _wizard_prompt("Choose a/b/c", "a").lower()
+    if pick.startswith("a"):
+        state.master = ""  # default — first language wins
+    elif pick.startswith("b"):
+        if "ja" not in state.order:
+            print("    (Japanese isn't in your list; falling back to first.)")
+            state.master = ""
+        else:
+            state.master = "ja"
+    elif pick.startswith("c"):
+        raw = _wizard_prompt("Master language code", state.order[0])
+        cand = LANGUAGE_ALIASES.get(raw.lower(), raw.lower())
+        if cand not in state.order:
+            raise CliError(f"interactive: master {cand!r} must be one of {state.order}.")
+        state.master = cand
+    else:
+        state.master = ""
+
+
+def _wizard_q5_scope(state: _WizardState) -> None:
+    """Episode scope — only when source is a URL."""
+    if state.source_kind != "url":
+        state.season = ""
+        state.episode = ""
+        return
+    print()
+    print("Q5. What episode scope?")
+    print("    a) Movie / single item (no season/episode)")
+    print("    b) A specific season + episode (or range)")
+    print("    c) Whole season, every episode (-e all)")
+    print("    d) Auto (let getsubtitle infer)")
+    pick = _wizard_prompt("Choose a/b/c/d", "d").lower()
+    if pick.startswith("a"):
+        state.season = ""
+        state.episode = ""
+    elif pick.startswith("b"):
+        state.season = _wizard_prompt("Season (e.g. 1 or 1-3)", "1")
+        state.episode = _wizard_prompt("Episode (e.g. 1 or 3-5)", "1")
+    elif pick.startswith("c"):
+        state.season = _wizard_prompt("Season (e.g. 1)", "1")
+        state.episode = "all"
+        # Non-anime TV needs TMDB to expand -e all. Heads-up only.
+        if "anilist" not in state.source.lower() and "myanimelist" not in state.source.lower():
+            print("    (Note: -e all on non-anime TV requires a TMDB key. "
+                  "Run `getsubtitle --set-key tmdb` later if needed.)")
+    else:
+        state.season = ""
+        state.episode = ""
+
+
+def _wizard_q6_translate(state: _WizardState) -> None:
+    print()
+    print("Q6. If a language isn't downloadable, what should we do?")
+    print("    a) Skip — accept gaps (no MT)")
+    print("    b) Argos — offline, free, gist-level quality (default)")
+    print("    c) Ollama — offline LLM, good quality (needs daemon + model)")
+    print("    d) DeepL — online, best quality (free tier; needs API key)")
+    pick = _wizard_prompt("Choose a/b/c/d", "a").lower()
+    state.mt_engine = {"a": "", "b": "argos", "c": "ollama", "d": "deepl"}.get(pick[:1], "")
+
+
+def _wizard_q7_reading_aids(state: _WizardState) -> None:
+    """Multi-select reading aids. Defaults to the sensible mode for each
+    collected language (Japanese → hiragana, Korean → Revised, Chinese →
+    tone marks)."""
+    # Filter the menu down to languages the user is actually collecting,
+    # plus a couple of "but you might want it anyway" hints.
+    relevant: list[tuple[str, str, str, bool]] = [
+        row for row in _WIZARD_READING_AID_MENU if row[0] in state.languages
+    ]
+    if not relevant:
+        state.reading_aids = []
+        return
+    print()
+    print("Q7. Reading aids (phonetic guides above/beside the original script).")
+    print("    Pick any combination by number. Empty = no reading aids.")
+    print("    (★ = ships now · ☆ = wired through to CLI/TOML; backend lands per ROADMAP)")
+    for i, (lang, spec, label, shipping) in enumerate(relevant, start=1):
+        mark = "★" if shipping else "☆"
+        print(f"    {i}) {mark} {label}   [{spec}]")
+    raw = _wizard_prompt(
+        "Numbers (comma-separated), or 'none'",
+        "1" if relevant and relevant[0][3] else "none",
+    ).lower()
+    if raw in ("", "none", "0", "no", "skip"):
+        state.reading_aids = []
+        return
+    picks: list[str] = []
+    deferred_seen: list[str] = []
+    for tok in raw.split(","):
+        tok = tok.strip()
+        if not tok.isdigit():
+            continue
+        idx = int(tok) - 1
+        if not (0 <= idx < len(relevant)):
+            continue
+        lang, spec, label, shipping = relevant[idx]
+        picks.append(spec)
+        if not shipping:
+            deferred_seen.append(spec)
+    state.reading_aids = picks
+    if deferred_seen:
+        print()
+        print("    Heads up: backend not implemented yet for: " + ", ".join(deferred_seen))
+        print("    These are accepted in the generated TOML so you can re-run once")
+        print("    the backend ships. Saving / printing the workflow is safe.")
+
+
+def _wizard_q8_asbplayer(state: _WizardState) -> None:
+    print()
+    print("Q8. Optimize output for asbplayer (the common asbplayer setup is")
+    print("    single-line cues + cleaned broadcast noise + ruby VTT for")
+    print("    furigana)?")
+    state.asbplayer = _wizard_yesno("Apply asbplayer preset?", default=True)
+
+
+def _wizard_q9_format(state: _WizardState) -> None:
+    needs_ruby = any(spec.startswith("ja:hiragana") or spec.startswith("ja:furigana")
+                     for spec in state.reading_aids)
+    default = "vtt" if (state.asbplayer and needs_ruby) else "srt"
+    print()
+    print("Q9. Final output format.")
+    print("    a) SRT  — most compatible (default if no ruby/furigana)")
+    print("    b) VTT  — required for asbplayer ruby furigana")
+    print("    c) ASS  — experimental")
+    pick = _wizard_prompt("Choose a/b/c", {"vtt": "b", "srt": "a"}.get(default, "a")).lower()
+    state.format = {"a": "srt", "b": "vtt", "c": "ass"}.get(pick[:1], default)
+    if needs_ruby and state.format != "vtt":
+        print("    Note: hiragana furigana looks best as VTT ruby. "
+              "SRT will fall back to parenthetical 漢字（かんじ） form.")
+    if state.format == "vtt" and state.asbplayer and needs_ruby:
+        print("    Reminder: asbplayer needs Settings > Misc > Subtitles > "
+              "Subtitle HTML = Render.")
+
+
+def _wizard_q10_output(state: _WizardState) -> None:
+    print()
+    print("Q10. Where should the final files go?")
+    print("    a) Default — ~/Movies/Subtitles")
+    print("    b) Same folder as the source files (in-place)")
+    print("    c) Custom folder")
+    pick = _wizard_prompt("Choose a/b/c", "a").lower()
+    if pick.startswith("a"):
+        state.output = "~/Movies/Subtitles"
+    elif pick.startswith("b"):
+        state.output = ""  # default downstream = beside source
+    else:
+        state.output = _wizard_prompt("Output folder", "~/Movies/Subtitles")
+
+
+def _wizard_q11_action(state: _WizardState) -> str:
+    """Final action. Returns one of 'print', 'run', 'save', 'edit'."""
+    print()
+    print("Q11. What now?")
+    print("    a) Print the equivalent CLI command")
+    print("    b) Save as a reusable TOML workflow")
+    print("    c) Run it now (dry-run first, then ask to confirm)")
+    print("    d) Edit a previous answer")
+    pick = _wizard_prompt("Choose a/b/c/d", "a").lower()
+    mapping = {"a": "print", "b": "save", "c": "run", "d": "edit"}
+    return mapping.get(pick[:1], "print")
+
+
+# ─── Orchestrator ──────────────────────────────────────────────────────
+
+# Question dispatch table keeps the orchestrator readable and the test
+# harness focused — tests can call individual questions via this table.
+_WIZARD_STEPS: list[tuple[str, "callable"]] = [
+    ("source",        _wizard_q1_source),
+    ("languages",     _wizard_q2_languages),
+    ("order",         _wizard_q3_order),
+    ("master",        _wizard_q4_master),
+    ("scope",         _wizard_q5_scope),
+    ("translate",     _wizard_q6_translate),
+    ("reading_aids",  _wizard_q7_reading_aids),
+    ("asbplayer",     _wizard_q8_asbplayer),
+    ("format",        _wizard_q9_format),
+    ("output",        _wizard_q10_output),
+]
+
+
+def _run_wizard(state: _WizardState | None = None) -> tuple[_WizardState, str]:
+    """Run Q1-Q10, then loop on Q11 until a final action is chosen.
+    Returns (state, final_action). Caller owns dispatching the action."""
+    state = state or _WizardState()
+    for label, fn in _WIZARD_STEPS:
+        fn(state)
+        _wizard_save_draft(state)
+    while True:
+        action = _wizard_q11_action(state)
+        if action != "edit":
+            state.final_action = action
+            return state, action
+        # Edit flow: list answers, jump to specific question.
+        print()
+        print("Your answers so far:")
+        for i, (label, _) in enumerate(_WIZARD_STEPS, start=1):
+            v = getattr(state, _WIZARD_STEPS[i - 1][0], "")
+            print(f"  Q{i}. {label}: {v!r}")
+        pick = _wizard_prompt("Question number to redo (1-10), or 'done'", "done").lower()
+        if pick.isdigit():
+            idx = int(pick) - 1
+            if 0 <= idx < len(_WIZARD_STEPS):
+                _WIZARD_STEPS[idx][1](state)
+                _wizard_save_draft(state)
+
+
+# ─── Emitters: CLI command + TOML workflow ────────────────────────────
+
+def _wizard_emit_cli(state: _WizardState) -> list[str]:
+    """Build a canonical-form argv list for the wizard's answers.
+
+    Uses the v1.1 long names: --languages, --engine, --mt-source,
+    --romanization (NOT --furigana). Output is suitable for shell-quoting
+    via shlex.join."""
+    argv: list[str] = ["getsubtitle"]
+    # Pipeline form. We always emit --fetch X so URL vs path is captured
+    # uniformly and downstream verbs are explicit.
+    argv += ["--fetch", state.source]
+    if state.source_kind == "url" and state.season:
+        argv += ["--season", state.season]
+    if state.source_kind == "url" and state.episode:
+        argv += ["--episode", state.episode]
+    if state.languages:
+        argv += ["--languages", ",".join(state.languages)]
+    if state.mt_engine:
+        argv += ["--translate", state.mt_engine]
+    # Modify block — only emit when something inside it is on. Saves
+    # noise in the printed command.
+    if state.reading_aids or state.asbplayer:
+        argv.append("--modify")
+        if state.asbplayer:
+            argv += ["--strip-cc-noise", "--single-line"]
+        if state.reading_aids:
+            argv += ["--romanization", ",".join(state.reading_aids)]
+            # Reading-format mirrors the merge format when ruby is in play.
+            if state.format == "vtt":
+                argv += ["--reading-format", "vtt"]
+    # Merge block — only when 2+ languages.
+    if len(state.order) >= 2:
+        argv += ["--merge", "--languages", ",".join(state.order)]
+        if state.master:
+            argv += ["--master", state.master]
+        if state.format:
+            argv += ["--format", state.format]
+    if state.output:
+        argv += ["--output", state.output]
+    return argv
+
+
+def _wizard_emit_cli_string(state: _WizardState) -> str:
+    """Shell-safe one-liner. Uses shlex.quote for paths-with-spaces etc."""
+    import shlex
+    parts = _wizard_emit_cli(state)
+    return " ".join(shlex.quote(p) if (" " in p or any(c in p for c in "$&|'\"")) else p for p in parts)
+
+
+def _wizard_emit_toml(state: _WizardState) -> str:
+    """Build a workflow TOML matching --config FILE.toml schema, using
+    the v1.1 canonical key names (mt_source, reading_format)."""
+    lines: list[str] = []
+    lines.append("# Generated by `getsubtitle --interactive`")
+    lines.append("# Re-run with: getsubtitle --config THIS_FILE.toml\n")
+    # [fetch]
+    lines.append("[fetch]")
+    lines.append(f'source = "{state.source}"')
+    if state.source_kind == "url":
+        if state.season:
+            lines.append(f'season = "{state.season}"')
+        if state.episode:
+            lines.append(f'episode = "{state.episode}"')
+    if state.languages:
+        lines.append(f'languages = "{",".join(state.languages)}"')
+    lines.append("")
+    # [translate]
+    if state.mt_engine:
+        lines.append("[translate]")
+        lines.append(f'engine = "{state.mt_engine}"')
+        lines.append('mt_source = "auto"')
+        lines.append("")
+    # [modify]
+    has_modify = bool(state.reading_aids or state.asbplayer)
+    if has_modify:
+        lines.append("[modify]")
+        if state.asbplayer:
+            lines.append("single_line = true")
+            lines.append("strip_cc_noise = true")
+        if state.reading_aids:
+            lines.append(f'romanization = "{",".join(state.reading_aids)}"')
+            if state.format == "vtt":
+                lines.append('reading_format = "vtt"')
+        lines.append("")
+    # [merge]
+    if len(state.order) >= 2:
+        lines.append("[merge]")
+        lines.append(f'languages = "{",".join(state.order)}"')
+        if state.master:
+            lines.append(f'priority = ["{state.master}"]')
+        lines.append('sync = "auto"')
+        if state.format:
+            lines.append(f'format = "{state.format}"')
+        lines.append("")
+    # [output]
+    if state.output:
+        lines.append("[output]")
+        lines.append(f'target = "{state.output}"')
+        lines.append('layout = "archive"')
+        lines.append("")
+    return "\n".join(lines).rstrip() + "\n"
+
+
+# ─── Dependency probe + auto-setup ─────────────────────────────────────
+
+def _wizard_probe_dependencies(state: _WizardState) -> list[tuple[str, str, str]]:
+    """Inspect the wizard answers and return a list of unmet requirements.
+
+    Each row: (severity, label, fix_hint). severity is "block" (the
+    chosen action will fail without it) or "warn" (might fail at run
+    time but isn't fatal upfront)."""
+    out: list[tuple[str, str, str]] = []
+
+    # Reading aids → pykakasi for Japanese.
+    needs_pykakasi = any(s.startswith("ja:") for s in state.reading_aids)
+    if needs_pykakasi:
+        try:
+            import pykakasi  # noqa: F401
+        except ImportError:
+            out.append(("block", "pykakasi (Japanese reading aids)",
+                        'pip install -e ".[furigana]"  # or: pip install pykakasi'))
+    # Non-Japanese reading aids — backends not shipped yet.
+    deferred = [s for s in state.reading_aids if not s.startswith("ja:")]
+    if deferred:
+        out.append(("warn",
+                    f"reading-aid backend(s) for {', '.join(deferred)}",
+                    "backend not yet implemented; will warn at run time. TOML still saves cleanly."))
+    # MT engines.
+    if state.mt_engine == "argos":
+        try:
+            import argostranslate  # noqa: F401
+        except ImportError:
+            out.append(("block", "argostranslate (offline MT)",
+                        "pip install argostranslate"))
+    if state.mt_engine == "ollama":
+        if not _wizard_ollama_reachable():
+            out.append(("block", "Ollama daemon at http://localhost:11434",
+                        "Start Ollama: https://ollama.com  (then re-run)"))
+    if state.mt_engine == "deepl":
+        if not get_provider_api_key("deepl"):
+            out.append(("block", "DeepL API key", "getsubtitle --set-key deepl"))
+    # Subtitle providers (URL source only).
+    if state.source_kind == "url":
+        wants_ja = "ja" in state.languages
+        if wants_ja and not get_provider_api_key("jimaku"):
+            out.append(("warn", "Jimaku API key (Japanese anime)",
+                        "getsubtitle --set-key jimaku"))
+        wants_non_ja = any(lang != "ja" for lang in state.languages)
+        if wants_non_ja and not get_provider_api_key("wyzie"):
+            out.append(("warn", "Wyzie API key (movies / non-anime TV)",
+                        "getsubtitle --set-key wyzie"))
+        if state.episode == "all" and not get_provider_api_key("tmdb") and \
+           "anilist" not in state.source.lower() and \
+           "myanimelist" not in state.source.lower():
+            out.append(("block", "TMDB API key for `-e all` on non-anime TV",
+                        "getsubtitle --set-key tmdb"))
+    return out
+
+
+def _wizard_ollama_reachable() -> bool:
+    """Quick health-check against the local Ollama daemon. 1-second
+    timeout — we don't want the wizard to hang waiting on a dead port."""
+    try:
+        import urllib.request as _ur
+        req = _ur.Request("http://localhost:11434/api/tags", method="GET")
+        with _ur.urlopen(req, timeout=1) as resp:  # noqa: S310 — localhost only
+            return 200 <= resp.status < 300
+    except Exception:
+        return False
+
+
+def _wizard_run_setup(state: _WizardState, gaps: list[tuple[str, str, str]]) -> None:
+    """Walk the user through fixing each gap. Three options per gap:
+    run the suggested fix, skip, or quit setup. We don't shell out to
+    pip without consent — too easy to install the wrong thing into the
+    wrong environment."""
+    print()
+    print("Setup — let's fill in the missing pieces.")
+    print()
+    for severity, label, fix in gaps:
+        marker = "✗" if severity == "block" else "•"
+        print(f"  {marker} {label}")
+        print(f"      Suggested fix: {fix}")
+        if fix.startswith("getsubtitle --set-key "):
+            provider = fix.split()[-1]
+            if _wizard_yesno(f"    Run `--set-key {provider}` now?", default=True):
+                rc = set_api_keys(provider)
+                if rc == 0:
+                    print("    ✓ key saved")
+        elif fix.startswith("pip install"):
+            print("    (Run this in your shell, then re-launch the wizard.)")
+        else:
+            print("    (Manual step — re-launch the wizard once done.)")
+        print()
+
+
+# ─── Entry point ───────────────────────────────────────────────────────
+
+_WIZARD_INTRO = """
+getsubtitle — interactive workflow builder
+
+I'll ask a few questions, then either print the CLI command, save a
+reusable TOML workflow, or run it now. You can press 'q' at any prompt
+to quit, or Ctrl-C to bail.
+"""
+
+
+def interactive_main(argv: list[str] | None = None) -> int:
+    """Run the wizard. Returns a shell-style exit code.
+    `argv` is accepted (and ignored) so it slots into the same dispatch
+    shape as the other *_main functions."""
+    if not _wizard_is_interactive():
+        raise CliError(
+            "interactive mode needs an attached terminal "
+            "(stdin / stdout must be a tty). Use --config FILE.toml for unattended runs."
+        )
+    print(_WIZARD_INTRO)
+    state = _WizardState()
+    try:
+        state, action = _run_wizard(state)
+    except _WizardAbort:
+        print()
+        print("Cancelled. (Your answers are saved at " + str(_wizard_draft_path()) + ".)")
+        return 130
+
+    # Probe dependencies after the answers are in. Show a status banner
+    # whether anything is missing or not.
+    gaps = _wizard_probe_dependencies(state)
+    if gaps:
+        print()
+        print("Dependency check — issues found:")
+        for sev, label, fix in gaps:
+            marker = "✗ block" if sev == "block" else "• warn "
+            print(f"  {marker}  {label}")
+        blockers = [g for g in gaps if g[0] == "block"]
+        if blockers and _wizard_yesno("Run setup now to fix these?", default=True):
+            _wizard_run_setup(state, gaps)
+
+    cli_string = _wizard_emit_cli_string(state)
+    toml_str = _wizard_emit_toml(state)
+
+    print()
+    print("Generated CLI:")
+    print("  " + cli_string)
+    print()
+    print("Equivalent TOML workflow:")
+    for line in toml_str.splitlines():
+        print("  " + line)
+
+    if action == "print":
+        _wizard_clear_draft()
+        return 0
+    if action == "save":
+        default_name = "getsubtitle-workflow.toml"
+        path_raw = _wizard_prompt("Save to (relative paths OK)", default_name)
+        path = Path(path_raw).expanduser()
+        if path.exists() and not _wizard_yesno(f"{path} exists. Overwrite?", default=False):
+            print("Not saved.")
+            return 0
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(toml_str, encoding="utf-8")
+        print(f"Saved: {path}")
+        _wizard_clear_draft()
+        return 0
+    if action == "run":
+        # Always dry-run first so the user sees what's about to happen.
+        argv_dry = _wizard_emit_cli(state)[1:] + ["--dry-run"]
+        print()
+        print("Dry-run preview:")
+        rc = main(argv_dry)
+        if rc != 0:
+            print("(Dry-run reported issues — review above before running for real.)")
+        if not _wizard_yesno("Run for real?", default=False):
+            print("Stopped before live run. Re-run with the printed CLI when ready.")
+            return 0
+        _wizard_clear_draft()
+        return main(_wizard_emit_cli(state)[1:])
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     raw_argv = list(argv) if argv is not None else sys.argv[1:]
     # No args -> short main help. Friendlier than the old "Missing URL" error.
     if not raw_argv:
         sys.stdout.write(HELP_MAIN)
         return 0
+    # Interactive wizard — both flag form (-i / --interactive) and
+    # subcommand form (`getsubtitle interactive`) route here.
+    if raw_argv[0] in ("interactive",) or raw_argv[0] in ("-i", "--interactive"):
+        # Strip the trigger so interactive_main sees clean argv.
+        return interactive_main(raw_argv[1:])
     # Topic-help dispatch — handled before argparse so we own the help UX.
     if _is_topic_help_request(raw_argv):
         return _show_topic_help(raw_argv)
@@ -8933,6 +10052,8 @@ def main(argv: list[str] | None = None) -> int:
         return fetch_main(raw_argv[1:])
     if raw_argv[0] == "config":
         return config_main(raw_argv[1:])
+    if raw_argv[0] == "sources":
+        return sources_main(raw_argv[1:])
     # URL-form season-range expansion: `--season 1-2` / `-s 1,2,3` →
     # run the URL flow once per expanded season.
     expanded_seasons = _expand_url_form_season_range(raw_argv)
@@ -9111,7 +10232,7 @@ def main(argv: list[str] | None = None) -> int:
 
     if search_work:
         print("\nSearching subtitles:")
-    debug_lines: list[str] = []
+    debug_records: list[ProviderDebugRecord] = []
     for idx, (lang, ep, provider) in enumerate(search_work, start=1):
         progress_bar(idx, len(search_work), "searching", f"episode {ep} {lang} [{provider.name}]", transient=True)
         try:
@@ -9123,15 +10244,10 @@ def main(argv: list[str] | None = None) -> int:
             search_results.append(SearchResult(lang, ep, provider.name, "error", error=str(e)))
             warnings.append(f"{lang} episode {ep}: {e}")
             if args.debug_providers:
-                debug_lines.append(f"  {provider.name} ep{ep} {lang}: ERROR {e}")
+                debug_records.append(provider_debug_record(provider.name, ep, lang, [], error=str(e)))
             continue
         if args.debug_providers:
-            tag_counts: dict[str, int] = {}
-            for f in files:
-                tag = f.provider_language or "(no tag)"
-                tag_counts[tag] = tag_counts.get(tag, 0) + 1
-            tags = ", ".join(f"{tag}={count}" for tag, count in sorted(tag_counts.items())) or "(empty)"
-            debug_lines.append(f"  {provider.name} ep{ep} {lang}: {len(files)} items [{tags}]")
+            debug_records.append(provider_debug_record(provider.name, ep, lang, files))
         best = choose_best(files, preferred_release_source)
         if best:
             if not media.title and best.media_title:
@@ -9159,10 +10275,10 @@ def main(argv: list[str] | None = None) -> int:
                     sd_files = subdivx.files(media, ep)
                 except CliError as e:
                     if args.debug_providers:
-                        debug_lines.append(f"  subdivx ep{ep} es: ERROR {e}")
+                        debug_records.append(provider_debug_record("subdivx", ep, "es", [], error=str(e)))
                     continue
                 if args.debug_providers:
-                    debug_lines.append(f"  subdivx ep{ep} es: {len(sd_files)} items")
+                    debug_records.append(provider_debug_record("subdivx", ep, "es", sd_files))
                 best = choose_best(sd_files, preferred_release_source)
                 if not best:
                     continue
@@ -9196,11 +10312,10 @@ def main(argv: list[str] | None = None) -> int:
                     a7_files, a7_diag = addic7ed.files(media, ep)
                 except CliError as e:
                     if args.debug_providers:
-                        debug_lines.append(f"  addic7ed ep{ep} ko: ERROR {e}")
+                        debug_records.append(provider_debug_record("addic7ed", ep, "ko", [], error=str(e)))
                     continue
                 if args.debug_providers:
-                    suffix = f" ({a7_diag})" if a7_diag and not a7_files else ""
-                    debug_lines.append(f"  addic7ed ep{ep} ko: {len(a7_files)} items{suffix}")
+                    debug_records.append(provider_debug_record("addic7ed", ep, "ko", a7_files, error=a7_diag if a7_diag and not a7_files else None))
                 best = choose_best(a7_files, preferred_release_source)
                 if not best:
                     continue
@@ -9216,10 +10331,8 @@ def main(argv: list[str] | None = None) -> int:
         elif missing_ko_episodes and not media.title:
             warnings.append("ko: Addic7ed fallback skipped — title is unknown, cannot search.")
 
-    if args.debug_providers and debug_lines:
-        print("\nProvider debug:")
-        for line in debug_lines:
-            print(line)
+    if args.debug_providers:
+        print_provider_debug(debug_records)
 
     print_search_results(search_results)
     print_warnings(warnings)
@@ -9260,7 +10373,9 @@ def main(argv: list[str] | None = None) -> int:
     # translating from the closest available downloaded SRT.
     mt_files: list[Path] = []
     if args.mt_engine:
-        explicit_mt_model = args.mt_model if option_was_passed(raw_argv, "--mt-model") else None
+        explicit_mt_model = args.mt_model if (
+            option_was_passed(raw_argv, "--model") or option_was_passed(raw_argv, "--mt-model")
+        ) else None
         translator_cache: dict[tuple[str, str | None], _BaseTranslator] = {}
         # [translate].strip_furigana_before_mt: same defense as translate_main.
         # Default true; only meaningful when an MT source is ja.

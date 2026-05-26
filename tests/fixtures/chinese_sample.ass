@@ -1,0 +1,8 @@
+[Script Info]
+Title: Chinese ASS sample
+
+[Events]
+Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
+Dialogue: 0,0:00:01.00,0:00:03.50,Default,,0,0,0,,{\i1}你好{\i0}\N欢迎来到ASS字幕测试。
+Dialogue: 0,0:00:04.00,0:00:06.00,Default,,0,0,0,,繁體中文也應該保留。
+
