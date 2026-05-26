@@ -61,6 +61,7 @@ on the horizon.
 
 - **Jimaku** — Japanese anime via AniList ID.
 - **Wyzie** — movies / TV by IMDb / TMDB ID. TMDB-ID retry when IMDb miss. Local language filter with cache + fallback.
+- **SubDL** — direct API fallback by IMDb / TMDB ID when a separate `SUBDL_API_KEY` is configured.
 - **Subdivx** (experimental) — Spanish fallback.
 - **Addic7ed** (experimental) — Korean fallback. Localized title-alias search lets anime resolve from any of romanized / English / native Japanese / Korean.
 
@@ -103,7 +104,7 @@ on the horizon.
 - Same section schema as `--config` TOML: `[fetch]`, `[translate]`, `[modify]`, `[merge]`, `[output]`, `[experimental]`.
 - Three-tier TOML loader: stdlib `tomllib` (Python 3.11+) → `tomli` backport → in-tree minimal parser.
 - `getsubtitle config --init / --path / --open / --show` for management.
-- API keys NEVER read from TOML — macOS Keychain when available, otherwise env vars (`JIMAKU_API_KEY`, `WYZIE_API_KEY`, `DEEPL_API_KEY`, `TMDB_API_KEY`).
+- API keys NEVER read from TOML — macOS Keychain when available, otherwise env vars (`JIMAKU_API_KEY`, `WYZIE_API_KEY`, `SUBDL_API_KEY`, `DEEPL_API_KEY`, `TMDB_API_KEY`).
 - Per-provider download headers (so Addic7ed can supply a Referer).
 
 ### Tests

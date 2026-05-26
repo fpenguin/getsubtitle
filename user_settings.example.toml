@@ -28,7 +28,7 @@
 # order: fetch → translate → modify → merge → output → experimental.
 #
 # DO NOT put API keys here. Keys live in macOS Keychain or in environment
-# variables (JIMAKU_API_KEY, WYZIE_API_KEY, DEEPL_API_KEY, TMDB_API_KEY).
+# variables (JIMAKU_API_KEY, WYZIE_API_KEY, SUBDL_API_KEY, DEEPL_API_KEY, TMDB_API_KEY).
 #
 # ───────────────────────────────────────────────────────────────────────
 # Quickstart recipes — pick the closest match and copy that block. The

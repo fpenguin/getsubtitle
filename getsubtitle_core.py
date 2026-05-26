@@ -31,6 +31,8 @@ TMDB_API = "https://api.themoviedb.org/3"
 WIKIDATA_SPARQL_API = "https://query.wikidata.org/sparql"
 WYZIE_API = "https://sub.wyzie.io/search"
 WYZIE_SOURCES_API = "https://sub.wyzie.io/sources"
+SUBDL_API = "https://api.subdl.com/api/v1/subtitles"
+SUBDL_DOWNLOAD_BASE = "https://dl.subdl.com"
 ANIME_IDS_URL = "https://raw.githubusercontent.com/Kometa-Team/Anime-IDs/master/anime_ids.json"
 SUBDIVX_BASE = "https://www.subdivx.com"
 SUBDIVX_SEARCH_URL = SUBDIVX_BASE + "/inc/ajax.php"
@@ -48,6 +50,7 @@ KEYCHAIN_SERVICE = "getsubtitle"
 KEYCHAIN_JIMAKU_ACCOUNT = "jimaku"
 KEYCHAIN_WYZIE_ACCOUNT = "wyzie"
 KEYCHAIN_TMDB_ACCOUNT = "tmdb"
+KEYCHAIN_SUBDL_ACCOUNT = "subdl"
 ASS_BASE_FONT_SIZE = 54
 ASS_FURIGANA_FONT_SIZE = round(ASS_BASE_FONT_SIZE * 0.75)
 ASS_FURIGANA_SCALE_X = round(100 * ASS_BASE_FONT_SIZE / ASS_FURIGANA_FONT_SIZE)
@@ -74,6 +77,13 @@ KEY_PROVIDERS = {
         "account": KEYCHAIN_WYZIE_ACCOUNT,
         "url": "https://store.wyzie.io/redeem",
         "use": "movie and TV subtitles by IMDb/TMDB ID",
+    },
+    "subdl": {
+        "label": "SubDL",
+        "env": "SUBDL_API_KEY",
+        "account": KEYCHAIN_SUBDL_ACCOUNT,
+        "url": "https://subdl.com/panel",
+        "use": "direct SubDL subtitle fallback by IMDb/TMDB ID",
     },
     "deepl": {
         "label": "DeepL",
@@ -601,7 +611,7 @@ def keychain_get(service: str, account: str) -> str | None:
 
 def keychain_set(service: str, account: str, password: str) -> None:
     if not macos_keychain_available():
-        raise CliError("Secure key storage is only implemented for macOS Keychain right now; set JIMAKU_API_KEY in your shell instead.")
+        raise CliError("Secure key storage is only implemented for macOS Keychain right now; set the provider API key in your shell instead.")
     result = subprocess.run(
         ["security", "add-generic-password", "-U", "-s", service, "-a", account, "-w", password],
         check=False,
@@ -705,6 +715,10 @@ def get_jimaku_api_key() -> str | None:
 
 def get_wyzie_api_key() -> str | None:
     return get_provider_api_key("wyzie", prompt_if_missing=True)
+
+
+def get_subdl_api_key(*, prompt_if_missing: bool = False) -> str | None:
+    return get_provider_api_key("subdl", prompt_if_missing=prompt_if_missing)
 
 
 def get_provider_api_key(provider: str, *, prompt_if_missing: bool = False) -> str | None:
@@ -2031,6 +2045,153 @@ class WyzieProvider:
             subs: list[SubtitleFile] = []
             for item in items:
                 sub = self._make_subtitle(item, media, media_id, language)
+                if sub is not None:
+                    subs.append(sub)
+            if subs:
+                return subs
+        return []
+
+
+class SubDLProvider:
+    """Direct SubDL API provider.
+
+    Wyzie can proxy SubDL for some keys, but free/source access varies. This
+    direct provider is used only when a SubDL key is configured and fills gaps
+    after the normal Wyzie/Jimaku pass.
+    """
+
+    name = "subdl"
+
+    def __init__(self, api_key: str | None):
+        self.api_key = api_key
+        self._cache: dict[tuple[str, str, str, str], list[dict]] = {}
+
+    def configured(self) -> bool:
+        return bool(self.api_key)
+
+    def _candidate_ids(self, media: MediaInfo) -> list[tuple[str, str]]:
+        ids: list[tuple[str, str]] = []
+        if media.imdb_id:
+            ids.append(("imdb_id", media.imdb_id))
+        if media.tmdb_id:
+            ids.append(("tmdb_id", media.tmdb_id))
+        return ids
+
+    def _language_param(self, language: str) -> str:
+        # SubDL's docs show upper-case ISO-ish tags (EN, FR). Keep the user's
+        # canonical code but uppercase it; provider_language is still recorded
+        # from the response for diagnostics.
+        return LANGUAGE_ALIASES.get(language.lower(), language.lower()).upper()
+
+    def _build_params_for_id(self, id_name: str, media_id: str, media: MediaInfo, episode: str, language: str) -> dict[str, str]:
+        params: dict[str, str] = {
+            "api_key": self.api_key or "",
+            id_name: media_id,
+            "languages": self._language_param(language),
+            "subs_per_page": "30",
+            "releases": "1",
+            "hi": "1",
+            "unpack": "1",
+        }
+        if media.season not in {"auto", "all"} and episode not in {"auto", "all"}:
+            params["type"] = "tv"
+            params["season_number"] = media.season
+            params["episode_number"] = episode
+        else:
+            params["type"] = "movie"
+        return params
+
+    def _fetch(self, params: dict[str, str]) -> list[dict]:
+        cache_key = (
+            params.get("imdb_id") or params.get("tmdb_id") or "",
+            params.get("season_number") or "",
+            params.get("episode_number") or "",
+            params.get("languages") or "",
+        )
+        if cache_key in self._cache:
+            return self._cache[cache_key]
+        url = SUBDL_API + "?" + urllib.parse.urlencode(params)
+        data = request_json(url)
+        if not isinstance(data, dict):
+            raise CliError("Unexpected SubDL response.")
+        if data.get("status") is False:
+            error = data.get("error") or data.get("message") or "unknown error"
+            raise CliError(f"SubDL: {error}")
+        items = data.get("subtitles") or data.get("results") or []
+        if not isinstance(items, list):
+            raise CliError("Unexpected SubDL subtitles response.")
+        out = [item for item in items if isinstance(item, dict)]
+        self._cache[cache_key] = out
+        return out
+
+    def _download_url(self, raw_url: object) -> str | None:
+        if not isinstance(raw_url, str) or not raw_url:
+            return None
+        if raw_url.startswith("http://") or raw_url.startswith("https://"):
+            return raw_url
+        if raw_url.startswith("/"):
+            return SUBDL_DOWNLOAD_BASE + raw_url
+        return SUBDL_DOWNLOAD_BASE + "/" + raw_url.lstrip("/")
+
+    def _make_subtitle(self, item: dict, media: MediaInfo, episode: str, language: str) -> SubtitleFile | None:
+        sub_url = self._download_url(item.get("url"))
+        if not sub_url:
+            return None
+        fmt = str(item.get("format") or Path(str(item.get("name") or "")).suffix.lstrip(".") or "srt").lower()
+        ext = "." + fmt.lstrip(".")
+        if ext not in SUB_EXTENSIONS and ext not in ARCHIVE_EXTENSIONS:
+            return None
+        name = str(item.get("name") or item.get("release_name") or f"{media.title or 'subdl'}.S{media.season}E{episode}.{language}{ext}")
+        if not Path(name).suffix:
+            name += ext
+        return SubtitleFile(
+            provider=self.name,
+            language=language,
+            name=name,
+            url=sub_url,
+            size=int(item["size"]) if str(item.get("size") or "").isdigit() else None,
+            release_source=normalized_release_source(" ".join(str(v) for v in [item.get("release_name"), item.get("name")] if v)),
+            release=str(item.get("release_name") or ""),
+            origin="subdl",
+            source_provider="subdl",
+            media_title=media.title,
+            provider_language=(str(item.get("language")) if item.get("language") else None),
+        )
+
+    def _flatten_unpacked(self, items: list[dict], media: MediaInfo, episode: str, language: str) -> list[dict]:
+        flattened: list[dict] = []
+        for item in items:
+            unpack_files = item.get("unpack_files")
+            if not isinstance(unpack_files, list):
+                flattened.append(item)
+                continue
+            for unpacked in unpack_files:
+                if not isinstance(unpacked, dict):
+                    continue
+                item_ep = str(unpacked.get("episode") or item.get("episode") or "")
+                if episode not in {"auto", "all"} and item_ep and item_ep != str(episode):
+                    continue
+                item_season = str(unpacked.get("season") or item.get("season") or "")
+                if media.season not in {"auto", "all"} and item_season and item_season != str(media.season):
+                    continue
+                merged = dict(item)
+                merged.update(unpacked)
+                flattened.append(merged)
+        return flattened
+
+    def files(self, media: MediaInfo, episode: str, language: str) -> list[SubtitleFile]:
+        ids = self._candidate_ids(media)
+        if not ids:
+            raise CliError("SubDL needs an IMDb or TMDB ID.")
+        for id_name, media_id in ids:
+            items = self._fetch(self._build_params_for_id(id_name, media_id, media, episode, language))
+            if not items:
+                continue
+            subs: list[SubtitleFile] = []
+            for item in self._flatten_unpacked(items, media, episode, language):
+                if not lang_matches(language, item.get("language"), item.get("name"), item.get("release_name")):
+                    continue
+                sub = self._make_subtitle(item, media, episode, language)
                 if sub is not None:
                     subs.append(sub)
             if subs:
@@ -7538,9 +7699,9 @@ def build_parser() -> argparse.ArgumentParser:
     # Deprecated aliases — kept silently so existing scripts keep working.
     learning.add_argument("--strip-cc-arrows", "--strip-arrows", "-strip-cc-noise", "-strip-cc-arrows", "-strip-arrows", dest="strip_cc_noise", action="store_true", help=argparse.SUPPRESS)
 
-    keys = p.add_argument_group("API Keys", description="Stored in macOS Keychain when available; otherwise set JIMAKU_API_KEY / WYZIE_API_KEY / DEEPL_API_KEY / TMDB_API_KEY in your shell.")
-    keys.add_argument("--set-key", nargs="?", const="", metavar="PROVIDER", help="Guided API key setup: jimaku, wyzie, deepl, tmdb, or all.")
-    keys.add_argument("--reset-key", nargs="?", const="", metavar="PROVIDER", help="Delete saved API key: jimaku, wyzie, deepl, tmdb, or all.")
+    keys = p.add_argument_group("API Keys", description="Stored in macOS Keychain when available; otherwise set JIMAKU_API_KEY / WYZIE_API_KEY / SUBDL_API_KEY / DEEPL_API_KEY / TMDB_API_KEY in your shell.")
+    keys.add_argument("--set-key", nargs="?", const="", metavar="PROVIDER", help="Guided API key setup: jimaku, wyzie, subdl, deepl, tmdb, or all.")
+    keys.add_argument("--reset-key", nargs="?", const="", metavar="PROVIDER", help="Delete saved API key: jimaku, wyzie, subdl, deepl, tmdb, or all.")
     p.add_argument("--reset-jimaku-key", action="store_true", help=argparse.SUPPRESS)
     p.add_argument("--set-jimaku-key", action="store_true", help=argparse.SUPPRESS)
 
@@ -8217,7 +8378,7 @@ _EMBEDDED_EXAMPLE_TEMPLATE = """\
 # getsubtitle user settings — minimal embedded fallback.
 # Schema mirrors the pipeline TOML: fetch → translate → modify → merge → output.
 # Edit any value to change the corresponding default. CLI flags always win.
-# DO NOT put API keys here (set with: getsubtitle --set-key {jimaku|wyzie|deepl|tmdb}).
+# DO NOT put API keys here (set with: getsubtitle --set-key {jimaku|wyzie|subdl|deepl|tmdb}).
 
 [fetch]
 languages = "ja"                  # full names also work: "japanese,english"
@@ -8558,6 +8719,7 @@ Usage:
 Providers:
   jimaku                   Japanese anime subtitles
   wyzie                    Movie and TV subtitles by IMDb/TMDB ID
+  subdl                    Direct SubDL fallback by IMDb/TMDB ID
   deepl                    Machine translation with DeepL
   tmdb                     Movie/TV title → ID resolution (improves Wyzie
                            match rate when only a title is known)
@@ -8567,12 +8729,14 @@ Examples:
   getsubtitle --set-key
   getsubtitle --set-key jimaku
   getsubtitle --set-key wyzie
+  getsubtitle --set-key subdl
   getsubtitle --set-key tmdb
   getsubtitle --reset-key wyzie
 
 Environment variables:
   JIMAKU_API_KEY
   WYZIE_API_KEY
+  SUBDL_API_KEY
   DEEPL_API_KEY
   TMDB_API_KEY
 
@@ -8829,8 +8993,8 @@ copy-paste between this file and any workflow config. In execution order:
 
 Notes:
   API keys are NEVER read from this file — keep them in macOS Keychain or
-  environment variables (JIMAKU_API_KEY, WYZIE_API_KEY, DEEPL_API_KEY,
-  TMDB_API_KEY).
+  environment variables (JIMAKU_API_KEY, WYZIE_API_KEY, SUBDL_API_KEY,
+  DEEPL_API_KEY, TMDB_API_KEY).
   Run `getsubtitle config --show` to see what's currently active.
 """,
     "sources": """\
@@ -8842,11 +9006,12 @@ Usage:
 
 This is mainly for debugging provider coverage. Wyzie access can vary by
 API key/tier, so this command asks Wyzie which internal sources your key
-can currently use before you decide whether a direct SubDL/OpenSubtitles
-integration is worth adding.
+can currently use. If your Wyzie key does not expose SubDL, configure the
+separate direct fallback with `getsubtitle --set-key subdl`.
 
 Notes:
   - Requires a Wyzie key: getsubtitle --set-key wyzie
+  - Direct SubDL fallback is separate: getsubtitle --set-key subdl
   - Does not download subtitles.
   - Source names and statuses are reported as Wyzie returns them.
 """,
@@ -10183,7 +10348,14 @@ def main(argv: list[str] | None = None) -> int:
         print(f"Netflix: {media.netflix_id}")
 
     jimaku_provider = JimakuProvider(get_jimaku_api_key()) if media.anilist_id and "ja" in langs else None
-    wyzie_provider = WyzieProvider(get_wyzie_api_key()) if (media.imdb_id or media.tmdb_id or broad_provider_requested) else None
+    subdl_api_key = get_subdl_api_key(prompt_if_missing=False) if (media.imdb_id or media.tmdb_id) else None
+    wyzie_api_key = (
+        get_provider_api_key("wyzie", prompt_if_missing=not bool(subdl_api_key))
+        if (media.imdb_id or media.tmdb_id or broad_provider_requested)
+        else None
+    )
+    wyzie_provider = WyzieProvider(wyzie_api_key) if (media.imdb_id or media.tmdb_id or broad_provider_requested) else None
+    subdl_provider = SubDLProvider(subdl_api_key) if subdl_api_key else None
     preferred_release_source = None
     if args.release_source == "any":
         preferred_release_source = None
@@ -10210,12 +10382,18 @@ def main(argv: list[str] | None = None) -> int:
         elif wyzie_provider:
             provider = wyzie_provider
         if not provider:
+            if subdl_provider:
+                # Direct SubDL fallback below will handle this pair.
+                continue
             if lang == "ja":
                 warnings.append(f"{lang}: no provider available for this URL. Use AniList/Jimaku for Japanese anime, or an IMDb/TMDB URL with WYZIE_API_KEY for broad lookup.")
             else:
                 warnings.append(f"{lang}: broad provider lookup needs an IMDb/TMDB URL plus WYZIE_API_KEY. Crunchyroll URLs currently only resolve Japanese anime subtitles through Jimaku.")
             continue
         if not provider.configured():
+            if provider.name == "wyzie" and subdl_provider:
+                # Direct SubDL fallback below will handle this pair.
+                continue
             if provider.name == "jimaku":
                 warnings.append(
                     f"{lang}: {provider.name} not configured. Set JIMAKU_API_KEY, "
@@ -10256,6 +10434,49 @@ def main(argv: list[str] | None = None) -> int:
             search_results.append(SearchResult(lang, ep, provider.name, "found", file=best))
         else:
             search_results.append(SearchResult(lang, ep, provider.name, "missing"))
+
+    if subdl_provider and subdl_provider.configured():
+        # Direct SubDL fallback for any requested language/episode not already
+        # found. This helps when a Wyzie key cannot access its proxied SubDL
+        # source, while preserving the normal provider order for users without
+        # a direct SubDL key.
+        found_pairs = {(r.language, r.episode) for r in search_results if r.status == "found"}
+        missing_pairs = [(lang, ep) for lang in langs for ep in episodes if (lang, ep) not in found_pairs]
+        if missing_pairs:
+            print(
+                "\nSubDL: retrying "
+                f"{len(missing_pairs)} missing language/episode pair(s) with direct API."
+            )
+        for idx, (lang, ep) in enumerate(missing_pairs, start=1):
+            progress_bar(idx, len(missing_pairs), "searching", f"episode {ep} {lang} [subdl]", transient=True)
+            try:
+                sd_files = subdl_provider.files(media, ep, lang)
+            except CliError as e:
+                if args.debug_providers:
+                    debug_records.append(provider_debug_record("subdl", ep, lang, [], error=str(e)))
+                if not any(r.language == lang and r.episode == ep for r in search_results):
+                    search_results.append(SearchResult(lang, ep, "subdl", "error", error=str(e)))
+                continue
+            if args.debug_providers:
+                debug_records.append(provider_debug_record("subdl", ep, lang, sd_files))
+            best = choose_best(sd_files, preferred_release_source)
+            if not best:
+                if not any(r.language == lang and r.episode == ep for r in search_results):
+                    search_results.append(SearchResult(lang, ep, "subdl", "missing"))
+                continue
+            replaced = False
+            for idx_r, r in enumerate(search_results):
+                if r.language == lang and r.episode == ep and r.status != "found":
+                    search_results[idx_r] = SearchResult(lang, ep, "subdl", "found", file=best)
+                    replaced = True
+                    break
+            if not replaced:
+                search_results.append(SearchResult(lang, ep, "subdl", "found", file=best))
+            planned.append((lang, ep, best))
+    elif (media.imdb_id or media.tmdb_id) and any(
+        r.status != "found" and r.language != "ja" for r in search_results
+    ):
+        warnings.append("Some broad-provider subtitles were missing. Direct SubDL fallback is available with: getsubtitle --set-key subdl")
 
     if args.experimental_subdivx and "es" in langs:
         # Spanish fallback: try Subdivx for every requested episode where we

@@ -254,11 +254,12 @@ Set keys once, before using providers that need them:
 getsubtitle --set-key                # interactive: pick a provider
 getsubtitle --set-key jimaku         # Japanese anime subtitles (Jimaku)
 getsubtitle --set-key wyzie          # movies / TV (Wyzie)
+getsubtitle --set-key subdl          # direct SubDL fallback when Wyzie misses
 getsubtitle --set-key deepl          # DeepL MT (free 500K chars/month)
 getsubtitle --set-key tmdb           # title → IMDb/TMDB ID resolution + `-e all` for TV
 ```
 
-Keys live in macOS Keychain when available; otherwise set `JIMAKU_API_KEY`, `WYZIE_API_KEY`, `DEEPL_API_KEY`, `TMDB_API_KEY` in your shell.
+Keys live in macOS Keychain when available; otherwise set `JIMAKU_API_KEY`, `WYZIE_API_KEY`, `SUBDL_API_KEY`, `DEEPL_API_KEY`, `TMDB_API_KEY` in your shell.
 
 ## Machine translation engines
 
@@ -312,6 +313,10 @@ To check which internal sources your Wyzie key can access:
 ```sh
 getsubtitle sources --check
 ```
+
+If SubDL does not appear in that list, a direct SubDL key can still improve
+coverage for Korean, Spanish, Chinese, and European-language subtitles:
+`getsubtitle --set-key subdl`.
 
 ## Status
 

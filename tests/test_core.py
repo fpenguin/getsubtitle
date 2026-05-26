@@ -874,6 +874,9 @@ def test_tmdb_in_key_providers_registry():
     assert "tmdb" in kp
     assert kp["tmdb"]["env"] == "TMDB_API_KEY"
     assert kp["tmdb"]["account"] == "tmdb"
+    assert "subdl" in kp
+    assert kp["subdl"]["env"] == "SUBDL_API_KEY"
+    assert kp["subdl"]["account"] == "subdl"
 
 
 def test_wyzie_falls_back_when_broad_call_returns_nothing():
@@ -906,6 +909,155 @@ def test_wyzie_falls_back_when_broad_call_returns_nothing():
     # First call: broad. Second call: per-language fallback.
     assert len(calls) == 2
     assert "language=ko" in calls[1]
+
+
+def test_subdl_provider_builds_imdb_tv_query_and_download_url():
+    subdl_globals = MODULE["SubDLProvider"]._fetch.__globals__
+    saved_request = subdl_globals["request_json"]
+    calls = []
+
+    def fake_request_json(url, **kwargs):
+        calls.append(url)
+        return {
+            "status": True,
+            "subtitles": [
+                {
+                    "language": "KO",
+                    "name": "Test.Show.S01E01.Korean.srt",
+                    "url": "/subtitle/test-show-ko.srt",
+                    "release_name": "Test.Show.S01E01.1080p.WEB",
+                }
+            ],
+        }
+
+    try:
+        subdl_globals["request_json"] = fake_request_json
+        prov = MODULE["SubDLProvider"]("subdl-key")
+        media = MODULE["MediaInfo"](
+            source_url="https://www.imdb.com/title/tt7654321/",
+            provider="imdb",
+            title="Test Show",
+            imdb_id="tt7654321",
+            tmdb_id="1234",
+            season="1",
+        )
+        subs = prov.files(media, "1", "ko")
+    finally:
+        subdl_globals["request_json"] = saved_request
+
+    assert len(subs) == 1
+    assert subs[0].provider == "subdl"
+    assert subs[0].source_provider == "subdl"
+    assert subs[0].url == "https://dl.subdl.com/subtitle/test-show-ko.srt"
+    assert "imdb_id=tt7654321" in calls[0]
+    assert "season_number=1" in calls[0]
+    assert "episode_number=1" in calls[0]
+    assert "languages=KO" in calls[0]
+
+
+def test_subdl_provider_uses_unpacked_episode_files():
+    subdl_globals = MODULE["SubDLProvider"]._fetch.__globals__
+    saved_request = subdl_globals["request_json"]
+
+    def fake_request_json(url, **kwargs):
+        return {
+            "status": True,
+            "subtitles": [
+                {
+                    "language": "EN",
+                    "name": "season-pack.zip",
+                    "url": "/subtitle/season-pack.zip",
+                    "unpack_files": [
+                        {"season": 1, "episode": 1, "name": "Show.S01E01.en.srt", "url": "/subtitle/e1.srt"},
+                        {"season": 1, "episode": 2, "name": "Show.S01E02.en.srt", "url": "/subtitle/e2.srt"},
+                    ],
+                }
+            ],
+        }
+
+    try:
+        subdl_globals["request_json"] = fake_request_json
+        prov = MODULE["SubDLProvider"]("subdl-key")
+        media = MODULE["MediaInfo"](
+            source_url="https://www.themoviedb.org/tv/1234",
+            provider="tmdb",
+            title="Show",
+            tmdb_id="1234",
+            season="1",
+        )
+        subs = prov.files(media, "2", "en")
+    finally:
+        subdl_globals["request_json"] = saved_request
+
+    assert len(subs) == 1
+    assert subs[0].name == "Show.S01E02.en.srt"
+    assert subs[0].url == "https://dl.subdl.com/subtitle/e2.srt"
+
+
+def test_url_form_uses_subdl_fallback_without_wyzie_key():
+    import io
+    import contextlib
+    import os
+
+    main_globals = MODULE["main"].__globals__
+    saved_request = main_globals["request_json"]
+    saved_keychain = main_globals["keychain_get"]
+    saved_subdl_env = os.environ.get("SUBDL_API_KEY")
+    saved_wyzie_env = os.environ.get("WYZIE_API_KEY")
+    calls = []
+
+    def fake_request_json(url, **kwargs):
+        calls.append(url)
+        if "query.wikidata.org" in url:
+            return {
+                "results": {
+                    "bindings": [
+                        {"itemLabel": {"value": "Test Movie"}}
+                    ]
+                }
+            }
+        if "api.subdl.com" in url:
+            return {
+                "status": True,
+                "subtitles": [
+                    {
+                        "language": "KO",
+                        "name": "Movie.Korean.srt",
+                        "url": "/subtitle/movie-ko.srt",
+                    }
+                ],
+            }
+        raise AssertionError(f"unexpected network call: {url}")
+
+    try:
+        os.environ["SUBDL_API_KEY"] = "subdl-key"
+        os.environ.pop("WYZIE_API_KEY", None)
+        main_globals["request_json"] = fake_request_json
+        main_globals["keychain_get"] = lambda service, account: None
+        with _isolated_config(None), contextlib.redirect_stdout(io.StringIO()) as out:
+            rc = MODULE["main"]([
+                "https://www.imdb.com/title/tt7654321/",
+                "-s", "1", "-e", "1", "-l", "ko",
+                "--dry-run",
+            ])
+    finally:
+        main_globals["request_json"] = saved_request
+        main_globals["keychain_get"] = saved_keychain
+        if saved_subdl_env is None:
+            os.environ.pop("SUBDL_API_KEY", None)
+        else:
+            os.environ["SUBDL_API_KEY"] = saved_subdl_env
+        if saved_wyzie_env is None:
+            os.environ.pop("WYZIE_API_KEY", None)
+        else:
+            os.environ["WYZIE_API_KEY"] = saved_wyzie_env
+
+    text = out.getvalue()
+    assert rc == 0
+    assert "SubDL: retrying" in text
+    assert "ko: Found 1/1" in text
+    assert "WYZIE_API_KEY" not in text
+    assert any("api.subdl.com" in call for call in calls)
 
 
 def test_parse_anilist_input_recognises_numeric_id():
