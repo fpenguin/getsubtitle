@@ -62,7 +62,7 @@
 #       [modify]
 #       single_line = false
 #       strip_cc_noise = false
-#       furigana = "off"
+#       # (omit `reading` entirely — no side files generated)
 #       [translate]
 #       engine = ""                  # disable MT fallback
 # ───────────────────────────────────────────────────────────────────────
@@ -130,10 +130,11 @@ model = "qwen3:4b"
 # (`mt_source_lang` accepted as a back-compat alias)
 mt_source = "auto"
 
-# Strip inline 漢字（かんじ） readings from ja source cues before sending
-# them to the translator. Without this, translators see the readings as
-# extra Japanese text and translate them as duplicates. Default: true.
-strip_furigana_before_mt = true
+# Strip inline reading annotations (e.g. 漢字（かんじ） for ja,
+# 한국어（hangugeo） for ko) from source cues before sending to the
+# translator. Without this, the engine sees the readings as duplicate
+# content and re-translates them. Default: true.
+strip_reading_before_mt = true
 
 
 [translate.ollama_models]
@@ -177,24 +178,31 @@ single_line = true
 # Default: true.
 strip_cc_noise = true
 
-# Japanese reading helper. Tristate:
-#   "off"       — don't generate furigana side files
-#   "hiragana"  — 漢字（かんじ）  ← Japanese learners typically want this
-#   "romaji"    — 漢字（kanji）  ← absolute beginners
-# Default: "hiragana"
-furigana = "hiragana"
+# Reading-aid SPEC (the v1.4 umbrella covering ja / ko / zh / and the
+# languages whose backends ship per the ROADMAP). Comma list of
+# LANG:MODE pairs. Examples:
+#   reading = "ja:hiragana"                        Japanese furigana above kanji
+#   reading = "ja:katakana"                        Japanese katakana above kanji
+#   reading = "ja:romaji"                          Japanese romaji above kanji
+#   reading = "ko:revised"                         Korean Revised Romanization
+#   reading = "ko:yale"                            Korean Yale Romanization
+#   reading = "zh:marks"                           Mandarin pinyin with tones
+#   reading = "ja:hiragana,ko:revised,zh:marks"   Multi-language learners
+#   reading = "ja:hiragana|romaji"                 pipe = both side files
+# Uncomment to opt in (no default — the wizard sets this for you):
+# reading = "ja:hiragana"
 
-# Which file formats to generate for furigana side files. One of:
+# Which file formats to generate for the reading-aid side files. One of:
 #   "srt"    — broadly compatible, inline parenthetical readings.
 #              Safest fallback. One file per episode.
-#   "vtt"    — ruby <ruby><rt> markup. Renders true furigana in asbplayer
-#              when Settings > Misc > Subtitles > Subtitle HTML = Render.
+#   "vtt"    — ruby <ruby><rt> markup. Renders true furigana / pinyin in
+#              asbplayer when Settings > Misc > Subtitles > Subtitle HTML =
+#              Render.
 #   "ass"    — stacked-line ASS. Experimental; player support varies.
 #   "all"    — generate all three (srt + ass + vtt) — useful when you
 #              want different formats for different downstream uses.
 # Comma-lists also work: "srt,vtt"
 # Default: "srt"
-# (`furigana_output_format` and `format` are accepted as back-compat aliases)
 reading_format = "srt"
 
 
@@ -233,10 +241,11 @@ preserve_lines = false
 # Default: [] (use first language in -l)
 priority = []
 
-# Inline 漢字（かんじ） readings onto the ja line in the merged output.
-# Uses the mode from [modify].furigana. Turn off if you don't want
-# readings in the stacked file. Default: true.
-furigana = true
+# Inline per-language readings (e.g. 漢字（かんじ） for ja, 한국어（hangugeo）
+# for ko, 你好（nǐ hǎo） for zh) onto the matching language line in the
+# merged output. Uses the SPEC from [modify].reading. Turn off if you
+# don't want readings in the stacked file. Default: true.
+reading = true
 
 
 # ─── [output] ─── where files go and global format defaults ────────────

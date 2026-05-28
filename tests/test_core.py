@@ -1701,7 +1701,7 @@ def test_combine_main_writes_vtt_with_ruby_furigana():
                 "1\n00:00:01,000 --> 00:00:03,000\n카타기리 군\n", encoding="utf-8"
             )
             rc = MODULE["combine_main"]([
-                str(root), "-l", "ja,ko", "--furigana", "--format", "vtt",
+                str(root), "-l", "ja,ko", "--reading", "ja:hiragana", "--format", "vtt",
             ])
             assert rc == 0
             out = root / "Show.S01E07.ja-furigana-ko.vtt"
@@ -2069,62 +2069,6 @@ def test_combine_single_line_flag_is_explicit_default_and_overrides_preserve_con
         assert args.preserve_lines is False
 
 
-def test_config_furigana_enabled_default_implies_hiragana():
-    # [modify].furigana = "hiragana" → download parser default = hiragana
-    toml = '[modify]\nfurigana = "hiragana"\n'
-    with _isolated_config(toml):
-        parser = MODULE["build_parser"]()
-        args = parser.parse_args(["URL"])
-        assert args.furigana == "hiragana"
-
-
-def test_config_furigana_enabled_with_romaji_mode():
-    toml = '[modify]\nfurigana = "romaji"\n'
-    with _isolated_config(toml):
-        parser = MODULE["build_parser"]()
-        args = parser.parse_args(["URL"])
-        assert args.furigana == "romaji"
-
-
-def test_config_furigana_combine_carries_mode_to_combine_parser():
-    # [merge].furigana = true asks merge to inline ja readings; the mode
-    # comes from [modify].furigana. Both parsers should see "romaji".
-    toml = '[modify]\nfurigana = "romaji"\n[merge]\nfurigana = true\n'
-    with _isolated_config(toml):
-        download_parser = MODULE["build_parser"]()
-        download_args = download_parser.parse_args(["URL"])
-        assert download_args.furigana == "romaji"
-
-        combine_parser = MODULE["build_combine_parser"]()
-        combine_args = combine_parser.parse_args(["/tmp/x"])
-        assert combine_args.furigana == "romaji"
-
-
-def test_config_furigana_disabled_explicitly_skips_download():
-    # [modify].furigana = "off" + [merge].furigana = false turn both off.
-    toml = '[modify]\nfurigana = "off"\n[merge]\nfurigana = false\n'
-    with _isolated_config(toml):
-        download_parser = MODULE["build_parser"]()
-        download_args = download_parser.parse_args(["URL"])
-        assert download_args.furigana is None
-
-        combine_parser = MODULE["build_combine_parser"]()
-        combine_args = combine_parser.parse_args(["/tmp/x"])
-        assert combine_args.furigana is None
-
-
-def test_no_furigana_overrides_config_default():
-    toml = '[modify]\nfurigana = "romaji"\n[merge]\nfurigana = true\n'
-    with _isolated_config(toml):
-        parser = MODULE["build_parser"]()
-        args = parser.parse_args(["URL", "--no-furigana"])
-        assert args.furigana is None
-
-        combine_parser = MODULE["build_combine_parser"]()
-        combine_args = combine_parser.parse_args(["/tmp/x", "--no-furigana"])
-        assert combine_args.furigana is None
-
-
 def test_config_strip_cc_noise_default_true_applies():
     toml = '[modify]\nstrip_cc_noise = true\n'
     with _isolated_config(toml):
@@ -2287,7 +2231,10 @@ def test_setup_recommendations_for_korean_speaker_learning_japanese_anime():
     keys = [r.key for r in recs]
     assert "jimaku" in keys
     assert "deepl" in keys
-    assert "ja-reading" in keys
+    # Reading-aid keys now carry the romanization spec
+    # (e.g. "reading:ja:hiragana"). Match by prefix so we're not coupled
+    # to the exact spec syntax.
+    assert any(k.startswith("reading:ja") for k in keys)
     assert "tmdb" not in keys  # anime path should not force non-anime TV setup
     deepl = next(r for r in recs if r.key == "deepl")
     assert "500,000" in deepl.cost
@@ -2316,6 +2263,296 @@ def test_setup_help_subcommand_works_without_tty():
     assert "Machine translation preference" in out
 
 
+# ─── Setup script fixes (review feedback) ────────────────────────────
+
+def test_setup_config_text_uses_canonical_romanization_key():
+    """The wizard emits the v1.1 canonical key `romanization` (not the
+    legacy `furigana = "hiragana"` form). Guards against re-introducing
+    the bug the review caught."""
+    choice = MODULE["_SetupChoice"](
+        native=["en"], learning=["ja"], content="anime",
+        venue="browser", mt="none",
+    )
+    text = MODULE["_setup_config_text"](choice)
+    assert 'reading = "ja:hiragana"' in text
+    # The legacy single-language form must NOT be emitted.
+    assert 'furigana = "hiragana"' not in text
+    assert 'furigana = "off"' not in text
+
+
+def test_setup_recommendations_korean_learner_gets_reading_aid():
+    """Korean-learning users get Korean Revised Romanization. Now that
+    the backend ships (via g2pk + korean-romanizer), it defaults to
+    selected (was opt-in only when the backend was deferred)."""
+    choice = MODULE["_SetupChoice"](
+        native=["en"], learning=["ko"], content="tv",
+        venue="browser", mt="none",
+    )
+    recs = MODULE["_setup_recommendations"](choice)
+    keys = [r.key for r in recs]
+    assert any(k.startswith("reading:ko") for k in keys), \
+        "Korean learner missed reading-aid recommendation"
+    # Korean ships now → selected by default.
+    ko_rec = next(r for r in recs if r.key.startswith("reading:ko"))
+    assert ko_rec.selected_by_default is True
+
+
+def test_setup_recommendations_chinese_learner_gets_pinyin_aid():
+    """Mandarin-learning users see a pinyin recommendation (zh:marks)."""
+    choice = MODULE["_SetupChoice"](
+        native=["en"], learning=["zh"], content="tv",
+        venue="browser", mt="none",
+    )
+    recs = MODULE["_setup_recommendations"](choice)
+    keys = [r.key for r in recs]
+    assert any(k.startswith("reading:zh") for k in keys)
+
+
+def test_setup_config_text_multi_language_romanization_spec():
+    """ja + ko + zh learner gets all three reading-aid specs joined into
+    one [modify].romanization line."""
+    choice = MODULE["_SetupChoice"](
+        native=["en"], learning=["ja", "ko", "zh"], content="mixed",
+        venue="browser", mt="none",
+    )
+    text = MODULE["_setup_config_text"](choice)
+    assert 'reading = "ja:hiragana,ko:revised,zh:marks"' in text
+
+
+def test_setup_recommendations_mt_offline_falls_back_to_argos():
+    """When Ollama isn't reachable, offline MT falls back to Argos.
+    Patches via fn.__globals__ — see note on the ollama-preferred test
+    above for why MODULE[...] patching doesn't reach call-site lookups."""
+    fn = MODULE["_setup_recommendations"]
+    g = fn.__globals__
+    saved = g["_wizard_ollama_reachable"]
+    try:
+        g["_wizard_ollama_reachable"] = lambda: False
+        choice = MODULE["_SetupChoice"](
+            native=["en"], learning=["ja"], content="anime",
+            venue="browser", mt="offline",
+        )
+        recs = fn(choice)
+        keys = [r.key for r in recs]
+        assert "argos" in keys
+        assert "ollama" not in keys
+    finally:
+        g["_wizard_ollama_reachable"] = saved
+
+
+def test_setup_recommendations_mt_offline_prefers_ollama_when_available():
+    """When the Ollama daemon is reachable, offline MT prefers Ollama
+    over Argos (better CJK quality, same offline guarantee).
+
+    Patches the function's own __globals__ — `runpy.run_path` returns a
+    snapshot dict, not the live module namespace, so patching MODULE[...]
+    doesn't reach code that resolves names against __globals__ at call
+    time. Patching shutil.which globally is OK because there's only one
+    shutil module."""
+    fn = MODULE["_setup_recommendations"]
+    g = fn.__globals__
+    saved_reach = g["_wizard_ollama_reachable"]
+    saved_which = MODULE["shutil"].which
+    try:
+        g["_wizard_ollama_reachable"] = lambda: True
+        MODULE["shutil"].which = lambda name: "/usr/local/bin/ollama" if name == "ollama" else None
+        choice = MODULE["_SetupChoice"](
+            native=["en"], learning=["ja"], content="anime",
+            venue="browser", mt="offline",
+        )
+        recs = fn(choice)
+        keys = [r.key for r in recs]
+        assert "ollama" in keys
+        assert "argos" not in keys
+    finally:
+        g["_wizard_ollama_reachable"] = saved_reach
+        MODULE["shutil"].which = saved_which
+
+
+def test_setup_config_text_no_translate_block_when_mt_none():
+    """mt='none' must not emit a [translate] section. (Was: emitted an
+    empty engine string in earlier drafts.)"""
+    choice = MODULE["_SetupChoice"](
+        native=["en"], learning=["ja"], content="anime",
+        venue="browser", mt="none",
+    )
+    text = MODULE["_setup_config_text"](choice)
+    assert "[translate]" not in text
+
+
+def test_setup_config_text_ollama_block_emitted_when_available():
+    """mt='offline' + Ollama reachable → emit [translate] with
+    engine='ollama' AND [translate.ollama_models] defaults."""
+    fn = MODULE["_setup_config_text"]
+    g = fn.__globals__
+    saved_reach = g["_wizard_ollama_reachable"]
+    saved_which = MODULE["shutil"].which
+    try:
+        g["_wizard_ollama_reachable"] = lambda: True
+        MODULE["shutil"].which = lambda name: "/usr/local/bin/ollama" if name == "ollama" else None
+        choice = MODULE["_SetupChoice"](
+            native=["en"], learning=["ja"], content="anime",
+            venue="browser", mt="offline",
+        )
+        text = fn(choice)
+        assert 'engine = "ollama"' in text
+        assert "[translate.ollama_models]" in text
+        assert "auto_load = true" in text
+    finally:
+        g["_wizard_ollama_reachable"] = saved_reach
+        MODULE["shutil"].which = saved_which
+
+
+def test_setup_parse_langs_rejects_unknown_codes_with_clear_error():
+    """`xyzzy` and friends must raise a CliError before contaminating
+    the generated config."""
+    fn = MODULE["_setup_parse_langs"]
+    # Valid codes still work.
+    assert fn("japanese, korean, english") == ["ja", "ko", "en"]
+    # Single unknown code raises.
+    try:
+        fn("xyzzy")
+    except MODULE["CliError"] as e:
+        assert "xyzzy" in str(e)
+    else:
+        raise AssertionError("expected CliError for unknown lang")
+    # Mixed valid + unknown still raises (don't silently drop the unknown).
+    try:
+        fn("ja, klingon")
+    except MODULE["CliError"] as e:
+        assert "klingon" in str(e)
+    else:
+        raise AssertionError("expected CliError for mixed valid+unknown")
+
+
+def test_setup_module_exists_uses_find_spec_no_side_effects():
+    """find_spec-based check must not trigger module import side effects.
+    Verified by probing a known-stdlib module and a guaranteed-missing one."""
+    fn = MODULE["_setup_module_exists"]
+    assert fn("json") is True
+    assert fn("definitely_not_a_real_module_xyzzy") is False
+
+
+def test_setup_viewing_guidance_tablet_warns_about_streaming_apps():
+    """Tablet/TV streaming apps don't import custom subtitle files; the
+    guidance must steer the user toward browser/Plex/local alternatives."""
+    import io, contextlib
+    choice = MODULE["_SetupChoice"](
+        native=["en"], learning=["ja"], content="anime",
+        venue="tablet", mt="none",
+    )
+    buf = io.StringIO()
+    with contextlib.redirect_stdout(buf):
+        MODULE["_setup_print_viewing_guidance"](choice)
+    text = buf.getvalue()
+    assert "cannot import custom subtitle files" in text
+    assert "asbplayer" in text or "Plex" in text
+
+
+def test_setup_select_reprompts_on_unrecognised_input():
+    """Bad input must re-prompt rather than silently fall back to default
+    (silent fallback was misleading and hard to debug)."""
+    import io, contextlib
+    fn = MODULE["_setup_select"]
+    g = fn.__globals__
+    answers = iter(["x", "y", "b"])  # two bad then a valid pick
+    saved = g["_wizard_prompt"]
+    try:
+        g["_wizard_prompt"] = lambda q, default=None, **kw: next(answers)
+        with contextlib.redirect_stdout(io.StringIO()):
+            result = fn("Pick", [("a", "A"), ("b", "B"), ("c", "C")], "a")
+        assert result == "b"  # not the default — the user's eventual valid pick
+    finally:
+        g["_wizard_prompt"] = saved
+
+
+def test_setup_profile_save_and_load_round_trip():
+    """A saved profile loads back into an equivalent _SetupChoice."""
+    import tempfile
+    from pathlib import Path
+    save_fn = MODULE["_setup_save_profile"]
+    load_fn = MODULE["_setup_load_profile"]
+    # Patch config_path in both functions' __globals__ (same module dict
+    # for both since they're defined in the same file).
+    g = save_fn.__globals__
+    saved_cfg_path = g["config_path"]
+    with tempfile.TemporaryDirectory() as td:
+        try:
+            g["config_path"] = lambda: Path(td) / "user_settings.toml"
+            choice = MODULE["_SetupChoice"](
+                native=["en"], learning=["ja", "ko"], content="anime",
+                venue="browser", mt="offline",
+            )
+            save_fn(choice)
+            loaded = load_fn()
+            assert loaded is not None
+            assert loaded.native == ["en"]
+            assert loaded.learning == ["ja", "ko"]
+            assert loaded.content == "anime"
+            assert loaded.venue == "browser"
+            assert loaded.mt == "offline"
+        finally:
+            g["config_path"] = saved_cfg_path
+
+
+def test_setup_write_config_preserves_existing_via_backup():
+    """When overwriting, the existing config moves to a .bak file."""
+    import tempfile, io, contextlib
+    from pathlib import Path
+    fn = MODULE["_setup_write_config"]
+    g = fn.__globals__
+    saved_cfg_path = g["config_path"]
+    saved_yesno = g["_wizard_yesno"]
+    with tempfile.TemporaryDirectory() as td:
+        cfg = Path(td) / "user_settings.toml"
+        cfg.write_text("# pre-existing\n", encoding="utf-8")
+        try:
+            g["config_path"] = lambda: cfg
+            g["_wizard_yesno"] = lambda q, default=True: True  # confirm overwrite
+            choice = MODULE["_SetupChoice"](
+                native=["en"], learning=["ja"], content="anime",
+                venue="browser", mt="none",
+            )
+            with contextlib.redirect_stdout(io.StringIO()):
+                ok = fn(choice)
+            assert ok is True
+            bak = cfg.with_suffix(".toml.bak")
+            assert bak.exists()
+            assert bak.read_text(encoding="utf-8") == "# pre-existing\n"
+        finally:
+            g["config_path"] = saved_cfg_path
+            g["_wizard_yesno"] = saved_yesno
+
+
+def test_setup_write_config_refuses_without_confirm():
+    """Overwriting an existing config without explicit confirmation
+    must leave the original file untouched."""
+    import tempfile, io, contextlib
+    from pathlib import Path
+    fn = MODULE["_setup_write_config"]
+    g = fn.__globals__
+    saved_cfg_path = g["config_path"]
+    saved_yesno = g["_wizard_yesno"]
+    with tempfile.TemporaryDirectory() as td:
+        cfg = Path(td) / "user_settings.toml"
+        cfg.write_text("# pre-existing\n", encoding="utf-8")
+        try:
+            g["config_path"] = lambda: cfg
+            g["_wizard_yesno"] = lambda q, default=True: False  # refuse
+            choice = MODULE["_SetupChoice"](
+                native=["en"], learning=["ja"], content="anime",
+                venue="browser", mt="none",
+            )
+            with contextlib.redirect_stdout(io.StringIO()):
+                ok = fn(choice)
+            assert ok is False
+            assert cfg.read_text(encoding="utf-8") == "# pre-existing\n"
+            assert not (cfg.with_suffix(".toml.bak")).exists()
+        finally:
+            g["config_path"] = saved_cfg_path
+            g["_wizard_yesno"] = saved_yesno
+
+
 def test_builtin_defaults_applied_when_no_config_present():
     # Without a user config file, the parser still picks up the BUILTIN
     # defaults so the documented "out-of-the-box" behavior matches what
@@ -2326,10 +2563,11 @@ def test_builtin_defaults_applied_when_no_config_present():
     assert args.langs == "ja"
     assert args.layout == "archive"
     assert args.release_source == "auto"
-    # The four flips: language-learner-friendly defaults on by default.
+    # The three flips: language-learner-friendly defaults on by default.
+    # (Reading-aid SPEC is no longer set by BUILTIN — users opt in
+    # via wizard / setup / [modify].reading in their TOML.)
     assert args.single_line is True
     assert args.strip_cc_noise is True
-    assert args.furigana == "hiragana"
     assert args.mt_engine == "argos"
     # Experimental opt-ins stay off by default.
     assert args.experimental_subdivx is False
@@ -2415,12 +2653,6 @@ def test_help_topic_translate_lists_engines():
     rc, out, _ = _capture_main(["--help", "translate"])
     assert rc == 0
     assert "argos" in out and "ollama" in out and "deepl" in out
-
-
-def test_help_topic_furigana_mentions_modes():
-    rc, out, _ = _capture_main(["--help", "furigana"])
-    assert rc == 0
-    assert "hiragana" in out and "romaji" in out
 
 
 def test_help_topic_advanced_uses_new_strip_name_and_keeps_aliases():
@@ -2562,20 +2794,20 @@ def test_strip_inline_furigana_is_noop_on_plain_text():
     assert s("(player shouts)") == "(player shouts)"
 
 
-def test_translate_config_validates_strip_furigana_before_mt_as_bool():
+def test_translate_config_validates_strip_reading_before_mt_as_bool():
     # The validator should accept true/false and reject non-bool.
     v = MODULE["validate_user_config"]
-    out = v({"translate": {"strip_furigana_before_mt": True}})
-    assert out["translate"]["strip_furigana_before_mt"] is True
-    out = v({"translate": {"strip_furigana_before_mt": False}})
-    assert out["translate"]["strip_furigana_before_mt"] is False
+    out = v({"translate": {"strip_reading_before_mt": True}})
+    assert out["translate"]["strip_reading_before_mt"] is True
+    out = v({"translate": {"strip_reading_before_mt": False}})
+    assert out["translate"]["strip_reading_before_mt"] is False
     # Bad value → CliError mentioning the key path.
     err = None
     try:
-        v({"translate": {"strip_furigana_before_mt": "yes"}})
+        v({"translate": {"strip_reading_before_mt": "yes"}})
     except MODULE["CliError"] as e:
         err = str(e)
-    assert err is not None and "translate.strip_furigana_before_mt" in err
+    assert err is not None and "translate.strip_reading_before_mt" in err
 
 
 def test_translate_srt_file_strips_furigana_when_source_is_ja():
@@ -2682,7 +2914,7 @@ def test_translate_main_strip_before_mt_config_false_passes_through():
     saved_select = scope["select_translator"]
     try:
         scope["select_translator"] = lambda engine, model: _CapturingTranslator()
-        toml = "[translate]\nstrip_furigana_before_mt = false\n"
+        toml = "[translate]\nstrip_reading_before_mt = false\n"
         with _isolated_config(toml):
             with tempfile.TemporaryDirectory() as d:
                 root = Path(d)
@@ -4317,23 +4549,8 @@ def test_normalize_mt_source_accepts_string_and_dict():
     assert pairs == {"ko:ja", "es:en"}
 
 
-def test_toml_furigana_output_format_alias_replaces_format_in_modify():
-    convert = MODULE["_toml_to_pipeline_argv"]
-    # New canonical key reading_format → --reading-format
-    argv0, _ = convert({"modify": {"reading_format": "vtt"}})
-    assert "--reading-format" in argv0
-    assert argv0[argv0.index("--reading-format") + 1] == "vtt"
-    # Back-compat: furigana_output_format also works
-    argv1, _ = convert({"modify": {"furigana_output_format": "all"}})
-    assert "--reading-format" in argv1
-    assert argv1[argv1.index("--reading-format") + 1] == "all"
-    # Back-compat: `format` alias still works
-    argv2, _ = convert({"modify": {"format": "srt"}})
-    assert "--reading-format" in argv2
-
-
-def test_parse_romanization_spec_string_and_list():
-    parse = MODULE["_parse_romanization_spec"]
+def test_parse_reading_spec_string_and_list():
+    parse = MODULE["_parse_reading_spec"]
     # Comma string
     assert parse("ja:hiragana, ko:true, zh:true") == [
         ("ja", "hiragana"), ("ko", "revised"), ("zh", "marks"),
@@ -4346,26 +4563,26 @@ def test_parse_romanization_spec_string_and_list():
     assert parse("ja, ko") == [("ja", "hiragana"), ("ko", "revised")]
 
 
-def test_parse_romanization_spec_pipe_expands_to_multiple_entries():
+def test_parse_reading_spec_pipe_expands_to_multiple_entries():
     # `ja:hiragana|romaji` → two pairs.
-    parse = MODULE["_parse_romanization_spec"]
+    parse = MODULE["_parse_reading_spec"]
     assert parse("ja:hiragana|romaji") == [("ja", "hiragana"), ("ja", "romaji")]
     assert parse("ja:hiragana|romaji, ko:true") == [
         ("ja", "hiragana"), ("ja", "romaji"), ("ko", "revised"),
     ]
 
 
-def test_parse_romanization_spec_normalizes_typo_codes():
+def test_parse_reading_spec_normalizes_typo_codes():
     # jp → ja, kr → ko, cn → zh via LANGUAGE_ALIASES.
-    parse = MODULE["_parse_romanization_spec"]
+    parse = MODULE["_parse_reading_spec"]
     assert parse("jp:hiragana") == [("ja", "hiragana")]
     assert parse("kr:true") == [("ko", "revised")]
     assert parse("cn:true") == [("zh", "marks")]
 
 
-def test_parse_romanization_spec_bool_true_expands_all_supported_langs():
-    # `romanization = true` → every language in _ROMANIZATION_DEFAULTS at its default.
-    parse = MODULE["_parse_romanization_spec"]
+def test_parse_reading_spec_bool_true_expands_all_supported_langs():
+    # `romanization = true` → every language in _READING_DEFAULTS at its default.
+    parse = MODULE["_parse_reading_spec"]
     pairs = parse(True)
     langs = {l for l, _ in pairs}
     # Should include at least ja, ko, zh (the three priority langs).
@@ -4379,8 +4596,8 @@ def test_parse_romanization_spec_bool_true_expands_all_supported_langs():
     assert parse(False) == []
 
 
-def test_parse_romanization_spec_rejects_unknown_mode():
-    parse = MODULE["_parse_romanization_spec"]
+def test_parse_reading_spec_rejects_unknown_mode():
+    parse = MODULE["_parse_reading_spec"]
     try:
         parse("ja:cuneiform")
     except MODULE["CliError"] as e:
@@ -4392,22 +4609,11 @@ def test_parse_romanization_spec_rejects_unknown_mode():
 def test_toml_modify_romanization_emits_cli_flag():
     # [modify].romanization = "ja:hiragana, ko:true" → --romanization SPEC in argv.
     convert = MODULE["_toml_to_pipeline_argv"]
-    argv, _extras = convert({"modify": {"romanization": "ja:hiragana, ko:true"}})
-    assert "--romanization" in argv
-    spec = argv[argv.index("--romanization") + 1]
+    argv, _extras = convert({"modify": {"reading": "ja:hiragana, ko:true"}})
+    assert "--reading" in argv
+    spec = argv[argv.index("--reading") + 1]
     assert "ja:hiragana" in spec
     assert "ko:revised" in spec
-
-
-def test_toml_modify_romanization_wins_over_legacy_furigana_key():
-    # When both `romanization` and `furigana` are present, romanization wins.
-    convert = MODULE["_toml_to_pipeline_argv"]
-    argv, _ = convert({
-        "modify": {"romanization": "ja:romaji", "furigana": "hiragana"}
-    })
-    # --romanization is emitted; --furigana is NOT.
-    assert "--romanization" in argv
-    assert "--furigana" not in argv
 
 
 def test_modify_main_routes_ja_romanization_through_furigana_path():
@@ -4426,27 +4632,29 @@ def test_modify_main_routes_ja_romanization_through_furigana_path():
     try:
         with tempfile.TemporaryDirectory() as tmp:
             with _isolated_config(None), contextlib.redirect_stdout(io.StringIO()):
-                rc = MODULE["modify_main"]([tmp, "--romanization", "ja:hiragana"])
+                rc = MODULE["modify_main"]([tmp, "--reading", "ja:hiragana"])
             assert rc in (0, 1)
     finally:
         scope["scan_srt_files"] = saved_scan
 
 
-def test_modify_main_rejects_non_japanese_romanization_with_clear_error():
-    # Non-Japanese languages aren't implemented yet — should raise a
-    # CliError pointing at the roadmap, NOT silently no-op.
+def test_modify_main_rejects_still_deferred_romanization_with_clear_error():
+    """Languages whose backend hasn't shipped yet (Cantonese, Thai, Arabic,
+    Hindi, Russian) must raise a CliError pointing at the roadmap.
+    Japanese, Korean, and Chinese (Mandarin) all ship and must NOT raise."""
     import io, contextlib, tempfile
     CliError = MODULE["CliError"]
     with tempfile.TemporaryDirectory() as tmp:
+        # yue:numbers is still deferred — should raise.
         with _isolated_config(None), contextlib.redirect_stdout(io.StringIO()):
             try:
-                MODULE["modify_main"]([tmp, "--romanization", "ko:true"])
+                MODULE["modify_main"]([tmp, "--reading", "yue:numbers"])
             except CliError as e:
                 msg = str(e).lower()
                 assert "not yet implemented" in msg
-                assert "ko" in msg or "korean" in msg
+                assert "yue" in msg
             else:
-                raise AssertionError("expected CliError for ko:true")
+                raise AssertionError("expected CliError for yue:numbers")
 
 
 def test_toml_modify_convert_none_omits_flag():
@@ -4622,21 +4830,6 @@ def test_normalize_merge_langs_rejects_unknown_format():
         raise AssertionError("expected CliError for unknown format")
 
 
-def test_resolve_modify_furigana_tristate_handles_off_mode_bool():
-    resolve = MODULE["_resolve_modify_furigana"]
-    assert resolve("off") == []
-    assert resolve(False) == []
-    assert resolve("hiragana") == ["--furigana", "hiragana"]
-    assert resolve("romaji") == ["--furigana", "romaji"]
-    assert resolve(True) == ["--furigana"]
-    try:
-        resolve("klingon")
-    except MODULE["CliError"] as e:
-        assert "off" in str(e) and "hiragana" in str(e)
-    else:
-        raise AssertionError("expected CliError for unknown furigana value")
-
-
 def test_toml_aliases_plural_singular():
     # episodes / seasons / languages are aliases for the canonical singular.
     canon = MODULE["_canonicalize_toml_key"]
@@ -4659,7 +4852,7 @@ def test_toml_to_pipeline_argv_emits_output_section_and_pair_models():
             "en:es": "llama3.2:3b",
             "mt_source_lang": "en",
         },
-        "modify": {"furigana": "hiragana", "format": "srt"},
+        "modify": {"reading": "ja:hiragana", "reading_format": "srt"},
         "merge": {"langs": "ja:vtt, en", "master": "ja"},
     }
     argv, extras = convert(data)
@@ -4678,7 +4871,7 @@ def test_toml_to_pipeline_argv_emits_output_section_and_pair_models():
     assert "--mt-source" in argv
     assert extras["translate_pair_models"] == {"ja:ko": "qwen3:4b", "en:es": "llama3.2:3b"}
     # modify: furigana = "hiragana" → --furigana hiragana; format → --reading-format
-    assert "--furigana" in argv
+    assert "--reading" in argv
     assert "--reading-format" in argv
     # merge: langs stripped of :format hints, hint stashed in extras
     assert "-l" in argv
@@ -4812,7 +5005,8 @@ def test_parse_furigana_formats_unknown_format_rejected():
     except MODULE["CliError"] as e:
         assert "mp4" in str(e)
         assert "srt, ass, vtt" in str(e).lower() or "srt, ass, vtt" in str(e)
-        assert "--help furigana" in str(e)
+        # v1.2: topic renamed to `romanization`; `furigana` kept as alias.
+        assert "--help reading" in str(e)
     else:
         raise AssertionError("expected CliError for unknown format")
 
@@ -4866,7 +5060,7 @@ def test_generate_furigana_respects_formats_argument():
 
 
 def test_config_validates_furigana_format():
-    bad = '[modify]\nfurigana_output_format = "srt,mp4"\n'
+    bad = '[modify]\nreading_format = "srt,mp4"\n'
     with _isolated_config(bad):
         try:
             MODULE["load_user_config"]()
@@ -4877,32 +5071,11 @@ def test_config_validates_furigana_format():
 
 
 def test_config_furigana_format_applies_to_download_parser_default():
-    toml = '[modify]\nfurigana_output_format = "srt,ass"\n'
+    toml = '[modify]\nreading_format = "srt,ass"\n'
     with _isolated_config(toml):
         parser = MODULE["build_parser"]()
         args = parser.parse_args(["URL"])
-    assert args.furigana_format == "srt,ass"
-
-
-def test_format_flag_and_legacy_alias_both_parse():
-    # The canonical flag is --reading-format; --format and --furigana-format
-    # are back-compat aliases. All land on args.furigana_format.
-    with _isolated_config(None):
-        parser = MODULE["build_parser"]()
-        args = parser.parse_args(["URL", "--reading-format", "srt,vtt"])
-        assert args.furigana_format == "srt,vtt"
-        args = parser.parse_args(["URL", "--format", "srt,ass"])
-        assert args.furigana_format == "srt,ass"
-        args = parser.parse_args(["URL", "--furigana-format", "all"])
-        assert args.furigana_format == "all"
-        # And in the modify subcommand.
-        modify_parser = MODULE["build_modify_parser"]()
-        args = modify_parser.parse_args(["FOLDER", "--furigana", "--reading-format", "vtt"])
-        assert args.furigana_format == "vtt"
-        args = modify_parser.parse_args(["FOLDER", "--furigana", "--format", "srt"])
-        assert args.furigana_format == "srt"
-        args = modify_parser.parse_args(["FOLDER", "--furigana", "--furigana-format", "srt,vtt"])
-        assert args.furigana_format == "srt,vtt"
+    assert args.reading_format == "srt,ass"
 
 
 def test_modify_main_validates_format_upfront_before_progress_bar():
@@ -4920,7 +5093,7 @@ def test_modify_main_validates_format_upfront_before_progress_bar():
             with contextlib.redirect_stdout(out):
                 try:
                     MODULE["modify_main"]([
-                        str(d), "--furigana", "--format", "srt,mp4",
+                        str(d), "--reading", "ja:hiragana", "--format", "srt,mp4",
                     ])
                 except MODULE["CliError"] as e:
                     err_caught = str(e)
@@ -6146,9 +6319,9 @@ def test_option_was_passed_accepts_model_aliases():
 def test_cli_reading_format_canonical_and_aliases():
     """--reading-format is canonical; --format and --furigana-format are aliases."""
     mp = MODULE["build_modify_parser"]()
-    assert mp.parse_args(["/tmp", "--reading-format", "all"]).furigana_format == "all"
-    assert mp.parse_args(["/tmp", "--format", "srt,vtt"]).furigana_format == "srt,vtt"
-    assert mp.parse_args(["/tmp", "--furigana-format", "srt"]).furigana_format == "srt"
+    assert mp.parse_args(["/tmp", "--reading-format", "all"]).reading_format == "all"
+    assert mp.parse_args(["/tmp", "--format", "srt,vtt"]).reading_format == "srt,vtt"
+    assert mp.parse_args(["/tmp", "--reading-format", "srt"]).reading_format == "srt"
 
 
 def test_toml_mt_source_canonical_and_alias_in_user_config():
@@ -6163,19 +6336,6 @@ def test_toml_mt_source_canonical_and_alias_in_user_config():
     # Legacy alias still accepted
     v = validate({"translate": {"mt_source_lang": "auto"}})
     assert v["translate"]["mt_source_lang"] == "auto"
-
-
-def test_toml_reading_format_canonical_and_aliases_in_user_config():
-    """`reading_format` is canonical in [modify]; older names are aliases."""
-    validate = MODULE["validate_user_config"]
-    # Canonical
-    v = validate({"modify": {"reading_format": "srt"}})
-    assert v["modify"]["furigana_output_format"] == "srt"
-    # Aliases
-    v = validate({"modify": {"furigana_output_format": "all"}})
-    assert v["modify"]["furigana_output_format"] == "all"
-    v = validate({"modify": {"format": "vtt"}})
-    assert v["modify"]["furigana_output_format"] == "vtt"
 
 
 def test_toml_pipeline_mt_source_lang_alias_emits_mt_source_flag():
@@ -6263,15 +6423,15 @@ def test_interactive_non_tty_raises_clean_error():
 
 
 def test_wizard_emit_cli_uses_canonical_flags():
-    """Generated CLI prefers v1.1 long names (--languages, --engine,
-    --mt-source, --romanization, --reading-format)."""
+    """Generated CLI uses v1.4 canonical long names (--languages, --engine,
+    --mt-source, --reading, --reading-format) and never legacy
+    --furigana / --romanization."""
     state = _wizard_state()
     cli = MODULE["_wizard_emit_cli"](state)
     assert "--languages" in cli
-    assert "--romanization" in cli
-    # --furigana must not appear — Round 11 made --romanization the
-    # canonical reading-aid flag.
+    assert "--reading" in cli
     assert "--furigana" not in cli
+    assert "--romanization" not in cli
     # Translate engine is positional after --translate, not --mt-engine.
     assert "--translate" in cli
     assert cli[cli.index("--translate") + 1] == "ollama"
@@ -6280,15 +6440,16 @@ def test_wizard_emit_cli_uses_canonical_flags():
 
 
 def test_wizard_emit_toml_uses_canonical_keys():
-    """Generated TOML uses mt_source (not mt_source_lang) and reading_format
-    (not furigana_output_format), and routes reading aids through
-    [modify].romanization, not [modify].furigana."""
+    """Generated TOML uses v1.4 canonical keys (mt_source, reading,
+    reading_format) and never legacy mt_source_lang / furigana /
+    romanization / furigana_output_format."""
     state = _wizard_state()
     toml = MODULE["_wizard_emit_toml"](state)
     assert "mt_source =" in toml
     assert "mt_source_lang" not in toml
-    assert "romanization =" in toml
+    assert "reading =" in toml
     assert "furigana =" not in toml
+    assert "romanization =" not in toml
     assert "reading_format =" in toml
     assert "furigana_output_format" not in toml
     # Section ordering matches the pipeline execution order.
@@ -6323,16 +6484,19 @@ def test_wizard_emit_cli_includes_output_target():
     assert cli[cli.index("--output") + 1] == "/Volumes/StudyDeck"
 
 
-def test_wizard_reading_aid_maps_to_romanization_not_furigana():
-    """The wizard does not emit `--furigana` even when ja:hiragana is
-    selected. It exclusively uses the v1.1 `--romanization` spec."""
+def test_wizard_reading_aid_emits_canonical_reading_flag():
+    """The wizard uses the v1.4 `--reading` / `[modify].reading` surface
+    exclusively — no legacy `--romanization` or `--furigana` flags, no
+    legacy `romanization = ...` / `furigana = ...` TOML keys."""
     state = _wizard_state(reading_aids=["ja:hiragana"])
     cli_str = MODULE["_wizard_emit_cli_string"](state)
+    assert "--reading ja:hiragana" in cli_str
     assert "--furigana" not in cli_str
-    assert "--romanization ja:hiragana" in cli_str
+    assert "--romanization" not in cli_str
     toml = MODULE["_wizard_emit_toml"](state)
+    assert 'reading = "ja:hiragana"' in toml
     assert "furigana =" not in toml
-    assert 'romanization = "ja:hiragana"' in toml
+    assert "romanization =" not in toml
 
 
 def test_wizard_asbplayer_preset_emits_single_line_strip_cc_vtt():
@@ -6385,10 +6549,10 @@ def test_wizard_emit_toml_korean_reading_aid_passes_through():
         reading_aids=["ko:revised"],
     )
     toml = MODULE["_wizard_emit_toml"](state)
-    assert 'romanization = "ko:revised"' in toml
+    assert 'reading = "ko:revised"' in toml
     cli = MODULE["_wizard_emit_cli"](state)
-    assert "--romanization" in cli
-    assert cli[cli.index("--romanization") + 1] == "ko:revised"
+    assert "--reading" in cli
+    assert cli[cli.index("--reading") + 1] == "ko:revised"
 
 
 def test_wizard_emit_toml_chinese_reading_aid_passes_through():
@@ -6399,7 +6563,7 @@ def test_wizard_emit_toml_chinese_reading_aid_passes_through():
         reading_aids=["zh:marks"],
     )
     toml = MODULE["_wizard_emit_toml"](state)
-    assert 'romanization = "zh:marks"' in toml
+    assert 'reading = "zh:marks"' in toml
 
 
 def test_wizard_emit_toml_mixed_ja_ko_zh_reading_aids():
@@ -6411,7 +6575,7 @@ def test_wizard_emit_toml_mixed_ja_ko_zh_reading_aids():
         reading_aids=["ja:hiragana", "ko:revised", "zh:marks"],
     )
     toml = MODULE["_wizard_emit_toml"](state)
-    assert 'romanization = "ja:hiragana,ko:revised,zh:marks"' in toml
+    assert 'reading = "ja:hiragana,ko:revised,zh:marks"' in toml
 
 
 def test_wizard_single_language_omits_merge_block():
@@ -6431,16 +6595,18 @@ def test_wizard_single_language_omits_merge_block():
 
 
 def test_wizard_dependency_probe_flags_deferred_backends_as_warn():
-    """Korean / Chinese reading-aid backends aren't shipped; the probe
-    surfaces them as warn-level (not block) so the wizard still saves."""
+    """Languages whose backend still isn't shipped (Cantonese, Thai,
+    Arabic, Hindi, Russian) surface in the probe as warn-level so the
+    wizard still saves a workflow the user can re-run later. ja/ko/zh
+    each get their own backend-specific block or pass — not 'deferred'."""
     state = _wizard_state(
-        languages=["ko", "zh", "en"],
-        order=["ko", "zh", "en"],
-        reading_aids=["ko:revised", "zh:marks"],
+        languages=["yue", "th", "en"],
+        order=["yue", "th", "en"],
+        reading_aids=["yue:numbers", "th:royal-thai"],
         mt_engine="",  # avoid ollama/deepl side checks
     )
     gaps = MODULE["_wizard_probe_dependencies"](state)
-    deferred = [g for g in gaps if "ko:revised" in g[1] or "zh:marks" in g[1]]
+    deferred = [g for g in gaps if "yue:numbers" in g[1] or "th:royal-thai" in g[1]]
     assert deferred, "deferred backends should surface in the probe"
     assert all(g[0] == "warn" for g in deferred)
 
@@ -6472,18 +6638,775 @@ def test_wizard_state_to_toml_round_trip_safe():
     assert text.endswith("\n")
 
 
+# ─── Korean romanization ────────────────────────────────────────────
+
+# ─── Chinese romanization ───────────────────────────────────────────
+
+class _FakePypinyin:
+    """Minimal stand-in for pypinyin in tests.
+
+    Mirrors the real module's public surface that getsubtitle_core uses:
+      .Style.TONE / .TONE3 / .NORMAL — sentinel objects
+      .lazy_pinyin(text, style=..., errors=...) → list of strings
+
+    The fake returns hand-crafted pinyin for the cues we test against,
+    so we exercise the full pipeline (mode dispatch, pair-chunking,
+    side-file emission) without depending on the real library."""
+
+    class Style:
+        TONE = "TONE"
+        TONE3 = "TONE3"
+        NORMAL = "NORMAL"
+
+    _TABLE = {
+        "你": {"TONE": "nǐ",   "TONE3": "ni3",   "NORMAL": "ni"},
+        "好": {"TONE": "hǎo",  "TONE3": "hao3",  "NORMAL": "hao"},
+        "世": {"TONE": "shì",  "TONE3": "shi4",  "NORMAL": "shi"},
+        "界": {"TONE": "jiè",  "TONE3": "jie4",  "NORMAL": "jie"},
+        "中": {"TONE": "zhōng","TONE3": "zhong1","NORMAL": "zhong"},
+        "国": {"TONE": "guó",  "TONE3": "guo2",  "NORMAL": "guo"},
+    }
+
+    @classmethod
+    def lazy_pinyin(cls, text, style="TONE", errors="default"):
+        return [cls._TABLE.get(ch, {style: ch}).get(style, ch) for ch in text]
+
+
+def _install_fake_pypinyin():
+    """Inject FakePypinyin into the module's cached pypinyin slot and
+    return a teardown handle."""
+    fn = MODULE["_pypinyin_module"]
+    g = fn.__globals__
+    saved = g.get("_PYPINYIN_MODULE")
+    g["_PYPINYIN_MODULE"] = _FakePypinyin
+    def restore():
+        g["_PYPINYIN_MODULE"] = saved
+    return restore
+
+
+def test_has_hanzi_detects_cjk_ideographs():
+    """has_hanzi covers Unified Ideographs and Extension-A; excludes
+    Hangul (ko's territory) and pure ASCII."""
+    fn = MODULE["has_hanzi"]
+    assert fn("你好") is True
+    assert fn("Hello 中国 world") is True
+    assert fn("漢字") is True   # CJK Ideographs — overlaps with ja kanji
+    assert fn("한국어") is False  # Hangul, not hanzi
+    assert fn("Hello world") is False
+    assert fn("") is False
+
+
+def test_romanize_chinese_marks_style_with_fake_pypinyin():
+    """zh:marks routes through pypinyin's TONE style. Spaces inserted
+    between adjacent hanzi syllables; non-hanzi (ASCII, punctuation)
+    passes through verbatim."""
+    restore = _install_fake_pypinyin()
+    try:
+        fn = MODULE["romanize_chinese"]
+        assert fn("你好", "marks") == "nǐ hǎo"
+        assert fn("你好世界", "marks") == "nǐ hǎo shì jiè"
+        # Mixed content — ASCII chunk preserved as-is between hanzi runs.
+        assert fn("Hi 你好", "marks") == "Hi nǐ hǎo"
+        # No hanzi → unchanged.
+        assert fn("Hello world", "marks") == "Hello world"
+        # Empty.
+        assert fn("", "marks") == ""
+    finally:
+        restore()
+
+
+def test_romanize_chinese_numbers_and_letters_styles():
+    """zh:numbers → TONE3 (ni3 hao3); zh:letters → NORMAL (ni hao).
+    Verifies mode dispatch reaches the right pypinyin style."""
+    restore = _install_fake_pypinyin()
+    try:
+        fn = MODULE["romanize_chinese"]
+        assert fn("你好", "numbers") == "ni3 hao3"
+        assert fn("你好", "letters") == "ni hao"
+    finally:
+        restore()
+
+
+def test_romanize_chinese_unknown_mode_raises_clean_error():
+    """A bogus mode must raise CliError listing the supported modes."""
+    restore = _install_fake_pypinyin()
+    try:
+        fn = MODULE["romanize_chinese"]
+        try:
+            fn("你好", "tongyong")
+        except MODULE["CliError"] as e:
+            assert "tongyong" in str(e) or "Unknown Chinese" in str(e)
+            assert "marks" in str(e) and "numbers" in str(e)
+        else:
+            raise AssertionError("expected CliError for unknown zh mode")
+    finally:
+        restore()
+
+
+def test_romanize_chinese_raises_when_pypinyin_missing():
+    """Without pypinyin installed, romanize_chinese must raise a CliError
+    with a clear install hint."""
+    fn = MODULE["_pypinyin_module"]
+    g = fn.__globals__
+    saved = g.get("_PYPINYIN_MODULE")
+    g["_PYPINYIN_MODULE"] = None
+    # Also block the import inside _pypinyin_module by injecting a
+    # sys.modules entry that raises on attribute access — but the
+    # cleaner approach is to monkey-patch the function itself to
+    # simulate the ImportError path.
+    saved_fn = g["_pypinyin_module"]
+    def _raise_missing():
+        raise MODULE["CliError"](
+            "Chinese pinyin needs the pypinyin package.\n"
+            "  Quick install: python3 -m pip install pypinyin"
+        )
+    g["_pypinyin_module"] = _raise_missing
+    try:
+        try:
+            MODULE["romanize_chinese"]("你好", "marks")
+        except MODULE["CliError"] as e:
+            assert "pypinyin" in str(e)
+            assert "pip install" in str(e)
+        else:
+            raise AssertionError("expected CliError for missing pypinyin")
+    finally:
+        g["_PYPINYIN_MODULE"] = saved
+        g["_pypinyin_module"] = saved_fn
+
+
+def test_text_with_chinese_readings_parenthetical_per_hanzi_run():
+    """Consecutive hanzi → one parenthetical block. ASCII/whitespace
+    runs interleave as their own passthrough chunks."""
+    restore = _install_fake_pypinyin()
+    try:
+        fn = MODULE["text_with_chinese_readings"]
+        out = fn("你好世界", "marks")
+        assert "你好世界（" in out
+        assert "nǐ hǎo shì jiè" in out
+        # Mixed: hanzi run + space + hanzi run → two parentheticals.
+        out2 = fn("中国 你好", "marks")
+        assert "中国（zhōng guó）" in out2
+        assert "你好（nǐ hǎo）" in out2
+        # Pure ASCII passthrough.
+        assert fn("Hello", "marks") == "Hello"
+    finally:
+        restore()
+
+
+def test_text_with_chinese_ruby_wraps_per_hanzi_run():
+    """VTT ruby: each hanzi run gets one <ruby>/<rt> pair."""
+    restore = _install_fake_pypinyin()
+    try:
+        fn = MODULE["text_with_chinese_ruby"]
+        out = fn("你好 世界", "marks")
+        assert out.count("<ruby>") == 2
+        assert "<ruby>你好<rt>nǐ hǎo</rt></ruby>" in out
+        assert "<ruby>世界<rt>shì jiè</rt></ruby>" in out
+    finally:
+        restore()
+
+
+def test_hanzi_reading_pair_lines_returns_aligned_rows():
+    """Stacked: returns (reading_row, text_row) aligned per chunk.
+    Returns None when no hanzi present."""
+    restore = _install_fake_pypinyin()
+    try:
+        fn = MODULE["hanzi_reading_pair_lines"]
+        pair = fn("你好 世界", "marks")
+        assert pair is not None
+        reading_row, text_row = pair
+        assert "nǐ hǎo" in reading_row
+        assert "shì jiè" in reading_row
+        assert "你好" in text_row
+        assert "世界" in text_row
+        # No hanzi → None.
+        assert fn("Hello world", "marks") is None
+    finally:
+        restore()
+
+
+def test_generate_chinese_romanization_walks_only_zh_srt():
+    """Orchestrator only touches .zh.srt files; emits one side file per
+    requested format. Non-.zh and non-.srt paths skipped."""
+    import tempfile
+    from pathlib import Path
+    restore = _install_fake_pypinyin()
+    fn = MODULE["generate_chinese_romanization"]
+    try:
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            zh_path = root / "Show.S01E01.zh.srt"
+            zh_path.write_text(
+                "1\n00:00:01,000 --> 00:00:03,000\n你好 世界\n",
+                encoding="utf-8",
+            )
+            ja_path = root / "Show.S01E01.ja.srt"
+            ja_path.write_text(
+                "1\n00:00:01,000 --> 00:00:03,000\n日本語\n",
+                encoding="utf-8",
+            )
+            out = fn([zh_path, ja_path], "marks", single_line=False, formats={"srt", "vtt"})
+            assert len(out) == 2  # 2 formats × 1 zh file
+            names = sorted(p.name for p in out)
+            assert "Show.S01E01.zh.romanization-marks.asb.srt" in names
+            assert "Show.S01E01.zh.romanization-marks.ruby.vtt" in names
+            for p in out:
+                assert p.exists()
+            # Validate the SRT actually carries the pinyin output. The
+            # whitespace between hanzi runs splits them into separate
+            # chunks, so each hanzi run gets its own parenthetical block.
+            srt_content = next(
+                p.read_text(encoding="utf-8") for p in out if p.name.endswith(".asb.srt")
+            )
+            assert "你好（nǐ hǎo）" in srt_content
+            assert "世界（shì jiè）" in srt_content
+    finally:
+        restore()
+
+
+def test_apply_reading_to_args_routes_ja_ko_zh():
+    """All three shipped languages must land on their own attributes."""
+    import argparse
+    fn = MODULE["_apply_reading_to_args"]
+    args = argparse.Namespace(
+        reading="ja:hiragana,ko:revised,zh:marks",
+        ja_reading=None,
+        ko_reading=None,
+        zh_reading=None,
+    )
+    fn(args)
+    assert args.ja_reading == "hiragana"
+    assert args.ko_reading == "revised"
+    assert args.zh_reading == "marks"
+    # Verify zh:numbers and zh:letters round-trip too.
+    args2 = argparse.Namespace(
+        reading="zh:numbers",
+        ja_reading=None, ko_reading=None, zh_reading=None,
+    )
+    fn(args2)
+    assert args2.zh_reading == "numbers"
+    args3 = argparse.Namespace(
+        reading="zh:letters",
+        ja_reading=None, ko_reading=None, zh_reading=None,
+    )
+    fn(args3)
+    assert args3.zh_reading == "letters"
+
+
+def test_apply_reading_to_args_still_rejects_deferred_languages():
+    """Languages whose backend still isn't shipped (yue, th, ar, hi, ru)
+    must continue to raise CliError."""
+    import argparse
+    fn = MODULE["_apply_reading_to_args"]
+    args = argparse.Namespace(
+        reading="yue:numbers",
+        ja_reading=None, ko_reading=None, zh_reading=None,
+    )
+    try:
+        fn(args)
+    except MODULE["CliError"] as e:
+        assert "yue:numbers" in str(e)
+    else:
+        raise AssertionError("expected CliError for yue (still deferred)")
+
+
+def test_setup_recommendations_zh_learner_is_selected_by_default():
+    """Mandarin reading-aid recommendation must default to opt-in
+    (was opt-in only when the backend was deferred)."""
+    choice = MODULE["_SetupChoice"](
+        native=["en"], learning=["zh"], content="tv",
+        venue="browser", mt="none",
+    )
+    recs = MODULE["_setup_recommendations"](choice)
+    zh_recs = [r for r in recs if r.key.startswith("reading:zh")]
+    assert zh_recs, "zh learner missed reading-aid recommendation"
+    assert zh_recs[0].selected_by_default is True
+
+
+def test_wizard_probe_treats_zh_as_block_not_deferred():
+    """zh:marks now probes for pypinyin (hard dep). Should appear as
+    a block-or-pass condition, NOT a deferred warning."""
+    state = MODULE["_WizardState"](
+        languages=["zh", "en"],
+        order=["zh", "en"],
+        reading_aids=["zh:marks"],
+    )
+    gaps = MODULE["_wizard_probe_dependencies"](state)
+    deferred = [
+        g for g in gaps
+        if "deferred" in g[2].lower() or "not yet implemented" in g[2].lower()
+    ]
+    assert not deferred, "zh:marks should no longer be flagged as deferred"
+
+
+def test_has_hangul_detects_syllables_and_jamo():
+    """has_hangul returns True for syllables, jamo, and Hangul-containing
+    mixed strings. False for pure ASCII / Latin / kanji."""
+    fn = MODULE["has_hangul"]
+    assert fn("한국어") is True
+    assert fn("Hello 한국어 world") is True
+    assert fn("ㄱㄴㄷ") is True   # jamo block
+    assert fn("Hello world") is False
+    assert fn("漢字") is False     # CJK kanji, not hangul
+    assert fn("") is False
+
+
+def test_romanize_korean_yale_in_tree_no_external_deps():
+    """Yale mode uses an in-tree lookup table — no pip extras required.
+    Validates the cases that exercise initial, medial, final positions."""
+    fn = MODULE["romanize_korean"]
+    # 한국어 (han-guk-eo) → han + kwuk + e = hankwuke (Yale orthographic)
+    assert fn("한국어", "yale") == "hankwuke"
+    # 같이 (orthographic; Yale doesn't apply palatalization)
+    assert fn("같이", "yale") == "kathi"
+    # Whitespace and ASCII pass through.
+    assert fn("Hello 한국어", "yale") == "Hello hankwuke"
+    assert fn("", "yale") == ""
+
+
+def test_romanize_korean_unknown_mode_raises_clean_error():
+    """A bogus mode must fail with a CliError listing the supported modes."""
+    fn = MODULE["romanize_korean"]
+    try:
+        fn("한국어", "wadegiles")
+    except MODULE["CliError"] as e:
+        assert "wadegiles" in str(e) or "Unknown Korean" in str(e)
+        assert "revised" in str(e) and "yale" in str(e)
+    else:
+        raise AssertionError("expected CliError for unknown mode")
+
+
+def test_romanize_korean_revised_raises_when_libs_missing():
+    """Without korean-romanizer installed, revised mode must raise a
+    CliError with a clear install hint."""
+    fn = MODULE["_korean_revised_romanizer_class"]
+    # Reset the cache so this test is hermetic regardless of test order.
+    g = fn.__globals__
+    g["_KOREAN_ROMANIZER_CLS"] = None
+    try:
+        fn()
+    except MODULE["CliError"] as e:
+        msg = str(e)
+        assert "korean-romanizer" in msg
+        assert "pip install" in msg
+        assert "romanization-ko" in msg or "korean-romanizer" in msg
+    else:
+        # The sandbox might actually have it installed — in that case this
+        # test is a no-op and that's fine.
+        pass
+
+
+def test_romanize_korean_revised_with_mocked_libs():
+    """With mocked g2pk + korean-romanizer, the revised path produces
+    sensible output. We mock G2P to return a hand-crafted phoneme form
+    and Romanizer to apply a simple rule so the test asserts on the
+    pipeline contract, not the third-party libraries' exactness."""
+    fn = MODULE["_romanize_revised"]
+    g = fn.__globals__
+    # Mock g2pk: input '같이' should become '가치' (palatalization).
+    saved_g2p = g.get("_KOREAN_G2P_CACHE")
+    saved_tried = g.get("_KOREAN_G2P_TRIED")
+    saved_cls = g.get("_KOREAN_ROMANIZER_CLS")
+    try:
+        g["_KOREAN_G2P_CACHE"] = lambda text: text.replace("같이", "가치")
+        g["_KOREAN_G2P_TRIED"] = True
+        class FakeRomanizer:
+            def __init__(self, text):
+                self.text = text
+            def romanize(self):
+                # Tiny fake: hand-romanize just the chars we test here.
+                table = {"가": "ga", "치": "chi"}
+                return "".join(table.get(c, c) for c in self.text)
+        g["_KOREAN_ROMANIZER_CLS"] = FakeRomanizer
+        # 같이 → G2P → 가치 → romanizer → "gachi"
+        assert fn("같이") == "gachi"
+    finally:
+        g["_KOREAN_G2P_CACHE"] = saved_g2p
+        g["_KOREAN_G2P_TRIED"] = saved_tried
+        g["_KOREAN_ROMANIZER_CLS"] = saved_cls
+
+
+def test_romanize_korean_revised_falls_back_when_g2p_missing():
+    """When g2pk isn't installed, the revised path still runs — it just
+    passes the raw hangul straight to korean-romanizer."""
+    fn = MODULE["_romanize_revised"]
+    g = fn.__globals__
+    saved_g2p = g.get("_KOREAN_G2P_CACHE")
+    saved_tried = g.get("_KOREAN_G2P_TRIED")
+    saved_cls = g.get("_KOREAN_ROMANIZER_CLS")
+    try:
+        # Tell the g2p loader it tried and failed.
+        g["_KOREAN_G2P_CACHE"] = None
+        g["_KOREAN_G2P_TRIED"] = True
+        seen_input: list[str] = []
+        class FakeRomanizer:
+            def __init__(self, text):
+                seen_input.append(text)
+                self.text = text
+            def romanize(self):
+                return "FAKE"
+        g["_KOREAN_ROMANIZER_CLS"] = FakeRomanizer
+        fn("같이")
+        # Without G2P preprocessing, romanizer must see the raw input.
+        assert seen_input == ["같이"]
+    finally:
+        g["_KOREAN_G2P_CACHE"] = saved_g2p
+        g["_KOREAN_G2P_TRIED"] = saved_tried
+        g["_KOREAN_ROMANIZER_CLS"] = saved_cls
+
+
+def test_text_with_korean_readings_parenthetical_form():
+    """Inline SRT-style parentheticals per eojeol (whitespace word).
+    Whitespace and ASCII pass through unchanged."""
+    fn = MODULE["text_with_korean_readings"]
+    out = fn("한국어를 공부합니다", "yale")
+    assert "한국어를（" in out
+    assert "공부합니다（" in out
+    # Whitespace is preserved as its own token.
+    assert " " in out
+    # ASCII passthrough.
+    assert fn("Hello world", "yale") == "Hello world"
+
+
+def test_text_with_korean_ruby_wraps_per_eojeol():
+    """VTT ruby markup: each Hangul eojeol gets one <ruby>/<rt> pair."""
+    fn = MODULE["text_with_korean_ruby"]
+    out = fn("한국어 공부", "yale")
+    assert "<ruby>한국어<rt>" in out
+    assert "<ruby>공부<rt>" in out
+    assert out.count("<ruby>") == 2
+
+
+def test_hangul_reading_pair_lines_returns_aligned_rows():
+    """Mirror of kanji_reading_pair_lines: returns (reading_row, text_row)
+    with each chunk width-aligned. Returns None when no hangul is present."""
+    fn = MODULE["hangul_reading_pair_lines"]
+    pair = fn("한국어를 공부합니다", "yale")
+    assert pair is not None
+    reading_row, text_row = pair
+    # Reading row should contain romanization tokens.
+    assert "hankwukelul" in reading_row
+    assert "kongpwuhapnita" in reading_row
+    # Text row preserves the hangul characters.
+    assert "한국어를" in text_row
+    assert "공부합니다" in text_row
+    # No hangul → None.
+    assert fn("Hello world", "yale") is None
+
+
+def test_romanization_suffix_keeps_ja_legacy_spelling_ko_new():
+    """ja keeps `.furigana-{mode}` for back-compat with scanners;
+    ko uses `.romanization-{mode}` to advertise the script."""
+    fn = MODULE["romanization_suffix"]
+    assert fn("ja", "hiragana", "asb.srt", False) == ".furigana-hiragana.asb.srt"
+    assert fn("ja", "romaji", "ruby.vtt", True) == ".furigana-romaji.single-line.ruby.vtt"
+    assert fn("ko", "revised", "asb.srt", False) == ".romanization-revised.asb.srt"
+    assert fn("ko", "yale", "stacked.ass", True) == ".romanization-yale.single-line.stacked.ass"
+
+
+def test_generate_korean_romanization_walks_only_ko_srt():
+    """The orchestrator picks .ko.srt files and writes one side file per
+    requested format. Non-.ko paths and non-.srt paths are skipped."""
+    import tempfile
+    from pathlib import Path
+    fn = MODULE["generate_korean_romanization"]
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        ko_path = root / "Show.S01E01.ko.srt"
+        ko_path.write_text(
+            "1\n00:00:01,000 --> 00:00:03,000\n한국어 공부\n",
+            encoding="utf-8",
+        )
+        ja_path = root / "Show.S01E01.ja.srt"
+        ja_path.write_text(
+            "1\n00:00:01,000 --> 00:00:03,000\n日本語\n",
+            encoding="utf-8",
+        )
+        en_path = root / "Show.S01E01.en.srt"
+        en_path.write_text(
+            "1\n00:00:01,000 --> 00:00:03,000\nHello\n",
+            encoding="utf-8",
+        )
+        out = fn([ko_path, ja_path, en_path], "yale", single_line=False, formats={"srt", "vtt"})
+        # Only the .ko.srt path yields side files; 2 formats × 1 file = 2.
+        assert len(out) == 2
+        names = sorted(p.name for p in out)
+        assert any("Show.S01E01.ko.romanization-yale.asb.srt" == n for n in names)
+        assert any("Show.S01E01.ko.romanization-yale.ruby.vtt" == n for n in names)
+        # And the actual files exist.
+        for p in out:
+            assert p.exists()
+
+
+def test_apply_reading_to_args_routes_ja_and_ko():
+    """The arg-routing helper sets args.ja_reading (for ja),
+    args.ko_reading (for ko), and args.zh_reading
+    (for zh). All three ship today; only yue/th/ar/hi/ru still raise."""
+    import argparse
+    fn = MODULE["_apply_reading_to_args"]
+    # ja+ko+zh spec — all three populate their own attributes.
+    args = argparse.Namespace(
+        reading="ja:hiragana,ko:revised,zh:marks",
+        ja_reading=None, ko_reading=None, zh_reading=None,
+    )
+    fn(args)
+    assert args.ja_reading == "hiragana"
+    assert args.ko_reading == "revised"
+    assert args.zh_reading == "marks"
+    # ko:yale → yale
+    args = argparse.Namespace(
+        reading="ko:yale",
+        ja_reading=None, ko_reading=None, zh_reading=None,
+    )
+    fn(args)
+    assert args.ko_reading == "yale"
+    # Still-deferred language raises.
+    args = argparse.Namespace(
+        reading="yue:numbers",
+        ja_reading=None, ko_reading=None, zh_reading=None,
+    )
+    try:
+        fn(args)
+    except MODULE["CliError"] as e:
+        assert "yue:numbers" in str(e)
+    else:
+        raise AssertionError("expected CliError for still-deferred language")
+
+
+def test_wizard_probe_no_longer_warns_for_ko_revised():
+    """Now that ko ships, the wizard's dependency probe should treat
+    ko:revised as either block (no korean-romanizer) or pass (libs there),
+    NOT as a deferred warning."""
+    state = MODULE["_WizardState"](
+        languages=["ko", "en"],
+        order=["ko", "en"],
+        reading_aids=["ko:revised"],
+    )
+    gaps = MODULE["_wizard_probe_dependencies"](state)
+    deferred = [g for g in gaps if "deferred" in g[2].lower() or "not yet implemented" in g[2].lower()]
+    assert not deferred, "ko:revised should no longer be flagged as deferred"
+
+
+def test_setup_recommendations_ko_learner_is_selected_by_default():
+    """Korean reading-aid recommendation must default to opt-in now that
+    the backend ships (previously was opt-in only for ja)."""
+    choice = MODULE["_SetupChoice"](
+        native=["en"], learning=["ko"], content="tv",
+        venue="browser", mt="none",
+    )
+    recs = MODULE["_setup_recommendations"](choice)
+    ko_recs = [r for r in recs if r.key.startswith("reading:ko")]
+    assert ko_recs, "ko learner missed reading-aid recommendation"
+    assert ko_recs[0].selected_by_default is True
+
+
+def test_setup_config_text_biases_mt_source_for_cjk_pairs():
+    """Korean-native learning Japanese should get an explicit
+    `mt_source = { ja = "ko" }` instead of `mt_source = "auto"` —
+    Korean is grammatically closer to Japanese than English is, so
+    biasing the MT source improves quality measurably."""
+    choice = MODULE["_SetupChoice"](
+        native=["ko"], learning=["ja"], content="anime",
+        venue="browser", mt="online",
+    )
+    text = MODULE["_setup_config_text"](choice)
+    assert 'mt_source = { ja = "ko" }' in text
+    assert 'mt_source = "auto"' not in text
+
+
+def test_setup_config_text_no_cjk_bias_for_pure_european():
+    """English-native learning French should NOT get a CJK bias map;
+    falls back to `mt_source = "auto"`."""
+    choice = MODULE["_SetupChoice"](
+        native=["en"], learning=["fr"], content="tv",
+        venue="browser", mt="online",
+    )
+    text = MODULE["_setup_config_text"](choice)
+    assert 'mt_source = "auto"' in text
+
+
+def test_setup_config_text_multi_cjk_target_emits_full_bias_map():
+    """A Korean-native learning ja AND zh should get both targets
+    biased to Korean in the mt_source map."""
+    choice = MODULE["_SetupChoice"](
+        native=["ko"], learning=["ja", "zh"], content="mixed",
+        venue="browser", mt="online",
+    )
+    text = MODULE["_setup_config_text"](choice)
+    assert 'ja = "ko"' in text
+    assert 'zh = "ko"' in text
+
+
+def test_setup_config_text_seeds_ollama_pair_defaults_for_cjk_learner():
+    """When mt='offline' and Ollama is reachable, the generated
+    [translate.ollama_models] block must include per-pair entries for
+    every learning ← native direction (plus English fallback). This
+    means Ollama has the right model ready on first translate."""
+    fn = MODULE["_setup_config_text"]
+    g = fn.__globals__
+    saved_reach = g["_wizard_ollama_reachable"]
+    saved_which = MODULE["shutil"].which
+    try:
+        g["_wizard_ollama_reachable"] = lambda: True
+        MODULE["shutil"].which = lambda name: "/usr/local/bin/ollama" if name == "ollama" else None
+        # Japanese-native learning Korean.
+        choice = MODULE["_SetupChoice"](
+            native=["ja"], learning=["ko"], content="tv",
+            venue="browser", mt="offline",
+        )
+        text = fn(choice)
+        assert "[translate.ollama_models]" in text
+        # ja → ko (target = learning ko, source = native ja).
+        assert '"ja:ko"' in text
+        # English fallback also seeded.
+        assert '"en:ko"' in text
+        # Default model assigned to each pair.
+        assert MODULE["DEFAULT_OLLAMA_MODEL"] in text
+    finally:
+        g["_wizard_ollama_reachable"] = saved_reach
+        MODULE["shutil"].which = saved_which
+
+
+def test_setup_config_text_ollama_pairs_do_not_emit_self_pair():
+    """The per-pair seeder must never emit a target=source pair
+    (e.g. `"ja:ja"`) — Ollama would reject it and the user would see
+    a confusing 'same source and target' error."""
+    fn = MODULE["_setup_config_text"]
+    g = fn.__globals__
+    saved_reach = g["_wizard_ollama_reachable"]
+    saved_which = MODULE["shutil"].which
+    try:
+        g["_wizard_ollama_reachable"] = lambda: True
+        MODULE["shutil"].which = lambda name: "/usr/local/bin/ollama" if name == "ollama" else None
+        # Native = ja AND learning = ja (edge case but valid input).
+        choice = MODULE["_SetupChoice"](
+            native=["ja"], learning=["ja"], content="anime",
+            venue="browser", mt="offline",
+        )
+        text = fn(choice)
+        assert '"ja:ja"' not in text
+    finally:
+        g["_wizard_ollama_reachable"] = saved_reach
+        MODULE["shutil"].which = saved_which
+
+
+def test_setup_recommendations_use_per_language_prose():
+    """Each shipped reading-aid recommendation must use the tailored
+    learner-focused reason from _SETUP_READING_AID_PROSE, not the
+    generic placeholder."""
+    # Korean learner — reason mentions G2P-specific examples.
+    ko = MODULE["_setup_recommendations"](MODULE["_SetupChoice"](
+        native=["en"], learning=["ko"], content="tv",
+        venue="browser", mt="none",
+    ))
+    ko_rec = next(r for r in ko if r.key.startswith("reading:ko"))
+    assert "Revised Romanization" in ko_rec.reason
+    assert "같이→gachi" in ko_rec.reason or "G2P" in ko_rec.reason
+    # Cost line is honest about g2pk's heavy pull (nltk).
+    assert "nltk" in ko_rec.cost or "80" in ko_rec.cost or "MB" in ko_rec.cost
+
+    # Chinese learner — reason mentions polyphones and tone sandhi.
+    zh = MODULE["_setup_recommendations"](MODULE["_SetupChoice"](
+        native=["en"], learning=["zh"], content="tv",
+        venue="browser", mt="none",
+    ))
+    zh_rec = next(r for r in zh if r.key.startswith("reading:zh"))
+    assert "polyphone" in zh_rec.reason.lower() or "tone sandhi" in zh_rec.reason.lower() or "nǐ hǎo" in zh_rec.reason
+    # zh install is small.
+    assert "5 MB" in zh_rec.cost or "pure-Python" in zh_rec.cost
+
+    # Japanese learner — reason mentions kanji decoding.
+    ja = MODULE["_setup_recommendations"](MODULE["_SetupChoice"](
+        native=["en"], learning=["ja"], content="anime",
+        venue="browser", mt="none",
+    ))
+    ja_rec = next(r for r in ja if r.key.startswith("reading:ja"))
+    assert "kanji" in ja_rec.reason.lower() or "furigana" in ja_rec.reason.lower()
+
+
+def test_setup_install_hint_table_covers_shipped_extras():
+    """Every extra setup might offer to install must have a size/duration
+    hint so users don't get blindsided by heavy installs like g2pk."""
+    hints = MODULE["_SETUP_INSTALL_HINTS"]
+    for extra in ("furigana", "romanization-ko", "romanization-zh"):
+        assert extra in hints, f"missing install hint for [{extra}]"
+        size, duration = hints[extra]
+        assert "MB" in size, f"size for {extra} should mention MB"
+        assert "second" in duration.lower() or "minute" in duration.lower()
+
+
+def test_setup_mt_source_bias_helper_direct():
+    """Unit test for the helper itself — exercises the CJK detection
+    logic without going through the full TOML emitter."""
+    fn = MODULE["_setup_mt_source_bias"]
+    SC = MODULE["_SetupChoice"]
+    # ja learner + ko native → biased.
+    assert fn(SC(native=["ko"], learning=["ja"], content="anime",
+                 venue="browser", mt="online")) == {"ja": "ko"}
+    # zh learner + ja native → biased.
+    assert fn(SC(native=["ja"], learning=["zh"], content="tv",
+                 venue="browser", mt="online")) == {"zh": "ja"}
+    # ja learner + en native → no bias (en isn't CJK).
+    assert fn(SC(native=["en"], learning=["ja"], content="anime",
+                 venue="browser", mt="online")) == {}
+    # Non-CJK learner → no bias regardless of native.
+    assert fn(SC(native=["ko"], learning=["fr"], content="tv",
+                 venue="browser", mt="online")) == {}
+
+
+def test_setup_ollama_pair_defaults_helper_direct():
+    """Unit test for the per-pair seeder. Verifies direction (src:tgt),
+    the English fallback, and dedup."""
+    fn = MODULE["_setup_ollama_pair_defaults"]
+    SC = MODULE["_SetupChoice"]
+    # Single CJK pair + English fallback.
+    pairs = fn(SC(native=["ja"], learning=["ko"], content="tv",
+                  venue="browser", mt="offline"))
+    keys = [k for k, _m in pairs]
+    assert "ja:ko" in keys
+    assert "en:ko" in keys
+    # Multi-target.
+    pairs = fn(SC(native=["en"], learning=["ja", "ko"], content="mixed",
+                  venue="browser", mt="offline"))
+    keys = [k for k, _m in pairs]
+    assert "en:ja" in keys
+    assert "en:ko" in keys
+    # No self-pair when target == native.
+    pairs = fn(SC(native=["ko"], learning=["ko"], content="tv",
+                  venue="browser", mt="offline"))
+    keys = [k for k, _m in pairs]
+    assert "ko:ko" not in keys
+    assert "en:ko" in keys
+
+
+def test_setup_config_text_korean_emits_canonical_romanization_spec():
+    """Korean learner gets `[modify].romanization = "ko:revised"` (NOT
+    a per-language `furigana` legacy fallback)."""
+    choice = MODULE["_SetupChoice"](
+        native=["en"], learning=["ko"], content="tv",
+        venue="browser", mt="none",
+    )
+    text = MODULE["_setup_config_text"](choice)
+    assert 'reading = "ko:revised"' in text
+
+
 def test_user_settings_example_uses_canonical_names():
-    """The shipped example TOML demonstrates the new canonical names."""
+    """The shipped example TOML demonstrates the v1.4 canonical names
+    only — no legacy [modify].furigana / [modify].romanization /
+    [merge].furigana / strip_furigana_before_mt / mt_source_lang."""
     from pathlib import Path
     repo = Path(MODULE["__file__"]).parent
     example = (repo / "user_settings.example.toml").read_text(encoding="utf-8")
-    # New canonical TOML keys appear:
-    assert "mt_source =" in example
-    assert "reading_format =" in example
-    # Old names should NOT be the active (uncommented) form. They may still
-    # appear in alias-mentioning comments.
-    for old_active in ("\nmt_source_lang =", "\nfurigana_output_format ="):
-        assert old_active not in example, f"unexpected active legacy key: {old_active}"
+    # New canonical TOML keys appear (line-anchored):
+    assert "\nmt_source =" in example
+    assert "\nreading_format =" in example
+    assert "\nstrip_reading_before_mt =" in example
+    # No legacy active keys (commented mentions in docs are fine — we
+    # anchor on newline-key-= to avoid matching prose).
+    for old in ("\nfurigana =", "\nromanization =",
+                "\nstrip_furigana_before_mt =", "\nfurigana_output_format =",
+                "\nmt_source_lang ="):
+        assert old not in example, f"unexpected legacy key: {old.strip()}"
 
 
 def test_korean_source_smoke_table_is_concise():

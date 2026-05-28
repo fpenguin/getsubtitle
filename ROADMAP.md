@@ -1,7 +1,55 @@
-# Roadmap  · v1.1
+# Roadmap  · v1.4
 
-What ships in v1.0, what's new in v1.1, what's experimental, and what's
-on the horizon.
+What ships in v1.0, what's new in v1.1 / v1.2 / v1.3 / v1.4, what's
+experimental, and what's on the horizon.
+
+## v1.4 — what's new
+
+- **`--reading` rename + ja:katakana mode.** `--reading` replaces
+  `--romanization` / `--furigana` as the canonical CLI flag (no aliases).
+  Japanese now ships three reading modes: `ja:hiragana`, `ja:katakana`,
+  and `ja:romaji`. TOML key `reading = "ja:hiragana,ko:revised"`.
+- **Interactive wizard UX overhaul.** Q11 actions expanded to
+  Run / Save / **Edit** / Restart / Quit (the Edit branch was previously
+  unreachable). Run confirms once before dispatching; Restart confirms
+  before discarding. Default action flips between Run (local sources) and
+  Save (URL/title sources) to protect users from accidental long fetches.
+  Banner now shows both the CLI form **and** the equivalent TOML before
+  the action menu. Save loops on overwrite collisions instead of bailing.
+  Dependency probe only fires for Run (so TOML saves are portable across
+  machines). Title-search picker accepts `r) Re-enter` to abandon poor
+  hits, and prints a TMDB-key hint when no candidates are found. Path
+  input strips wrapping single/double quotes (Finder/Explorer drag-drop
+  now works). Q1 default flips to "folder/file" when no TMDB key is
+  configured. Q5 inline-explains what "Auto" actually infers. Q11 banner
+  warns when a hiragana/furigana reading aid is paired with a non-VTT
+  format. Better restart separator + intro re-print on loop.
+
+## v1.3 — what's new
+
+- **Chinese (Mandarin) pinyin backend.** `--reading zh:marks`,
+  `--reading zh:numbers`, and `--reading zh:letters` now
+  produce real side files. Uses `pypinyin` for per-character pinyin
+  lookup with built-in polyphone handling (e.g. 长 in 长大 vs 长城)
+  and tone sandhi. Three output styles share one library: tone marks
+  (`nǐ hǎo`), numbered tones (`ni3 hao3`), and toneless (`ni hao`).
+  Install with `pip install -e ".[romanization-zh]"`. The setup wizard
+  now opt-ins this for any user who selects Chinese as a learning
+  language. Filenames carry the `.romanization-{marks|numbers|letters}`
+  infix.
+
+## v1.2 — what's new
+
+- **Korean romanization backend.** `--reading ko:revised` and
+  `--reading ko:yale` now produce real side files. Revised uses
+  `g2pk` for grapheme-to-phoneme preprocessing (so `같이`→`gachi`,
+  `읽는`→`ingneun`, `한국어`→`hangugeo` come out correctly) and
+  `korean-romanizer` for the Revised Romanization rules. Yale is
+  in-tree, no external deps. Install with `pip install -e
+  ".[romanization-ko]"`. The setup wizard now opt-ins this for any
+  user who selects Korean as a learning language. Filenames carry the
+  new `.romanization-{revised|yale}` infix (the ja-specific
+  `.furigana-{mode}` infix is preserved for back-compat).
 
 ## v1.1 — what's new
 
@@ -13,8 +61,8 @@ on the horizon.
   extras, unreachable Ollama daemon, missing API keys). Auto-saves a
   draft at `~/.cache/getsubtitle/wizard-draft.toml` so an interrupted
   wizard can resume.
-- **Reading-aid umbrella.** `--romanization` replaces `--furigana` as
-  the canonical CLI flag (`--furigana` stays as a silent alias). The
+- **Reading-aid umbrella.** `--reading` replaces `--reading` as
+  the canonical CLI flag (`--reading` stays as a silent alias). The
   spec now covers Japanese (ships now), plus Korean, Mandarin,
   Cantonese, Thai, Arabic, Hindi, Russian (wired through to CLI/TOML
   with backends landing per the planned section below).
@@ -116,15 +164,15 @@ on the horizon.
 - **Per-pair MT model on the CLI**: `--mt-model-pair ja:ko=qwen3:4b,en:es=llama3.2:3b` so the per-pair selection from `[translate.ollama_models]` has a one-flag CLI equivalent.
 - **List-fallback `mt_source`**: today `mt_source = { en = ["ko", "ja"] }` only uses the first; planned to walk the list and pick the first source actually on disk.
 - **Romanization expansion (international)**: the v1.1 `[modify].romanization`
-  schema is designed to grow per language. Korean (Revised Romanization with
-  G2P) ships first; the same per-language entry point covers Chinese pinyin,
-  Cantonese jyutping, Thai, Arabic, Hindi/Sanskrit, Russian, Greek, Persian,
-  Hebrew, and other scripts where learners benefit from a phonetic guide
-  alongside the original. Each language ships as a separate optional pip
-  extra (`romanization-zh`, `romanization-yue`, `romanization-th`, …) so
-  users only install the backends they need. Filename suffix stays
-  language-native (`pinyin-marks`, `jyutping-numbers`, etc.) rather than
-  unifying everything under "romanization".
+  schema grows per language. Shipped: Japanese (furigana, v1.0), Korean
+  (Revised + G2P + Yale, v1.2), Mandarin (pinyin marks / numbers /
+  letters, v1.3). Still to come: Cantonese jyutping (`yue:numbers`),
+  Thai (`th:royal-thai`), Arabic (`ar:ala-lc`), Hindi/Sanskrit
+  (`hi:iast`), Russian (`ru:iso-9`), and Greek/Persian/Hebrew. Each
+  language ships as a separate optional pip extra (`romanization-yue`,
+  `romanization-th`, …) so users only install the backends they need.
+  Filenames use the `.romanization-{mode}` infix (ja keeps
+  `.furigana-{mode}` for back-compat).
 - **Native SAMI per-language scoping**: `[modify].convert = "kr:smi-to-srt"` to convert only Korean SAMI streams.
 - **Help/doc cleanup for canonical aliases**: `--engine` / `--model` are the
   canonical translate flags, while `--mt-engine` / `--mt-model` remain silent

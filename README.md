@@ -1,4 +1,4 @@
-# getsubtitle  · v1.1
+# getsubtitle  · v1.3
 
 Turn shows and movies into language-learning subtitle stacks.
 
@@ -48,7 +48,7 @@ Primary output is **SRT** for maximum compatibility. WebVTT is supported for asb
 ### Reading aids
 
 Japanese **furigana** (`漢字（かんじ）`) ships today. The same code path
-generalises to a `--romanization` flag covering more languages — Korean
+generalises to a `--reading` flag covering more languages — Korean
 Revised Romanization (with G2P for `같이`/`읽는`/`한국어` cases), Chinese
 pinyin, Cantonese jyutping, Thai/Arabic/Hindi/Russian/etc.
 transliterations — landing per-language in v1.1+ (see [`ROADMAP.md`](ROADMAP.md)).
@@ -64,8 +64,11 @@ romanization = "ja:hiragana, ko:true, zh:true"   # ja works now; ko/zh coming so
 ### macOS / Linux
 
 ```sh
-pip install -e .                    # bare install
-pip install -e ".[furigana]"        # + Japanese furigana via pykakasi (recommended for JA learners)
+pip install -e .                                            # bare install
+pip install -e ".[furigana]"                                # + Japanese furigana (pykakasi)
+pip install -e ".[romanization-ko]"                         # + Korean Revised Romanization (g2pk + korean-romanizer)
+pip install -e ".[romanization-zh]"                         # + Mandarin pinyin (pypinyin)
+pip install -e ".[furigana,romanization-ko,romanization-zh]"  # all three (recommended for CJK learners)
 ```
 
 ### Windows
@@ -73,6 +76,9 @@ pip install -e ".[furigana]"        # + Japanese furigana via pykakasi (recommen
 ```powershell
 py -m pip install -e .
 py -m pip install -e ".[furigana]"
+py -m pip install -e ".[romanization-ko]"
+py -m pip install -e ".[romanization-zh]"
+py -m pip install -e ".[furigana,romanization-ko,romanization-zh]"
 ```
 
 ## Quickstart
@@ -101,7 +107,7 @@ getsubtitle "https://www.themoviedb.org/movie/8392" -l ja,en
 
 # Medium: series, IMDb link — Midnight Diner, Japanese + Korean,
 # with Japanese pronunciation guides for asbplayer
-getsubtitle "https://www.imdb.com/title/tt6150576/" -s 1 -e all -l ja,ko --romanization ja:hiragana --format vtt
+getsubtitle "https://www.imdb.com/title/tt6150576/" -s 1 -e all -l ja,ko --reading ja:hiragana --format vtt
 
 # Hard: Friends S4E3-5, fill missing Spanish from French, then merge
 getsubtitle "https://www.themoviedb.org/tv/1668-friends" -s 4 -e 3-5 -l fr,en,es
@@ -120,7 +126,7 @@ getsubtitle "https://www.themoviedb.org/tv/1668-friends" -s 5 -e all --config ./
 For raw `.srt` with no learning helpers:
 
 ```sh
-getsubtitle "URL" -l ja --no-romanization --no-single-line --no-strip-cc-noise --no-mt-engine
+getsubtitle "URL" -l ja --no-reading --no-single-line --no-strip-cc-noise --no-mt-engine
 ```
 
 `getsubtitle` (no args) prints a short overview and a topic-help index.
@@ -172,29 +178,45 @@ What it asks (11 questions):
 | 4  | Which language controls timing | `--master ja` |
 | 5  | Episode scope (URL only) | `--season`, `--episode` |
 | 6  | MT fallback engine | `--translate argos\|ollama\|deepl` |
-| 7  | Reading aids (multi-select) | `--romanization ja:hiragana,ko:revised,…` |
+| 7  | Reading aids (multi-select) | `--reading ja:hiragana,ko:revised,…` |
 | 8  | asbplayer preset | `--single-line --strip-cc-noise --format vtt` |
 | 9  | Output format | `--format srt\|vtt\|ass` |
 | 10 | Output folder | `--output PATH` |
-| 11 | Print / Save / Run / Edit | (final action) |
+| 11 | Run / Save / Edit / Restart / Quit | (final action) |
 
-After Q10 the wizard runs a dependency probe and points out anything
-missing — pykakasi for Japanese furigana, the Ollama daemon if you
-picked ollama, the DeepL key if you picked DeepL, missing
+After Q10 the wizard prints both the CLI command and the equivalent
+TOML workflow so you can sanity-check before committing. The final-action
+menu offers:
+
+- **Run** — confirms once, then dispatches the pipeline. Defaults to *Run*
+  for local-folder sources, *Save* for URL/title sources (slow network jobs).
+- **Save** — re-prompts on overwrite collisions; writes a self-contained
+  `.toml` you can re-run via `getsubtitle --config FILE.toml`.
+- **Edit** — list current answers, jump to one question, replay only that step.
+- **Restart** — confirms before discarding all answers; otherwise returns
+  you to the action menu.
+- **Quit** — clears the draft.
+
+When the action is **Run**, the wizard runs a dependency probe first and
+points out anything missing — pykakasi for Japanese furigana, the Ollama
+daemon if you picked ollama, the DeepL key if you picked DeepL, missing
 Jimaku/Wyzie/SubDL/TMDB keys — and walks you through fixing each gap with
-the right `--set-key` or `pip install` command before the final
-action.
+the right `--set-key` or `pip install` command before dispatching.
+**Save** skips the probe so you can build TOML workflows on one machine
+to run on another.
 
 Reading-aid breadth (Q7) covers every language in the v1.1
 romanization umbrella:
 
 | Language | Modes | Status |
 |---|---|---|
-| Japanese (`ja`) | `hiragana`, `romaji` | Ships today (via `pykakasi`) |
-| Korean (`ko`) | `revised`, `yale` | Wired through; backend lands per ROADMAP |
-| Mandarin (`zh`) | `marks` (pinyin), `numbers` | Wired through; backend lands per ROADMAP |
+| Japanese (`ja`) | `hiragana`, `romaji` | Ships today (`pip install -e ".[furigana]"`) |
+| Korean (`ko`) | `revised`, `yale` | Ships today (`pip install -e ".[romanization-ko]"`) |
+| Mandarin (`zh`) | `marks`, `numbers`, `letters` | Ships today (`pip install -e ".[romanization-zh]"`) |
 | Cantonese (`yue`) | `numbers` (jyutping) | Wired through; backend lands per ROADMAP |
 | Thai, Arabic, Hindi, Russian | Royal Thai / ALA-LC / IAST / ISO-9 | Wired through; backend lands per ROADMAP |
+
+For Korean, install the `romanization-ko` extra to pull `korean-romanizer` (Revised Romanization) and `g2pk` (G2P preprocessing — handles 같이→가치, 읽는→잉는, 한국어→hangugeo correctly). Yale mode is in-tree and needs no extras. For Mandarin, install the `romanization-zh` extra to pull `pypinyin` (handles polyphones and tone sandhi).
 
 Deferred options are flagged with `☆` (vs `★` for ships-now) in the
 wizard menu. The wizard happily saves a TOML referencing a deferred
@@ -253,7 +275,7 @@ getsubtitle --help pipeline      # chain verbs / --config FILE.toml
 getsubtitle --help setup         # first-time onboarding
 getsubtitle --help config        # user_settings.toml defaults
 getsubtitle --help keys          # API key setup
-getsubtitle --help furigana      # Japanese readings
+getsubtitle --help romanization  # reading aids: Japanese furigana, Korean romanization, …
 getsubtitle --help advanced      # troubleshooting, experimental flags
 ```
 
