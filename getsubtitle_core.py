@@ -5535,6 +5535,44 @@ _COMBINED_OUTPUT_PATTERN = re.compile(
 # Furigana variants live in their own .furigana-... segment.
 _FURIGANA_OUTPUT_PATTERN = re.compile(r"\.furigana[-.]", re.I)
 
+# Multi-variant merge support: pseudo-language codes that resolve to the
+# reading-aid side files produced by `modify --reading {lang}:{mode}`.
+# Format: pseudo-lang -> (base_lang, infix_word, mode_token). The infix
+# matches romanization_suffix() — Japanese keeps the historical
+# `.furigana-{mode}` filename infix; other languages use
+# `.romanization-{mode}`.
+_PSEUDO_LANG_VARIANTS: dict[str, tuple[str, str, str]] = {
+    "ja-hiragana": ("ja", "furigana", "hiragana"),
+    "ja-katakana": ("ja", "furigana", "katakana"),
+    "ja-romaji":   ("ja", "furigana", "romaji"),
+    "ko-revised":  ("ko", "romanization", "revised"),
+    "ko-yale":     ("ko", "romanization", "yale"),
+    "zh-marks":    ("zh", "romanization", "marks"),
+    "zh-numbers":  ("zh", "romanization", "numbers"),
+    "zh-letters":  ("zh", "romanization", "letters"),
+    "yue-numbers": ("yue", "romanization", "numbers"),
+}
+
+
+def is_pseudo_lang(code: str) -> bool:
+    """True if `code` is a recognised multi-variant pseudo-lang
+    (e.g. `ja-hiragana`, `ko-revised`, `zh-marks`)."""
+    return code.lower() in _PSEUDO_LANG_VARIANTS
+
+
+def _variant_filename_pattern(pseudo_lang: str) -> re.Pattern[str] | None:
+    """Build a regex matching `.{base}.{infix}-{mode}[.single-line].{ext}`
+    for the given pseudo-lang. Returns None for unknown pseudo-langs."""
+    decoded = _PSEUDO_LANG_VARIANTS.get(pseudo_lang.lower())
+    if decoded is None:
+        return None
+    base, infix, mode = decoded
+    return re.compile(
+        rf"\.({re.escape(base)})\.{re.escape(infix)}-{re.escape(mode)}"
+        rf"(?:\.single-line)?\.(?:srt|vtt|ass|ssa)$",
+        re.I,
+    )
+
 # Thresholds for time-overlap matching. Constants kept here so they're easy
 # to tune without grepping. Each preset has cue-level and episode-level bars
 # plus a max-drift hint used for tie-breaking close cue starts.
@@ -5666,6 +5704,7 @@ def scan_subtitle_files_extended(
     *,
     format_hints: dict[str, str] | None = None,
     include_furigana: bool = False,
+    pseudo_langs: list[str] | None = None,
 ) -> list[tuple[Path, int, int, str, bool, str]]:
     """Walk paths and find subtitle files in SRT, VTT, ASS/SSA, and optionally SAMI.
 
@@ -5675,10 +5714,17 @@ def scan_subtitle_files_extended(
     each SMI file then emits one candidate per requested language that it
     actually contains.
 
+    `pseudo_langs` enables multi-variant merge: each entry is a code like
+    `ja-hiragana`, `ko-revised`, `zh-marks` that resolves to the matching
+    `*.{base}.{infix}-{mode}.{ext}` reading-aid side file. Each match emits
+    a tuple with the pseudo-lang code as the "lang" field, so downstream
+    grouping / stacking treats it as its own language column.
+
     Returns: list[(path, season, episode, lang, is_mt, source_format)]
     where source_format is one of "srt" | "vtt" | "ass" | "ssa" | "smi".
     """
     format_hints = format_hints or {}
+    pseudo_langs = [p for p in (pseudo_langs or []) if is_pseudo_lang(p)]
     out: list[tuple[Path, int, int, str, bool, str]] = []
 
     # SRT (delegate to existing scanner).
@@ -5735,6 +5781,33 @@ def scan_subtitle_files_extended(
             for lang in smi_langs:
                 if lang in by_lang:
                     out.append((smi_path, season, episode, lang, False, "smi"))
+
+    # Multi-variant merge: walk the requested pseudo-langs and emit a row
+    # per matching `.{base}.{infix}-{mode}.{ext}` side file. We deliberately
+    # bypass the is_furigana_output_name skip here — the caller asked for
+    # the variants by name.
+    for pseudo in pseudo_langs:
+        pattern = _variant_filename_pattern(pseudo)
+        if pattern is None:
+            continue
+        discovered_var: list[Path] = []
+        for root in paths:
+            if root.is_file() and pattern.search(root.name):
+                discovered_var.append(root)
+            elif root.is_dir():
+                for ext in ("srt", "vtt", "ass", "ssa"):
+                    discovered_var.extend(sorted(root.rglob(f"*.{ext}")))
+        for path in discovered_var:
+            if not pattern.search(path.name):
+                continue
+            ep = parse_episode_marker(path.name)
+            if not ep:
+                continue
+            season, episode = ep
+            src_fmt = path.suffix.lower().lstrip(".")
+            if src_fmt == "ssa":
+                src_fmt = "ssa"
+            out.append((path, season, episode, pseudo.lower(), False, src_fmt))
 
     return out
 
@@ -6043,7 +6116,12 @@ def combined_output_name(master_path: Path, lang_order: list[str], *, furigana: 
 
     When `furigana` is set and 'ja' is present, the 'ja' token is rewritten
     to 'ja-furigana' so the output filename signals that readings were
-    inlined into the Japanese lines."""
+    inlined into the Japanese lines.
+
+    For multi-variant merge, pseudo-lang codes (`ja-hiragana`, `ko-revised`,
+    `zh-marks`, …) collapse adjacent same-base tokens — e.g. ['ja',
+    'ja-hiragana', 'ja-romaji', 'en'] -> 'ja-hiragana-romaji-en' instead of
+    the redundant 'ja-ja-hiragana-ja-romaji-en'."""
     name = master_path.name
     stem = re.sub(r"\.[a-z]{2,3}(\.mt)?\.srt$", "", name, flags=re.I)
     if stem == name:
@@ -6054,7 +6132,37 @@ def combined_output_name(master_path: Path, lang_order: list[str], *, furigana: 
         # Replace only the first ja so other ja entries (rare) aren't doubled.
         ja_idx = tokens.index("ja")
         tokens[ja_idx] = "ja-furigana"
-    return f"{stem}.{'-'.join(tokens)}.srt"
+    collapsed = _collapse_variant_tokens(tokens)
+    return f"{stem}.{'-'.join(collapsed)}.srt"
+
+
+def _collapse_variant_tokens(tokens: list[str]) -> list[str]:
+    """Collapse adjacent same-base tokens for multi-variant merge filenames.
+
+    Given ['ja', 'ja-hiragana', 'ja-romaji', 'en'], emit
+    ['ja', 'hiragana', 'romaji', 'en'] so the joined form is
+    `ja-hiragana-romaji-en` instead of `ja-ja-hiragana-ja-romaji-en`.
+
+    Bases are tracked per group: a new bare base or a token with a
+    different base starts a new emission group."""
+    out: list[str] = []
+    last_base: str | None = None
+    for tok in tokens:
+        # A pseudo-lang token like 'ja-hiragana' has a hyphen with a
+        # known base prefix. A bare lang code like 'ja' has no hyphen.
+        if "-" in tok and tok.lower() in _PSEUDO_LANG_VARIANTS:
+            base, _, mode = tok.partition("-")
+            if base == last_base:
+                out.append(mode)
+            else:
+                out.append(tok)
+                last_base = base
+        else:
+            out.append(tok)
+            # Use the bare lang as the new base so a following
+            # `lang-variant` collapses to just `-variant`.
+            last_base = tok if "-" not in tok else None
+    return out
 
 
 def combined_output_path(master_path: Path, lang_order: list[str], *, furigana: bool = False, fmt: str = "srt") -> str:
@@ -6198,12 +6306,24 @@ def combine_main(argv: list[str]) -> int:
     langs = split_csv(args.langs, "ja,en")
     if not langs:
         raise CliError("No languages specified. Use -l ja,en or similar.")
+    # Multi-variant merge: identify pseudo-lang codes (ja-hiragana,
+    # ko-revised, zh-marks, …) so the scanner knows to look for the
+    # `.{base}.{infix}-{mode}.{ext}` reading-aid side files. Pseudo-langs
+    # are kept in `langs` so they appear as columns in the stacked output.
+    pseudo_langs = [lang for lang in langs if is_pseudo_lang(lang)]
     # Master language precedence: --master flag > [combine].priority config >
-    # first language in -l.
+    # first language in -l. When master would default to a pseudo-lang and
+    # the base lang is also requested, prefer the base — variants share cue
+    # timing with their base by construction (modify generates them 1:1),
+    # but the base file is usually the authoritative source.
     if args.master:
         master_lang = args.master.lower()
     else:
         master_lang = _combine_master_from_config(langs) or langs[0]
+        if is_pseudo_lang(master_lang):
+            base = _PSEUDO_LANG_VARIANTS[master_lang][0]
+            if base in langs:
+                master_lang = base
     master_lang = master_lang.lower()
     if master_lang not in langs:
         raise CliError(
@@ -6218,13 +6338,15 @@ def combine_main(argv: list[str]) -> int:
             "Path not found: " + ", ".join(str(p) for p in missing)
         )
 
-    # If per-language :format hints are present (from --config TOML
-    # and/or bare `-l ja:vtt,...` syntax), use the extended scanner that
-    # also finds .vtt and (where requested) .smi sources. Otherwise stay
-    # on the SRT-only fast path for behavior parity.
-    if _effective_format_hints:
+    # If per-language :format hints OR pseudo-lang variants are present,
+    # use the extended scanner that also finds .vtt, .ass/.ssa, .smi, and
+    # multi-variant reading-aid side files. Otherwise stay on the
+    # SRT-only fast path for behavior parity.
+    if _effective_format_hints or pseudo_langs:
         scanned_ext = scan_subtitle_files_extended(
-            paths, format_hints=_effective_format_hints,
+            paths,
+            format_hints=_effective_format_hints,
+            pseudo_langs=pseudo_langs,
         )
         grouped = group_subtitle_files_with_hints(
             scanned_ext, format_hints=_effective_format_hints,
@@ -11128,6 +11250,11 @@ Examples:
   getsubtitle merge ~/Movies/Subtitles/MF\\ Ghost -l ja,en
   getsubtitle merge ~/Movies/Subtitles/MF\\ Ghost -l ja,en --master ja --reading ja:hiragana
   getsubtitle merge ~/Movies/Subtitles --subdirectory -l ja,en --format vtt
+  # Multi-variant: stack original + reading-aid variant(s) in one file.
+  getsubtitle merge ~/Movies/Subtitles/MF\\ Ghost -l ja,ja-hiragana,en
+  getsubtitle merge ~/Movies/Subtitles/MF\\ Ghost -l ja,ja-hiragana,ja-romaji,en
+  getsubtitle merge ~/Movies/Subtitles -l ko,ko-revised,en
+  getsubtitle merge ~/Movies/Subtitles -l zh,zh-marks,en
 
 Merge options:
   -l, --langs CODES        Required. Language order for output
@@ -11152,6 +11279,18 @@ Notes:
     multiple formats exist for the same language.
   - --reading ja:hiragana inlines Japanese readings before merging.
   - --sync auto|strict|loose controls how strictly cues match.
+
+Multi-variant merge:
+  Pseudo-lang codes resolve to reading-aid side files generated by
+  `modify --reading {lang}:{mode}`. Recognised codes:
+    ja-hiragana, ja-katakana, ja-romaji
+    ko-revised, ko-yale
+    zh-marks, zh-numbers, zh-letters
+    yue-numbers (wired, backend pending)
+  Output filename collapses adjacent same-base tokens:
+    -l ja,ja-hiragana,ja-romaji,en  ->  Show.ja-hiragana-romaji-en.srt
+  Default master prefers the base language when both base and variant
+  are requested. Variants share cue timing with their base.
 """,
     "pipeline": """\
 Chain fetch / translate / modify / merge into one call.

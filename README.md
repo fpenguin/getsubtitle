@@ -338,6 +338,49 @@ For per-language-pair Ollama model selection see the `[translate.ollama_models]`
 
 For non-anime TV, `-e all` expansion needs a TMDB key (`getsubtitle --set-key tmdb`).
 
+## Multi-variant merge (stack the original with its reading aids)
+
+For kanji-heavy material, stack the original Japanese alongside its
+reading-aid variants in one file:
+
+```sh
+# Original kanji + hiragana variant + English
+getsubtitle merge FOLDER -l ja,ja-hiragana,en
+
+# Maximum study surface: kanji + hiragana + romaji + English
+getsubtitle merge FOLDER -l ja,ja-hiragana,ja-romaji,en
+```
+
+Output filename collapses adjacent same-base tokens:
+`Show.S01E01.ja-hiragana-romaji-en.srt` (not the redundant
+`ja-ja-hiragana-ja-romaji-en`). Same shape works for Korean and Chinese:
+
+```sh
+getsubtitle merge FOLDER -l ko,ko-revised,en        # 한글 + Revised Romanization + English
+getsubtitle merge FOLDER -l zh,zh-marks,en          # 漢字 + nǐ hǎo pinyin + English
+```
+
+Recognised pseudo-lang codes:
+
+| Code           | Resolves to                              |
+|----------------|------------------------------------------|
+| `ja-hiragana`  | `*.ja.furigana-hiragana.{srt,vtt,ass}`   |
+| `ja-katakana`  | `*.ja.furigana-katakana.{srt,vtt,ass}`   |
+| `ja-romaji`    | `*.ja.furigana-romaji.{srt,vtt,ass}`     |
+| `ko-revised`   | `*.ko.romanization-revised.{srt,vtt,ass}`|
+| `ko-yale`      | `*.ko.romanization-yale.{srt,vtt,ass}`   |
+| `zh-marks`     | `*.zh.romanization-marks.{srt,vtt,ass}`  |
+| `zh-numbers`   | `*.zh.romanization-numbers.{srt,vtt,ass}`|
+| `zh-letters`   | `*.zh.romanization-letters.{srt,vtt,ass}`|
+
+The variant files come from `modify --reading {lang}:{mode}`. To do both
+steps in one call, chain them in a pipeline:
+
+```sh
+getsubtitle "URL" --modify --reading ja:hiragana,ja:romaji \
+            --merge -l ja,ja-hiragana,ja-romaji,en
+```
+
 ## asbplayer setup (for true furigana)
 
 1. Open asbplayer settings.

@@ -1,7 +1,30 @@
-# Roadmap  · v1.4
+# Roadmap  · v1.5
 
-What ships in v1.0, what's new in v1.1 / v1.2 / v1.3 / v1.4, what's
-experimental, and what's on the horizon.
+What ships in v1.0, what's new in v1.1 / v1.2 / v1.3 / v1.4 / v1.5,
+what's experimental, and what's on the horizon.
+
+## v1.5 — what's new
+
+- **Multi-variant merge.** Stack the original language plus its
+  reading-aid variants in a single file. Pass pseudo-lang codes to `-l`:
+
+  ```sh
+  getsubtitle merge FOLDER -l ja,ja-hiragana,ja-romaji,en
+  # → Show.S01E01.ja-hiragana-romaji-en.srt with 4 stacked lines per cue
+  ```
+
+  Supported pseudo-langs: `ja-hiragana`, `ja-katakana`, `ja-romaji`,
+  `ko-revised`, `ko-yale`, `zh-marks`, `zh-numbers`, `zh-letters`, and
+  the wired-through `yue-numbers`. Each resolves to the matching
+  `.{base}.{infix}-{mode}.{srt|vtt|ass}` reading-aid side file produced
+  by `modify --reading {lang}:{mode}`. Output filename collapses
+  adjacent same-base tokens so the result is `ja-hiragana-romaji-en`
+  rather than the redundant `ja-ja-hiragana-ja-romaji-en`. Default
+  master prefers the base language when both base and variant are
+  requested (variants share cue timing with their base by construction).
+  Composes naturally with the pipeline form:
+  `getsubtitle URL --modify --reading ja:hiragana --merge -l ja,ja-hiragana,en`
+  generates the variants and stacks them in one call.
 
 ## v1.4 — what's new
 
@@ -181,21 +204,6 @@ experimental, and what's on the horizon.
 
 ## Planned: merge improvements
 
-- **Multi-variant merge** — combine the original language + its romanization
-  variants in a single stacked file. Filenames already carry per-variant
-  suffixes (`.ja.furigana-hiragana.srt`, `.ja.romaji.srt`,
-  `.ko.romanization-revised.srt`, etc.), and the scanner is extended to
-  expose each as a pseudo-lang code:
-
-  ```sh
-  getsubtitle merge FOLDER -l ja,ja-furigana,ja-romaji,en
-  # → episode.ja-furigana-romaji-en.srt with 4 stacked lines per cue
-  ```
-
-  Lets one file carry the original Japanese, its furigana variant, its
-  romaji variant, AND a native-language support line — the maximal study
-  surface for kanji-heavy material. Same shape for Chinese
-  (`zh,zh-pinyin,en`), Korean (`ko,ko-romanized,ja`), etc.
 - Semantic alignment fallback when time-overlap matching is weak (`--sync smart --semantic-engine ollama`).
 - Optional subtitle labels and ordering for combined files.
 - Integration tests using temporary SRT/VTT/SMI folders for end-to-end merge output.
