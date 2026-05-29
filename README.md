@@ -10,14 +10,60 @@ WebVTT for VLC, mpv, IINA, asbplayer, Plex, or Jellyfin.
 
 ## Quickstart
 
-```sh
-# 1. Install (recommended — all three CJK reading-aid backends)
-pip install -e ".[furigana,romanization-ko,romanization-zh]"
+### Option A: GitHub installer
 
-# 2. First-time setup picks providers, keys, and recommendations for you
+Recommended while the project is distributed from GitHub:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/fpenguin/getsubtitle/main/setup.sh -o setup.sh
+sh setup.sh
+getsubtitle -i
+```
+
+The installer creates an isolated Python environment, asks which reading-aid
+backends to install, adds a `getsubtitle` command shim in `~/.local/bin`, and
+offers to run `getsubtitle setup`.
+
+### Option B: pipx from GitHub
+
+Good if you already use `pipx`:
+
+```sh
+pipx install "getsubtitle[furigana,romanization-ko,romanization-zh] @ git+https://github.com/fpenguin/getsubtitle.git"
+getsubtitle setup
+getsubtitle -i
+```
+
+### Option C: developer checkout
+
+```sh
+git clone https://github.com/fpenguin/getsubtitle.git
+cd getsubtitle
+./setup.sh        # must run from the repo root
+```
+
+The installer detects the source checkout (presence of `pyproject.toml`
+and `getsubtitle_core.py` in the current directory) and creates an
+editable venv at `./.venv` instead of the global app venv. Activate it
+each session: `source .venv/bin/activate`.
+
+Manual editable install:
+
+```sh
+pip install -e ".[furigana,romanization-ko,romanization-zh]"
+```
+
+PyPI note: the `getsubtitle` package name is already occupied by an older
+unrelated project, so `pip install getsubtitle` does **not** install this tool
+yet. Use the GitHub installer or `pipx` command above for now.
+
+After installation:
+
+```sh
+# First-time setup picks providers, keys, and recommendations for you
 getsubtitle setup
 
-# 3. Interactive wizard builds and runs one command at a time
+# Interactive wizard builds and runs one command at a time
 getsubtitle -i
 ```
 
@@ -245,7 +291,7 @@ getsubtitle "URL" -l ja --no-reading --no-single-line --no-strip-cc-noise --no-m
 
 Diagnostic scripts under `scripts/` probe Korean, Chinese, and
 European-language subtitle coverage before new providers are wired in.
-See `scripts/README` and ROADMAP.md for the diagnostic workflow.
+See ROADMAP.md for the diagnostic workflow.
 
 ## Responsible use
 

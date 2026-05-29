@@ -1,14 +1,17 @@
 [build-system]
-requires = ["setuptools>=61"]
+# PEP 639 SPDX `license = "MIT"` form below requires setuptools >= 77.
+# Older versions reject the string-typed license and silently mark the
+# wheel as unlicensed when installed via `pip install -e .` directly.
+requires = ["setuptools>=77"]
 build-backend = "setuptools.build_meta"
 
 [project]
 name = "getsubtitle"
-version = "0.1.0"
+version = "1.4.0"
 description = "Download and prepare subtitles for streaming and local media language learning workflows."
 readme = "README.md"
 requires-python = ">=3.10"
-license = { text = "MIT" }
+license = "MIT"
 authors = [
   { name = "getsubtitle contributors" }
 ]
@@ -17,7 +20,6 @@ classifiers = [
   "Development Status :: 3 - Alpha",
   "Environment :: Console",
   "Intended Audience :: End Users/Desktop",
-  "License :: OSI Approved :: MIT License",
   "Programming Language :: Python :: 3",
   "Programming Language :: Python :: 3.10",
   "Programming Language :: Python :: 3.11",
@@ -42,10 +44,15 @@ romanization-ko = ["korean-romanizer>=0.25", "g2pk>=0.9.4"]
 # lookup, polyphones, and built-in tone sandhi. Three modes share one
 # library: `zh:marks` (nǐ hǎo), `zh:numbers` (ni3 hao3), `zh:letters` (ni hao).
 romanization-zh = ["pypinyin>=0.51"]
-dev = ["pytest>=8"]
+dev = ["pytest>=8", "build>=1", "twine>=5"]
 
 [project.scripts]
 getsubtitle = "getsubtitle:main"
+
+[project.urls]
+Homepage = "https://github.com/fpenguin/getsubtitle"
+Repository = "https://github.com/fpenguin/getsubtitle"
+Issues = "https://github.com/fpenguin/getsubtitle/issues"
 
 [tool.setuptools]
 py-modules = ["getsubtitle", "getsubtitle_core"]
