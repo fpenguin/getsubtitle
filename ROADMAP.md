@@ -1,7 +1,58 @@
-# Roadmap  · v1.5
+# Roadmap  · v1.7
 
-What ships in v1.0, what's new in v1.1 / v1.2 / v1.3 / v1.4 / v1.5,
-what's experimental, and what's on the horizon.
+What ships in v1.0, what's new in v1.1 / v1.2 / v1.3 / v1.4 / v1.5 /
+v1.6 / v1.7, what's experimental, and what's on the horizon.
+
+## v1.7 — what's new
+
+- **Interactive step picker.** New Q1 asks which pipeline verbs to run
+  (fetch / translate / modify / merge) up front, with
+  fetch+modify+merge as the default. Subsequent questions are gated on
+  the selected steps — merge-only on a folder skips the URL/title
+  picker, episode scope, MT engine and reading-aid questions; modify-
+  only on a single file skips merge order, master, and format. The
+  emitter switches between pipeline form (`--fetch SOURCE`) and PATH
+  form (positional source) based on whether fetch is selected.
+- **Beginner-friendly wording.** Wizard text now says "AI translation"
+  instead of "MT", "workflow file" instead of "TOML workflow", and
+  drops "pipeline" from the intro. CLI help and code comments stay
+  technical for power users.
+- **Q6 (timing master) lists all languages directly** — no first/custom
+  dichotomy. Q9 (reading aids) has "No reading aid (skip)" as option 1
+  and the default value so beginners press Enter to skip.
+- **Movie filename scan fix.** v1.6's movie filename layout
+  (`Title.<lang>.srt` with no `SxxExx`) broke the scanner so modify and
+  merge couldn't see the file. `parse_episode_marker` now treats
+  `Title.<lang>.<ext>` shapes as the synthetic `(0, 0)` key (rendered
+  as `movie` in progress lines) so the rest of the pipeline finds and
+  groups them correctly. Combined outputs and reading-aid variants
+  still return `None` so the scanner doesn't re-pick its own outputs.
+
+## v1.6 — what's new
+
+- **Interactive wizard polish.** Six rounds of UX touch-ups:
+  - Q5 (episode scope) is skipped automatically for movies (TMDB
+    `/movie/`, Letterboxd `/film/`, and AniList format=MOVIE /
+    single-episode SPECIAL/OVA/ONA candidates).
+  - Reading-aid labels and Q8 examples adapt to the user's primary
+    script (`漢字（かんじ）` for ja, `한글 (hangeul)` for ko,
+    `漢字 (pīnyīn)` for zh).
+  - Q9 (cleanup preset) generalised beyond asbplayer — mentions VLC,
+    mpv, IINA, Infuse, asbplayer, Plex web.
+  - Q11 banner stretches to ~70 chars with section dividers between
+    the CLI form and the workflow preview.
+  - After a successful Run, the wizard offers to open the output
+    folder in the OS file manager.
+  - Deferred reading aids (yue/th/ar/hi/ru) are stripped before Run so
+    the modify step doesn't crash; the Save flow keeps them so the
+    saved workflow re-runs cleanly once the backend ships.
+  - Cross-provider Japanese fallback: when ja is requested and the
+    anime-IDs DB lookup misses (common for anime movies), the wizard
+    searches AniList by title (movie-biased) so Jimaku gets a chance
+    at finding native Japanese subs.
+  - Movie filenames flatten to `Title/<Title>.<lang>.srt` instead of
+    `Title/Season Unknown/<Title> - S00E00.<lang>.srt`. (Note: the
+    accompanying scanner fix landed in v1.7.)
 
 ## v1.5 — what's new
 

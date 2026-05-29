@@ -168,28 +168,43 @@ getsubtitle -i                # or: getsubtitle --interactive
                               # or: getsubtitle interactive
 ```
 
-What it asks (11 questions):
+The wizard opens with a step picker so focused workflows skip
+irrelevant questions:
 
-| Q  | Topic | Maps to |
-|----|---|---|
-| 1  | URL or folder | `--fetch SOURCE` |
-| 2  | Languages to collect | `--languages ja,ko,en,…` |
-| 3  | Display order (top → bottom) | `--merge --languages …` |
-| 4  | Which language controls timing | `--master ja` |
-| 5  | Episode scope (URL only) | `--season`, `--episode` |
-| 6  | MT fallback engine | `--translate argos\|ollama\|deepl` |
-| 7  | Reading aids (multi-select) | `--reading ja:hiragana,ko:revised,…` |
-| 8  | asbplayer preset | `--single-line --strip-cc-noise --format vtt` |
-| 9  | Output format | `--format srt\|vtt\|ass` |
-| 10 | Output folder | `--output PATH` |
-| 11 | Run / Save / Edit / Restart / Quit | (final action) |
+```
+Q1. What do you want getsubtitle to do?
+    1) Fetch     — download subtitles from a URL or title
+    2) Translate — fill any missing language with AI translation
+    3) Modify    — clean up cues, add reading aids (furigana/pinyin/…)
+    4) Merge     — stack multiple languages into one study file
 
-After Q10 the wizard prints both the CLI command and the equivalent
-TOML workflow so you can sanity-check before committing. The final-action
-menu offers:
+    Default: fetch + modify + merge (no AI translation).
+```
 
-- **Run** — confirms once, then dispatches the pipeline. Defaults to *Run*
-  for local-folder sources, *Save* for URL/title sources (slow network jobs).
+What it asks (up to 12 questions; many are skipped based on Q1):
+
+| Q   | Topic                                        | Maps to                                       |
+|-----|----------------------------------------------|-----------------------------------------------|
+| 1   | Which steps to run (fetch/translate/modify/merge) | the verbs in the emitted command         |
+| 2   | Source kind (title / URL / folder/file)      | `--fetch SOURCE`                              |
+| 3   | URL or title or path                         | `--fetch ARG` / positional PATH               |
+| 4   | Languages to collect                         | `--languages ja,ko,en,…`                      |
+| 5   | Display order (top → bottom)                 | `--merge --languages …`                       |
+| 6   | Which language controls timing               | `--master ja`                                 |
+| 7   | Episode scope (URL/title, TV only)           | `--season`, `--episode`                       |
+| 8   | AI-translation engine                        | `--translate argos\|ollama\|deepl`            |
+| 9   | Reading aids (multi-select)                  | `--reading ja:hiragana,ko:revised,…`          |
+| 10  | Cleanup preset                               | `--single-line --strip-cc-noise`              |
+| 11  | Output format                                | `--format srt\|vtt\|ass\|smi\|txt`            |
+| 12  | Output folder                                | `--output PATH`                               |
+
+After Q12 the wizard prints both the terminal command and the
+equivalent **workflow file** (in TOML, saveable as `.toml`) so you can
+sanity-check before committing. The final-action menu offers:
+
+- **Run** — dispatches immediately and offers to open the output folder
+  in your file manager when finished. Defaults to *Run* for local
+  sources, *Save* for URL/title sources (slow network jobs).
 - **Save** — re-prompts on overwrite collisions; writes a self-contained
   `.toml` you can re-run via `getsubtitle --config FILE.toml`.
 - **Edit** — list current answers, jump to one question, replay only that step.
@@ -202,15 +217,34 @@ points out anything missing — pykakasi for Japanese furigana, the Ollama
 daemon if you picked ollama, the DeepL key if you picked DeepL, missing
 Jimaku/Wyzie/SubDL/TMDB keys — and walks you through fixing each gap with
 the right `--set-key` or `pip install` command before dispatching.
-**Save** skips the probe so you can build TOML workflows on one machine
+**Save** skips the probe so you can build workflow files on one machine
 to run on another.
+
+### Focused-subset workflows
+
+The step picker unlocks three common one-off scenarios:
+
+```sh
+# Drop a folder of .srt files, merge into one .vtt:
+#   Q1='4' (merge-only) → Q2 path → Q4 langs → Q5 order → Q6 master
+#   → Q10 cleanup → Q11 format → Q12 output.
+getsubtitle PATH --languages ja,en --merge --languages ja,en --format vtt
+
+# Drop a single .ja.srt to add furigana:
+#   Q1='3' (modify-only) → Q3 file → Q4 lang → Q9 reading aid.
+getsubtitle FILE --languages ja --modify --reading ja:hiragana
+
+# Translate-only on a folder of mixed-language files:
+#   Q1='2' (translate-only) → Q3 path → Q4 langs → Q8 engine.
+getsubtitle PATH --languages ja,ko --translate deepl
+```
 
 Reading-aid breadth (Q7) covers every language in the v1.1
 romanization umbrella:
 
 | Language | Modes | Status |
 |---|---|---|
-| Japanese (`ja`) | `hiragana`, `romaji` | Ships today (`pip install -e ".[furigana]"`) |
+| Japanese (`ja`) | `hiragana`, `katakana`, `romaji` | Ships today (`pip install -e ".[furigana]"`) |
 | Korean (`ko`) | `revised`, `yale` | Ships today (`pip install -e ".[romanization-ko]"`) |
 | Mandarin (`zh`) | `marks`, `numbers`, `letters` | Ships today (`pip install -e ".[romanization-zh]"`) |
 | Cantonese (`yue`) | `numbers` (jyutping) | Wired through; backend lands per ROADMAP |

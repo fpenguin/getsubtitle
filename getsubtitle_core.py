@@ -10797,7 +10797,7 @@ Quick start:
 
 Subcommands (each has its own --help):
   setup         First-time onboarding: keys, config, recommendations.
-  interactive   Guided wizard — asks 11 questions, then saves/runs/edits.
+  interactive   Guided wizard — picks the steps, asks the needed Qs, runs/saves.
   fetch         Download from URL, or scan a folder. (Bare URL works too.)
   translate     Fill missing-language SRTs via MT (argos / ollama / deepl).
   modify        Cleanup, romanization (furigana / pinyin / jyutping / hangul / …), SAMI→SRT conversion.
@@ -11561,65 +11561,91 @@ Interactive workflow builder.
   getsubtitle --interactive
   getsubtitle interactive
 
-Walks through a guided Q&A and shows the equivalent CLI command plus
-the equivalent TOML workflow before letting you pick a final action.
+Walks through a guided Q&A and shows the equivalent terminal command
+plus a saveable workflow file before letting you pick a final action.
 
 What it asks:
-  Q1.  Source kind — title search / streaming URL / folder or file
+  Q1.  Which steps to run — fetch / translate / modify / merge.
+         Default: fetch + modify + merge (no AI translation).
+         Pick a subset to skip irrelevant downstream questions:
+           '4'   → merge-only (folder of existing .srt files)
+           '3'   → modify-only (add furigana to a single .ja.srt)
+           '2'   → translate-only
+           '3,4' → modify + merge
+           'a'   → all four
+  Q2.  Source kind — title search / streaming URL / folder or file.
          (default flips to 'folder' when no TMDB key is configured,
-          so first-time users land on the most reliable path)
-  Q2.  The actual title / URL / path
+          so first-time users land on the most reliable path.
+          Skipped when fetch isn't selected — source defaults to a
+          local path the user is dropping in for modify / merge.)
+  Q3.  The actual title / URL / path.
          (title search picks among TMDB + AniList candidates, with
           'r) Re-enter a different title' to abandon poor hits)
          (path input strips wrapping single/double quotes — drag-drop
           from Finder / GNOME Files / Konsole now works as expected)
-  Q3.  Languages to collect (comma list: ja,en,ko,es,…)
-  Q4.  Display order (top → bottom on screen)
-  Q5.  Which language controls timing (default: first displayed)
-  Q6.  Episode scope (URL only): movie / season+episode / all / auto
-  Q7.  MT fallback for missing languages: argos / ollama / deepl / skip
-  Q8.  Reading aids — phonetic guides above the original script:
-         ja:hiragana / ja:katakana / ja:romaji           (★ ships now)
-         ko:revised / ko:yale                            (★ ships now)
-         zh:marks / zh:numbers / zh:letters              (★ ships now)
-         yue:numbers (jyutping)                          (☆ wired through; backend coming)
-         th:royal-thai / ar:ala-lc / etc.                (☆ wired through; backend coming)
-  Q9.  asbplayer preset (single-line + cleanup + ruby VTT)
-  Q10. Final format: SRT / VTT / SMI / ASS / TXT
-  Q11. Output folder
+  Q4.  Languages to collect (comma list: ja,en,ko,es,…).
+  Q5.  Display order (top → bottom on screen). Only when merging.
+  Q6.  Which language controls timing — one option per collected
+         language, no hidden 'Custom' branch. Only when merging.
+  Q7.  Episode scope (URL/title, TV only): movie / season+episode /
+         all / auto. Skipped automatically for movies (TMDB /movie/,
+         AniList format=MOVIE, single-episode SPECIAL/OVA/ONA).
+  Q8.  AI translation engine: skip / argos / ollama / deepl. Only
+         when translate is selected.
+  Q9.  Reading aids — phonetic guides for the original script. Option
+         '1' is 'No reading aid (skip)' and the default; aids start at 2:
+           ja:hiragana / ja:katakana / ja:romaji           (★ ships now)
+           ko:revised / ko:yale                            (★ ships now)
+           zh:marks / zh:numbers / zh:letters              (★ ships now)
+           yue:numbers (jyutping)                          (☆ backend coming)
+           th:royal-thai / ar:ala-lc / etc.                (☆ backend coming)
+         The header example adapts to the user's primary script
+         (漢字（かんじ） for ja, 한글 (hangeul) for ko, 漢字 (pīnyīn) for zh).
+  Q10. Cleanup preset — single-line cues + strip broadcast noise.
+         Works in any player (VLC, mpv, IINA, Infuse, asbplayer, Plex web).
+  Q11. Final format: SRT / VTT / SMI / ASS / TXT. Only when merging.
+  Q12. Output folder.
 
 Final action menu:
-  a) Run it now      — confirms once, then dispatches the pipeline.
-                       Default for local-folder sources; URL/title
-                       sources default to (b) since fetches can be slow.
-  b) Save as TOML    — re-prompts on overwrite collisions instead of
-                       bailing. Run later via `getsubtitle --config FILE.toml`.
+  a) Run it now      — dispatches immediately. Default for local sources;
+                       URL/title sources default to (b) since fetches can
+                       be slow. Offers to open the output folder when
+                       finished.
+  b) Save as a workflow file
+                     — writes a self-contained .toml. Re-prompts on
+                       overwrite collisions. Run later via
+                       `getsubtitle --config FILE.toml`.
   c) Edit an answer  — list current answers, jump to one question.
   d) Start over      — confirms 'discard all answers?' before clearing.
   e) Quit
 
-Before the action menu the wizard prints both the CLI form AND the TOML
-form so you can sanity-check. If a reading aid wants VTT ruby but the
-format is set to something else, a one-line warning surfaces here.
+Before the action menu the wizard prints both the terminal command AND
+the equivalent workflow file (in TOML, saveable as .toml) so you can
+sanity-check. If a reading aid wants VTT ruby but the format is set to
+something else, a one-line warning surfaces here.
 
 When you pick **Run**, the wizard probes your environment for missing
 pieces — the pykakasi package for Japanese furigana, korean-romanizer +
 g2pk for Korean, pypinyin for Mandarin, the Ollama daemon if you picked
-ollama MT, the DeepL key if you picked DeepL, missing Jimaku/Wyzie/TMDB
-keys — and walks you through fixing each gap before dispatching. **Save**
-skips the probe so you can build TOML workflows on one machine for use
-on another.
+ollama, the DeepL key if you picked DeepL, missing Jimaku/Wyzie/TMDB
+keys — and walks you through fixing each gap before dispatching. Deferred
+reading aids (yue/th/ar/hi/ru) are stripped before Run so the modify
+step doesn't crash; Save keeps them so the workflow re-runs once the
+backend ships. **Save** skips the probe entirely so you can build
+workflow files on one machine for use on another.
 
 Limitations:
   - Requires an attached terminal (fails cleanly otherwise).
-  - One language alone skips Q4/Q5 and the merge step.
+  - One language alone skips display order / master and the merge step.
   - Cantonese / Thai / Arabic / Hindi / Russian reading-aid backends
-    are not yet shipped; the wizard still accepts and saves them so
-    you can re-run once the backend lands.
+    are not yet shipped; the wizard accepts and saves them so you can
+    re-run once the backend lands.
 
 Tips:
   - Press 'q' at any prompt to quit; answers are auto-saved to
     ~/.cache/getsubtitle/wizard-draft.toml so you can resume later.
+  - Movie filenames are flattened to <Title>/<Title>.<lang>.srt
+    (no Season Unknown / S00E00 placeholders).
   - The wizard generates the v1.4 canonical names everywhere
     (--languages, --engine, --mt-source, --reading, --reading-format
     on the CLI; mt_source / reading / reading_format in TOML).
