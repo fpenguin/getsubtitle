@@ -6556,7 +6556,10 @@ def test_toml_pipeline_retain_folder_structure_underscore_and_hyphen():
 
 def _wizard_state(**overrides):
     """Build a populated _WizardState (URL pipeline by default).
-    Tests then mutate only the fields they care about."""
+    Tests then mutate only the fields they care about. v1.7+ uses the
+    all-in-one step set so existing emitter assertions about
+    --translate / [translate] keep firing; tests that exercise a focused
+    subset override `steps=` explicitly."""
     s = MODULE["_WizardState"](
         source="https://www.imdb.com/title/tt28299608/",
         source_kind="url",
@@ -6569,6 +6572,7 @@ def _wizard_state(**overrides):
         asbplayer=True,
         format="vtt",
         output="~/Movies/Subtitles",
+        steps={"fetch", "translate", "modify", "merge"},
     )
     for k, v in overrides.items():
         setattr(s, k, v)
@@ -6946,7 +6950,157 @@ def test_wizard_q11_banner_uses_fixed_70_char_rule():
     assert "About to run" not in out
 
 
+# ─── v1.7 step picker (Q1) ──────────────────────────────────────────
 
+
+def test_wizard_state_default_steps_include_fetch_modify_merge():
+    """Default step set is the 'recommended all-in-one' — fetch + modify
+    + merge. Translate is opt-in so users don't accidentally start MT."""
+    s = MODULE["_WizardState"]()
+    assert s.steps == {"fetch", "modify", "merge"}
+
+
+def test_wizard_q0_steps_accepts_numbers_and_all_alias():
+    """Q1 step picker parses '1,3,4' / 'a' / 'all' / step names; defaults
+    to the all-in-one when the user presses Enter."""
+    import io, contextlib
+    fn_g = MODULE["_wizard_q0_steps"].__globals__
+    saved = fn_g.get("input")
+    try:
+        # Pressing Enter -> default 1,3,4 (fetch/modify/merge).
+        fn_g["input"] = lambda *a, **k: ""
+        s = MODULE["_WizardState"]()
+        with contextlib.redirect_stdout(io.StringIO()):
+            MODULE["_wizard_q0_steps"](s)
+        assert s.steps == {"fetch", "modify", "merge"}
+        # 'a' -> all four steps.
+        fn_g["input"] = lambda *a, **k: "a"
+        s = MODULE["_WizardState"]()
+        with contextlib.redirect_stdout(io.StringIO()):
+            MODULE["_wizard_q0_steps"](s)
+        assert s.steps == {"fetch", "translate", "modify", "merge"}
+        # Single number -> single step. Drives merge-only / modify-only.
+        fn_g["input"] = lambda *a, **k: "4"
+        s = MODULE["_WizardState"]()
+        with contextlib.redirect_stdout(io.StringIO()):
+            MODULE["_wizard_q0_steps"](s)
+        assert s.steps == {"merge"}
+        fn_g["input"] = lambda *a, **k: "3"
+        s = MODULE["_WizardState"]()
+        with contextlib.redirect_stdout(io.StringIO()):
+            MODULE["_wizard_q0_steps"](s)
+        assert s.steps == {"modify"}
+        # Multi-select.
+        fn_g["input"] = lambda *a, **k: "3,4"
+        s = MODULE["_WizardState"]()
+        with contextlib.redirect_stdout(io.StringIO()):
+            MODULE["_wizard_q0_steps"](s)
+        assert s.steps == {"modify", "merge"}
+        # Step names also work.
+        fn_g["input"] = lambda *a, **k: "merge,translate"
+        s = MODULE["_WizardState"]()
+        with contextlib.redirect_stdout(io.StringIO()):
+            MODULE["_wizard_q0_steps"](s)
+        assert s.steps == {"merge", "translate"}
+    finally:
+        if saved is not None:
+            fn_g["input"] = saved
+
+
+def test_wizard_emit_cli_merge_only_drops_fetch_and_translate():
+    """Scenario: user dropped a folder of .ja.srt/.en.srt and just wants
+    to merge them into one VTT. The emitted CLI is a PATH-form merge
+    command with no --fetch or --translate noise."""
+    s = MODULE["_WizardState"](
+        source="/Users/mba/Movies/Show",
+        source_kind="path",
+        languages=["ja", "en"],
+        order=["ja", "en"],
+        format="vtt",
+        output="~/Movies/Subtitles",
+        steps={"merge"},
+    )
+    cli = MODULE["_wizard_emit_cli_string"](s)
+    assert "--fetch" not in cli
+    assert "--translate" not in cli
+    assert "--modify" not in cli
+    assert "--merge" in cli
+    assert "--format vtt" in cli
+    assert cli.startswith("getsubtitle /Users/mba/Movies/Show")
+
+
+def test_wizard_emit_toml_merge_only_omits_translate_and_modify_sections():
+    s = MODULE["_WizardState"](
+        source="/tmp/Show",
+        source_kind="path",
+        languages=["ja", "en"],
+        order=["ja", "en"],
+        format="vtt",
+        steps={"merge"},
+    )
+    toml_text = MODULE["_wizard_emit_toml"](s)
+    assert "[fetch]" in toml_text   # carries source = "PATH"
+    assert "[translate]" not in toml_text
+    assert "[modify]" not in toml_text
+    assert "[merge]" in toml_text
+    # And no `no_engine = true` since fetch isn't selected.
+    assert "no_engine" not in toml_text
+
+
+def test_wizard_emit_cli_modify_only_on_single_file():
+    """Scenario: user wants furigana on a single .ja.srt they already
+    have. The CLI form: getsubtitle FILE --modify --reading ja:hiragana."""
+    s = MODULE["_WizardState"](
+        source="/tmp/ep01.ja.srt",
+        source_kind="path",
+        languages=["ja"],
+        reading_aids=["ja:hiragana"],
+        steps={"modify"},
+    )
+    cli = MODULE["_wizard_emit_cli_string"](s)
+    assert "--fetch" not in cli
+    assert "--merge" not in cli
+    assert "--translate" not in cli
+    assert "--modify" in cli
+    assert "--reading ja:hiragana" in cli
+    assert cli.startswith("getsubtitle /tmp/ep01.ja.srt")
+
+
+def test_wizard_emit_cli_translate_only_path_form():
+    """Translate-only path: getsubtitle FOLDER --translate ENGINE."""
+    s = MODULE["_WizardState"](
+        source="/tmp/Show",
+        source_kind="path",
+        languages=["ja", "ko"],
+        mt_engine="deepl",
+        steps={"translate"},
+    )
+    cli = MODULE["_wizard_emit_cli_string"](s)
+    assert "--fetch" not in cli
+    assert "--merge" not in cli
+    assert "--modify" not in cli
+    assert "--translate deepl" in cli
+
+
+def test_wizard_default_full_pipeline_still_emits_fetch_modify_merge():
+    """Default steps (no user override) produce the same shape as the
+    pre-v1.7 wizard: --fetch, --modify, --merge."""
+    s = MODULE["_WizardState"](
+        source="https://www.themoviedb.org/movie/8392",
+        source_kind="url",
+        languages=["ja", "en"],
+        order=["ja", "en"],
+        reading_aids=["ja:hiragana"],
+        asbplayer=True,
+        format="vtt",
+        output="~/Movies/Subtitles",
+        is_movie=True,
+    )
+    cli = MODULE["_wizard_emit_cli_string"](s)
+    assert "--fetch" in cli
+    assert "--modify" in cli
+    assert "--merge" in cli
+    assert "--no-engine" in cli  # no MT requested
 
 def test_wizard_q4_master_is_first_or_custom():
     """Q5 (timing master) collapsed to two options:

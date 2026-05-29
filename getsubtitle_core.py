@@ -11848,18 +11848,28 @@ class _WizardState:
     final_action: str = "run"              # Q12: run | save | restart | quit | edit
     save_path: str = ""                    # Q11 sub-prompt
     is_movie: bool = False                 # Q1 hint: skip Q6 (episode scope) when set
+    # Q1 step picker — which pipeline verbs to include. Default is the
+    # 'recommended all-in-one' (fetch + modify + merge). The translate
+    # verb is opt-in to protect users from accidentally kicking off MT.
+    # Modify-only / merge-only / translate-only variants drop the verbs
+    # they don't need from the emitted CLI and skip the corresponding
+    # questions downstream.
+    steps: set[str] = field(default_factory=lambda: {"fetch", "modify", "merge"})
 
     def to_toml(self) -> str:
         """Serialize as a TOML draft for resume support. Quick-and-dirty
-        — only strings and bools; lists become comma-joined strings."""
+        — only strings and bools; lists/sets become comma-joined strings."""
         lines = ["# getsubtitle wizard draft — auto-saved; safe to delete.\n"]
         lines.append("[wizard]\n")
         for f in fields(self):
             v = getattr(self, f.name)
             if isinstance(v, bool):
                 lines.append(f'{f.name} = {"true" if v else "false"}\n')
-            elif isinstance(v, list):
-                lines.append(f'{f.name} = "{",".join(v)}"\n')
+            elif isinstance(v, (list, set)):
+                # Sets aren't ordered — sort for determinism so the draft
+                # round-trips identically and tests can match on substrings.
+                items = sorted(v) if isinstance(v, set) else v
+                lines.append(f'{f.name} = "{",".join(items)}"\n')
             else:
                 lines.append(f'{f.name} = "{v}"\n')
         return "".join(lines)
@@ -12049,10 +12059,78 @@ def _wizard_pick_title_candidate(title: str) -> tuple[str, str, str, bool] | Non
     return row["url"], row["provider"], row["label"], row.get("is_movie", False)
 
 
-def _wizard_q1_source(state: _WizardState) -> None:
-    """Q1/Q2: choose source kind first, then collect the actual URL/path."""
+_VALID_STEPS = ("fetch", "translate", "modify", "merge")
+
+
+def _wizard_q0_steps(state: _WizardState) -> None:
+    """Q1: pick which pipeline steps to include. The user can run the
+    full pipeline (default) or a focused subset — e.g. 'just merge' for
+    a folder of existing .srt files, or 'just modify' to add furigana
+    to a single .ja.srt the user already has. Skipping steps avoids
+    asking irrelevant questions downstream and keeps the emitted CLI
+    short."""
     print()
-    print("Q1. What should getsubtitle work on?")
+    print("Q1. What do you want getsubtitle to do?")
+    print("    1) Fetch     — download subtitles from a URL or title")
+    print("    2) Translate — fill missing languages via MT (argos/ollama/deepl)")
+    print("    3) Modify    — clean up cues, add reading aids (furigana/pinyin/…)")
+    print("    4) Merge     — stack multiple languages into one study file")
+    print()
+    print("    Default: fetch + modify + merge (skip MT).")
+    print("    Common shortcuts: '4' for merge-only, '3' for modify-only,")
+    print("    '2' for translate-only, '3,4' for modify + merge.")
+    raw = _wizard_prompt(
+        "Numbers (comma-separated), 'a' for all, or Enter for default",
+        "1,3,4",
+    ).strip().lower()
+    if raw in ("a", "all"):
+        state.steps = set(_VALID_STEPS)
+        return
+    mapping = {"1": "fetch", "2": "translate", "3": "modify", "4": "merge",
+               "fetch": "fetch", "translate": "translate",
+               "modify": "modify", "merge": "merge"}
+    picked: set[str] = set()
+    for tok in raw.split(","):
+        tok = tok.strip()
+        if not tok:
+            continue
+        step = mapping.get(tok)
+        if step is None:
+            print(f"    (ignored unrecognised step {tok!r})")
+            continue
+        picked.add(step)
+    if not picked:
+        raise CliError("interactive: pick at least one step.")
+    state.steps = picked
+    # If only a single verb is selected, surface what the wizard will
+    # ask next so the user feels oriented before answering Q2.
+    label = " + ".join(s for s in _VALID_STEPS if s in picked)
+    print(f"    Selected: {label}.")
+
+
+def _wizard_q1_source(state: _WizardState) -> None:
+    """Q2: choose source kind, then collect the actual URL/path. When
+    fetch is NOT in state.steps, the URL/title branches are hidden —
+    modify/merge/translate work on local files, not URLs."""
+    print()
+    if "fetch" not in state.steps:
+        # No URL/title branch — the local-path branch is the only one
+        # that makes sense for modify/merge/translate alone.
+        state.source_kind = "path"
+        print("Q2. Folder or file to process.")
+        print("    Drop a folder of .srt files, a single .srt file, or any path")
+        print("    your selected step(s) should operate on.")
+        while True:
+            src = _wizard_prompt("Folder or file path")
+            try:
+                path, description = _wizard_describe_path_source(src)
+            except CliError as exc:
+                print(f"    {exc}")
+                continue
+            state.source = str(path)
+            print(f"    Identified as: {description}")
+            return
+    print("Q2. What should getsubtitle work on?")
     print("    a) A movie/show title (The Simpsons, Totoro, The Matrix, …)")
     print("    b) A streaming/catalog URL (IMDb, AniList, Netflix, Crunchyroll, …)")
     print("    c) A folder or file on disk (your Plex/Movies, ~/Downloads, …)")
@@ -12073,7 +12151,7 @@ def _wizard_q1_source(state: _WizardState) -> None:
         state.source_kind = "url"
     print()
     if state.source_kind == "url":
-        print("Q2. Enter the URL.")
+        print("Q3. Enter the URL.")
         while True:
             src = _wizard_prompt("URL")
             if _looks_like_url(src):
@@ -12083,7 +12161,7 @@ def _wizard_q1_source(state: _WizardState) -> None:
                 return
             print("    That does not look like an http/https URL. Try again, or enter 'q' to quit.")
     if state.source_kind == "title":
-        print("Q2. Enter the movie or show title.")
+        print("Q3. Enter the movie or show title.")
         while True:
             title = _wizard_prompt("Title")
             if _looks_like_url(title):
@@ -12113,7 +12191,7 @@ def _wizard_q1_source(state: _WizardState) -> None:
                 state.is_movie = picked_is_movie or _wizard_url_is_movie(picked_url)
                 print(f"    Locked to ID source: {label} [{provider}]")
             return
-    print("Q2. Enter the folder or file path.")
+    print("Q3. Enter the folder or file path.")
     while True:
         src = _wizard_prompt("Folder or file path")
         try:
@@ -12128,7 +12206,7 @@ def _wizard_q1_source(state: _WizardState) -> None:
 
 def _wizard_q2_languages(state: _WizardState) -> None:
     print()
-    print("Q3. Which subtitle languages do you want to collect?")
+    print("Q4. Which subtitle languages do you want to collect?")
     print("    Examples: ja,en   ja,ko,en,es   japanese,korean,english")
     raw = _wizard_prompt("Languages (comma-separated)", "ja,en")
     parts = [p.strip().lower() for p in raw.split(",") if p.strip()]
@@ -12154,7 +12232,7 @@ def _wizard_q3_order(state: _WizardState) -> None:
         return
     default_order = ",".join(state.languages)
     print()
-    print("Q4. Subtitle display order (top → bottom on screen).")
+    print("Q5. Subtitle display order (top → bottom on screen).")
     print(f"    Default: {default_order}")
     if len(state.languages) >= 2:
         language_names = {
@@ -12204,7 +12282,7 @@ def _wizard_q4_master(state: _WizardState) -> None:
     # offer first-displayed (the common case) and a custom override
     # over the collected languages.
     print()
-    print("Q5. Which language controls cue timing (the 'master' track)?")
+    print("Q6. Which language controls cue timing (the 'master' track)?")
     print(f"    a) First displayed — {state.order[0]} (recommended)")
     print(f"    b) Custom — any of: {', '.join(state.order)}")
     pick = _wizard_prompt("Choose a/b", "a").lower()
@@ -12234,7 +12312,7 @@ def _wizard_q5_scope(state: _WizardState) -> None:
         state.episode = ""
         return
     print()
-    print("Q6. What episode scope?")
+    print("Q7. What episode scope?")
     print("    a) Movie / single item (no season/episode)")
     print("    b) A specific season + episode (or range)")
     print("    c) Whole season, every episode (-e all)")
@@ -12265,7 +12343,7 @@ def _wizard_q5_scope(state: _WizardState) -> None:
 
 def _wizard_q6_translate(state: _WizardState) -> None:
     print()
-    print("Q7. If a language is missing, what should we do?")
+    print("Q8. If a language is missing, what should we do?")
     print("    a) Skip — accept gaps (no AI-translation)")
     print("    b) Argos — offline, low quality (free)")
     print("    c) Ollama — offline, good quality (free; slow)")
@@ -12287,7 +12365,7 @@ def _wizard_q7_reading_aids(state: _WizardState) -> None:
         state.reading_aids = []
         return
     print()
-    print("Q8. Reading aids (phonetic guides for the original script).")
+    print("Q9. Reading aids (phonetic guides for the original script).")
     # Pick a script-appropriate example so Korean / Mandarin users don't
     # see a kanji-only sample. Falls back to a Japanese example only when
     # ja is the first relevant language.
@@ -12333,7 +12411,7 @@ def _wizard_q7_reading_aids(state: _WizardState) -> None:
 
 def _wizard_q8_asbplayer(state: _WizardState) -> None:
     print()
-    print("Q9. Apply learner-friendly cleanup? (single-line cues + strip")
+    print("Q10. Apply learner-friendly cleanup? (single-line cues + strip")
     print("    broadcast noise like ➡). Works in any player.")
     state.asbplayer = _wizard_yesno("Apply cleanup preset?", default=True)
 
@@ -12343,7 +12421,7 @@ def _wizard_q9_format(state: _WizardState) -> None:
                      for spec in state.reading_aids)
     default = "vtt" if (state.asbplayer and needs_ruby) else "srt"
     print()
-    print("Q10. Final output format.")
+    print("Q11. Final output format.")
     print("    a) SRT  — most compatible (default if no ruby reading aid)")
     print("    b) VTT  — renders ruby reading aids above the script.")
     print("             Supported by VLC, mpv/IINA, browsers, web players,")
@@ -12365,7 +12443,7 @@ def _wizard_q9_format(state: _WizardState) -> None:
 
 def _wizard_q10_output(state: _WizardState) -> None:
     print()
-    print("Q11. Where should the final files go?")
+    print("Q12. Where should the final files go?")
     print("    a) Default — ~/Movies/Subtitles")
     print("    b) Same folder as the source files (in-place)")
     print("    c) Custom folder")
@@ -12425,6 +12503,7 @@ def _wizard_q11_action(state: _WizardState) -> str:
 # Question dispatch table keeps the orchestrator readable and the test
 # harness focused — tests can call individual questions via this table.
 _WIZARD_STEPS: list[tuple[str, "callable"]] = [
+    ("steps",         _wizard_q0_steps),
     ("source",        _wizard_q1_source),
     ("languages",     _wizard_q2_languages),
     ("order",         _wizard_q3_order),
@@ -12458,6 +12537,29 @@ def _run_wizard(state: _WizardState | None = None) -> tuple[_WizardState, str]:
             "format": state.format != "",
         }
         if prefilled.get(label, False):
+            continue
+        # Step gating: skip Qs whose verb isn't in state.steps. This is
+        # what makes 'merge-only' on a folder of .srt files skip the MT
+        # engine and reading-aid questions; modify-only on a single file
+        # skip the merge-order / master / format questions; etc.
+        skip = {
+            # Episode scope is fetch-only (URLs/titles need season+episode).
+            "scope":        "fetch" not in state.steps,
+            "translate":    "translate" not in state.steps,
+            "reading_aids": "modify" not in state.steps,
+            # The asbplayer / cleanup preset is meaningful for both modify
+            # and merge — only skip when neither is selected.
+            "asbplayer":    not (state.steps & {"modify", "merge"}),
+            # Output format is a merge concern; for modify-only / translate-
+            # only the format is implied by --reading-format or the input.
+            "format":       "merge" not in state.steps,
+            # Display order + master only matter when merging two+ langs.
+            "order":        "merge" not in state.steps,
+            "master":       "merge" not in state.steps,
+            # Translate-only paths need a target-lang list but skip the rest
+            # of the multi-language questions when only ONE lang is wanted.
+        }
+        if skip.get(label, False):
             continue
         fn(state)
         _wizard_save_draft(state)
@@ -12508,38 +12610,46 @@ def _wizard_emit_cli(state: _WizardState) -> list[str]:
     """Build a canonical-form argv list for the wizard's answers.
 
     Uses the v1.1 long names: --languages, --engine, --mt-source,
-    --reading (NOT --furigana). Output is suitable for shell-quoting
-    via shlex.join."""
+    --reading (NOT --furigana). Honors state.steps so modify-only /
+    merge-only / translate-only paths emit a focused command without
+    --fetch noise or unwanted verbs."""
     argv: list[str] = ["getsubtitle"]
-    # Pipeline form. We always emit --fetch X so URL vs path is captured
-    # uniformly and downstream verbs are explicit.
-    if state.source_kind == "title":
-        argv += ["--fetch", "--title", state.source]
+    steps = state.steps or {"fetch", "modify", "merge"}
+    # Source. With fetch in steps, emit --fetch and (for URL/title) the
+    # season/episode slicing. Without fetch, the source path is the
+    # input for modify/merge/translate and goes at the head of argv.
+    if "fetch" in steps:
+        if state.source_kind == "title":
+            argv += ["--fetch", "--title", state.source]
+        else:
+            argv += ["--fetch", state.source]
+        if state.source_kind in ("url", "title") and state.season:
+            argv += ["--season", state.season]
+        if state.source_kind in ("url", "title") and state.episode:
+            argv += ["--episode", state.episode]
     else:
-        argv += ["--fetch", state.source]
-    if state.source_kind in ("url", "title") and state.season:
-        argv += ["--season", state.season]
-    if state.source_kind in ("url", "title") and state.episode:
-        argv += ["--episode", state.episode]
+        # Path-form for local-only flows. The source is positional.
+        argv.append(state.source)
     if state.languages:
         argv += ["--languages", ",".join(state.languages)]
-    if state.mt_engine:
+    # Translate verb. --translate ENGINE is the canonical form when MT
+    # is requested; --no-engine is the explicit opt-out when fetch is
+    # selected without translate.
+    if "translate" in steps and state.mt_engine:
         argv += ["--translate", state.mt_engine]
-    elif state.source_kind in ("url", "title"):
+    elif "fetch" in steps and state.source_kind in ("url", "title"):
         argv.append("--no-engine")
-    # Modify block — only emit when something inside it is on. Saves
-    # noise in the printed command.
-    if state.reading_aids or state.asbplayer:
+    # Modify block.
+    if "modify" in steps and (state.reading_aids or state.asbplayer):
         argv.append("--modify")
         if state.asbplayer:
             argv += ["--strip-cc-noise", "--single-line"]
         if state.reading_aids:
             argv += ["--reading", ",".join(state.reading_aids)]
-            # Reading-format mirrors the merge format when ruby is in play.
             if state.format == "vtt":
                 argv += ["--reading-format", "vtt"]
     # Merge block — only when 2+ languages.
-    if len(state.order) >= 2:
+    if "merge" in steps and len(state.order) >= 2:
         argv += ["--merge", "--languages", ",".join(state.order)]
         if state.master:
             argv += ["--master", state.master]
@@ -12558,33 +12668,38 @@ def _wizard_emit_cli_string(state: _WizardState) -> str:
 
 
 def _wizard_emit_toml(state: _WizardState) -> str:
-    """Build a workflow TOML matching --config FILE.toml schema, using
-    the v1.1 canonical key names (mt_source, reading_format)."""
+    """Build a workflow TOML matching --config FILE.toml schema. Sections
+    are only emitted for the verbs the user actually picked at Q1, so a
+    merge-only workflow stays terse instead of carrying [fetch]/[translate]
+    boilerplate."""
     lines: list[str] = []
-    # [fetch]
+    steps = state.steps or {"fetch", "modify", "merge"}
+    # [fetch] — present even on local-only paths because that's where the
+    # source = "PATH" key lives. The downstream config loader treats
+    # [fetch] without --fetch as the input source for modify/merge.
     lines.append("[fetch]")
-    if state.source_kind == "title":
+    if "fetch" in steps and state.source_kind == "title":
         lines.append(f'title = "{state.source}"')
     else:
         lines.append(f'source = "{state.source}"')
-    if state.source_kind in ("url", "title"):
+    if "fetch" in steps and state.source_kind in ("url", "title"):
         if state.season:
             lines.append(f'season = "{state.season}"')
         if state.episode:
             lines.append(f'episode = "{state.episode}"')
     if state.languages:
         lines.append(f'languages = "{",".join(state.languages)}"')
-    if not state.mt_engine and state.source_kind in ("url", "title"):
+    if "fetch" in steps and not state.mt_engine and state.source_kind in ("url", "title"):
         lines.append("no_engine = true")
     lines.append("")
     # [translate]
-    if state.mt_engine:
+    if "translate" in steps and state.mt_engine:
         lines.append("[translate]")
         lines.append(f'engine = "{state.mt_engine}"')
         lines.append('mt_source = "auto"')
         lines.append("")
     # [modify]
-    has_modify = bool(state.reading_aids or state.asbplayer)
+    has_modify = "modify" in steps and bool(state.reading_aids or state.asbplayer)
     if has_modify:
         lines.append("[modify]")
         if state.asbplayer:
@@ -12596,7 +12711,7 @@ def _wizard_emit_toml(state: _WizardState) -> str:
                 lines.append('reading_format = "vtt"')
         lines.append("")
     # [merge]
-    if len(state.order) >= 2:
+    if "merge" in steps and len(state.order) >= 2:
         lines.append("[merge]")
         lines.append(f'languages = "{",".join(state.order)}"')
         if state.master:
