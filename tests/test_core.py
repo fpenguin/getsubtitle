@@ -6944,9 +6944,9 @@ def test_wizard_q11_banner_uses_fixed_70_char_rule():
     assert rule in out
     # No oversize rule.
     assert "=" * 80 not in out
-    # CLI + TOML still both rendered.
+    # CLI + workflow preview both rendered (v1.7.1 reworded the label).
     assert cli in out
-    assert "Equivalent TOML workflow:" in out
+    assert "workflow file" in out
     assert "About to run" not in out
 
 
@@ -7082,6 +7082,124 @@ def test_wizard_emit_cli_translate_only_path_form():
     assert "--translate deepl" in cli
 
 
+def test_parse_episode_marker_treats_movie_filenames_as_zero_zero():
+    """v1.7.1 fix: movies have no SxxExx marker. parse_episode_marker
+    must return (0, 0) for `Title.<lang>.srt` shapes so the scanner can
+    find them. Combined outputs and furigana variants still return None."""
+    pem = MODULE["parse_episode_marker"]
+    assert pem("My Neighbor Totoro.ja.srt") == (0, 0)
+    assert pem("Tonari no Totoro.en.srt") == (0, 0)
+    # Still works for TV shows.
+    assert pem("Show.S01E07.ja.srt") == (1, 7)
+    # Combined output -> None (don't re-scan our own outputs).
+    assert pem("My Neighbor Totoro.ja-en.srt") is None
+    # Furigana variant -> None.
+    assert pem("My Neighbor Totoro.ja.furigana-hiragana.srt") is None
+    # Unrelated file -> None.
+    assert pem("notes.txt") is None
+
+
+def test_combine_main_finds_movie_files_and_merges():
+    """End-to-end: a folder of Title.ja.srt + Title.en.srt merges into
+    Title.ja-en.srt. The v1.6 movie filename change broke this; v1.7.1
+    restores it via the (0, 0) synthetic episode key."""
+    import tempfile
+    from pathlib import Path
+    with tempfile.TemporaryDirectory() as d:
+        root = Path(d)
+        (root / "My Neighbor Totoro.ja.srt").write_text(
+            "1\n00:00:01,000 --> 00:00:03,000\n漢字\n", encoding="utf-8",
+        )
+        (root / "My Neighbor Totoro.en.srt").write_text(
+            "1\n00:00:01,000 --> 00:00:03,000\nkanji\n", encoding="utf-8",
+        )
+        rc = MODULE["combine_main"]([
+            str(root), "-l", "ja,en", "--force", "--no-open-folder-prompt",
+        ])
+        assert rc == 0
+        assert (root / "My Neighbor Totoro.ja-en.srt").exists()
+
+
+def test_episode_label_se_returns_movie_for_zero_zero():
+    label = MODULE["_episode_label_se"]
+    assert label(0, 0) == "movie"
+    assert label(1, 7) == "S01E07"
+
+
+def test_wizard_q4_master_lists_one_option_per_language():
+    """Q6 used to be 'first / custom'; now shows one option per language."""
+    import io, contextlib
+    fn_g = MODULE["_wizard_q4_master"].__globals__
+    saved = fn_g.get("input")
+    try:
+        # Pick the 3rd language explicitly via 'c'.
+        fn_g["input"] = lambda *a, **k: "c"
+        s = MODULE["_WizardState"](
+            languages=["en", "ja", "ko", "zh", "yue"],
+            order=["en", "ja", "ko", "zh", "yue"],
+        )
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            MODULE["_wizard_q4_master"](s)
+        out = buf.getvalue()
+        # All five languages appear as labeled options.
+        for letter, code in zip("abcde", ["en", "ja", "ko", "zh", "yue"]):
+            assert f"{letter}) {code}" in out
+        assert "Custom" not in out
+        assert s.master == "ko"
+    finally:
+        if saved is not None:
+            fn_g["input"] = saved
+
+
+def test_wizard_q7_reading_aids_no_reading_aid_is_option_one_default():
+    """Q9 has 'No reading aid (skip)' as option 1 (default) and the
+    actual reading-aid options shift to 2..n+1."""
+    import io, contextlib
+    fn_g = MODULE["_wizard_q7_reading_aids"].__globals__
+    saved = fn_g.get("input")
+    try:
+        # Empty (Enter) -> default 1 -> No reading aid.
+        fn_g["input"] = lambda *a, **k: ""
+        s = MODULE["_WizardState"](languages=["ja", "en"])
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            MODULE["_wizard_q7_reading_aids"](s)
+        out = buf.getvalue()
+        assert "1) No reading aid" in out
+        assert "2) Japanese — hiragana" in out
+        assert s.reading_aids == []
+        # '2' should land on the first real aid (hiragana).
+        fn_g["input"] = lambda *a, **k: "2"
+        s = MODULE["_WizardState"](languages=["ja", "en"])
+        with contextlib.redirect_stdout(io.StringIO()):
+            MODULE["_wizard_q7_reading_aids"](s)
+        assert s.reading_aids == ["ja:hiragana"]
+        # '2,3' should land on hiragana + katakana.
+        fn_g["input"] = lambda *a, **k: "2,3"
+        s = MODULE["_WizardState"](languages=["ja", "en"])
+        with contextlib.redirect_stdout(io.StringIO()):
+            MODULE["_wizard_q7_reading_aids"](s)
+        assert s.reading_aids == ["ja:hiragana", "ja:katakana"]
+    finally:
+        if saved is not None:
+            fn_g["input"] = saved
+
+
+def test_wizard_intro_uses_beginner_friendly_terms():
+    """Wizard intro talks about 'workflow file' / 'terminal command'
+    instead of 'TOML workflow' / 'pipeline' — v1.7.1 reword. Word
+    wrapping may split 'terminal command' across lines, so collapse
+    whitespace before matching."""
+    intro = MODULE["_WIZARD_INTRO"]
+    collapsed = " ".join(intro.split())
+    assert "workflow file" in collapsed
+    assert "terminal command" in collapsed
+    # No raw jargon.
+    assert "TOML" not in intro
+    assert "pipeline" not in intro
+
+
 def test_wizard_default_full_pipeline_still_emits_fetch_modify_merge():
     """Default steps (no user override) produce the same shape as the
     pre-v1.7 wizard: --fetch, --modify, --merge."""
@@ -7101,35 +7219,6 @@ def test_wizard_default_full_pipeline_still_emits_fetch_modify_merge():
     assert "--modify" in cli
     assert "--merge" in cli
     assert "--no-engine" in cli  # no MT requested
-
-def test_wizard_q4_master_is_first_or_custom():
-    """Q5 (timing master) collapsed to two options:
-      a) First displayed — <first lang in Q4 order>
-      b) Custom — any of the collected languages
-    The earlier 'hardcoded Japanese' and 'learner-priority second
-    option' both confused users."""
-    import io, contextlib
-    fn_g = MODULE["_wizard_q4_master"].__globals__
-    saved_input = fn_g.get("input")
-    try:
-        for order in (["ko", "en"], ["en", "ja", "ko", "zh", "yue"], ["en", "es"]):
-            s = MODULE["_WizardState"](languages=list(order), order=list(order))
-            buf = io.StringIO()
-            fn_g["input"] = lambda *a, **k: "a"
-            with contextlib.redirect_stdout(buf):
-                MODULE["_wizard_q4_master"](s)
-            out = buf.getvalue()
-            # Two menu options only (no third "Custom" line beyond the (b) line).
-            assert out.count("\n    a)") == 1
-            assert out.count("\n    b)") == 1
-            assert "\n    c)" not in out
-            assert "First displayed" in out
-            assert "Custom" in out
-            assert s.master == ""  # 'a' keeps default empty
-    finally:
-        if saved_input is not None:
-            fn_g["input"] = saved_input
-
 
 def test_anilist_candidate_movie_detection():
     Candidate = MODULE["AniListCandidate"]

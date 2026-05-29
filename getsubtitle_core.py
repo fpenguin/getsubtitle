@@ -5674,12 +5674,30 @@ SYNC_PRESETS: dict[str, dict[str, float]] = {
 
 
 def parse_episode_marker(name: str) -> tuple[int, int] | None:
-    """Return (season, episode) parsed from a filename, or None."""
+    """Return (season, episode) parsed from a filename, or None.
+
+    Movie filenames produced by save_subtitle look like `Title.<lang>.srt`
+    with no S/E marker. Treat those as (season=0, episode=0) so the
+    scanner can still group them by (season, episode, lang) and the
+    downstream modify / merge stages see a single-item plan rather than
+    an empty scan."""
     for pattern in _EPISODE_PATTERNS:
         m = pattern.search(name)
         if m:
             return int(m.group(1)), int(m.group(2))
+    if _is_movie_style_filename(name):
+        return 0, 0
     return None
+
+
+def _is_movie_style_filename(name: str) -> bool:
+    """True for `Title.<lang>.<ext>` (no SxxExx marker) — the shape
+    save_subtitle emits for movies. Excludes our own combined outputs
+    and furigana variants so re-scanning a folder doesn't pick them up
+    as inputs."""
+    if is_combined_output_name(name) or is_furigana_output_name(name):
+        return False
+    return bool(_LANG_FILENAME_PATTERN.search(name))
 
 
 def is_combined_output_name(name: str) -> bool:
@@ -6277,6 +6295,11 @@ def _sorted_episode_keys(keys: Iterable[tuple[int, int]]) -> list[tuple[int, int
 
 
 def _episode_label_se(season: int, episode: int) -> str:
+    # (0, 0) is the synthetic key parse_episode_marker assigns to movie-
+    # style filenames (Title.<lang>.srt with no SxxExx). Label that as
+    # 'movie' instead of the misleading S00E00 placeholder.
+    if season == 0 and episode == 0:
+        return "movie"
     return f"S{season:02d}E{episode:02d}"
 
 
@@ -12072,13 +12095,13 @@ def _wizard_q0_steps(state: _WizardState) -> None:
     print()
     print("Q1. What do you want getsubtitle to do?")
     print("    1) Fetch     — download subtitles from a URL or title")
-    print("    2) Translate — fill missing languages via MT (argos/ollama/deepl)")
+    print("    2) Translate — fill any missing language with AI translation")
     print("    3) Modify    — clean up cues, add reading aids (furigana/pinyin/…)")
     print("    4) Merge     — stack multiple languages into one study file")
     print()
-    print("    Default: fetch + modify + merge (skip MT).")
+    print("    Default: fetch + modify + merge (no AI translation).")
     print("    Common shortcuts: '4' for merge-only, '3' for modify-only,")
-    print("    '2' for translate-only, '3,4' for modify + merge.")
+    print("    '2' for AI-translation-only, '3,4' for modify + merge.")
     raw = _wizard_prompt(
         "Numbers (comma-separated), 'a' for all, or Enter for default",
         "1,3,4",
@@ -12283,17 +12306,20 @@ def _wizard_q4_master(state: _WizardState) -> None:
     # over the collected languages.
     print()
     print("Q6. Which language controls cue timing (the 'master' track)?")
-    print(f"    a) First displayed — {state.order[0]} (recommended)")
-    print(f"    b) Custom — any of: {', '.join(state.order)}")
-    pick = _wizard_prompt("Choose a/b", "a").lower()
-    if pick.startswith("a"):
-        state.master = ""  # default — first language wins
-    elif pick.startswith("b"):
-        raw = _wizard_prompt("Master language code", state.order[0])
-        cand = LANGUAGE_ALIASES.get(raw.lower(), raw.lower())
-        if cand not in state.order:
-            raise CliError(f"interactive: master {cand!r} must be one of {state.order}.")
-        state.master = cand
+    # List one option per collected language so the user doesn't have to
+    # navigate a "Custom" branch. The first-displayed is the recommendation.
+    letters = "abcdefghijklmnop"
+    for i, code in enumerate(state.order):
+        tail = "  (recommended — first displayed)" if i == 0 else ""
+        print(f"    {letters[i]}) {code}{tail}")
+    valid = letters[: len(state.order)]
+    choices = "/".join(valid)
+    pick = _wizard_prompt(f"Choose {choices}", "a").lower()
+    if pick and pick[0] in valid:
+        idx = letters.index(pick[0])
+        # First-displayed is the default — leave master empty so the
+        # downstream 'first lang wins' logic keeps working.
+        state.master = "" if idx == 0 else state.order[idx]
     else:
         state.master = ""
 
@@ -12344,9 +12370,9 @@ def _wizard_q5_scope(state: _WizardState) -> None:
 def _wizard_q6_translate(state: _WizardState) -> None:
     print()
     print("Q8. If a language is missing, what should we do?")
-    print("    a) Skip — accept gaps (no AI-translation)")
-    print("    b) Argos — offline, low quality (free)")
-    print("    c) Ollama — offline, good quality (free; slow)")
+    print("    a) Skip — accept the gap (no AI translation)")
+    print("    b) Argos — on your computer, low quality (free)")
+    print("    c) Ollama — on your computer, good quality (free; slower)")
     print("    d) DeepL — online, best quality (free tier; needs API key)")
     pick = _wizard_prompt("Choose a/b/c/d", "a").lower()
     state.mt_engine = {"a": "", "b": "argos", "c": "ollama", "d": "deepl"}.get(pick[:1], "")
@@ -12378,14 +12404,18 @@ def _wizard_q7_reading_aids(state: _WizardState) -> None:
     }.get(primary, "original (reading)")
     print("    VTT renders them as ruby above the script; SRT / SMI / ASS")
     print(f"    show them as parenthetical {example} form.")
-    print("    Pick any combination by number. Empty = no reading aids.")
-    for i, (lang, spec, label, shipping) in enumerate(relevant, start=1):
+    print("    Pick any combination by number, or '1' to skip.")
+    # 'No reading aid' is the explicit first choice + default. The aid
+    # entries shift to indices 2..n+1 so users see the no-op at the top
+    # and don't have to know that 'none' is a magic word.
+    print("    1) No reading aid (skip)")
+    for i, (lang, spec, label, shipping) in enumerate(relevant, start=2):
         print(f"    {i}) {label}   [{spec}]")
     raw = _wizard_prompt(
-        "Numbers (comma-separated), or 'none'",
-        "1" if relevant and relevant[0][3] else "none",
+        "Numbers (comma-separated)",
+        "1",
     ).lower()
-    if raw in ("", "none", "0", "no", "skip"):
+    if raw in ("", "1", "none", "0", "no", "skip"):
         state.reading_aids = []
         return
     picks: list[str] = []
@@ -12394,7 +12424,9 @@ def _wizard_q7_reading_aids(state: _WizardState) -> None:
         tok = tok.strip()
         if not tok.isdigit():
             continue
-        idx = int(tok) - 1
+        # Aid entries are 1-indexed in the menu, but '1' is reserved for
+        # 'No reading aid'. Subtract 2 to land in the relevant[] list.
+        idx = int(tok) - 2
         if not (0 <= idx < len(relevant)):
             continue
         lang, spec, label, shipping = relevant[idx]
@@ -12471,7 +12503,7 @@ def _wizard_q11_action(state: _WizardState) -> str:
     print(rule)
     print("  " + cli_string)
     print(rule)
-    print("Equivalent TOML workflow:")
+    print("Equivalent workflow file (save as .toml):")
     print(rule)
     for line in toml_str.splitlines():
         print("  " + line)
@@ -12489,7 +12521,7 @@ def _wizard_q11_action(state: _WizardState) -> str:
     # long network job (URL/title sources). For local paths, run-first is fine.
     default_pick = "b" if state.source_kind in ("url", "title") else "a"
     print("    a) Run it now")
-    print("    b) Save as a reusable TOML workflow")
+    print("    b) Save as a reusable workflow file")
     print("    c) Edit a single answer")
     print("    d) Start over from beginning")
     print("    e) Quit")
@@ -12861,10 +12893,10 @@ def _wizard_run_setup(state: _WizardState, gaps: list[tuple[str, str, str]]) -> 
 _WIZARD_INTRO = """
 getsubtitle — interactive workflow builder
 
-I'll ask a few questions, then show you the equivalent CLI command and
-TOML workflow. You can save the TOML for reuse, run the pipeline now,
-or edit a single answer. Press 'q' at any prompt to quit, or Ctrl-C
-to bail.
+I'll ask a few short questions, then show you the equivalent terminal
+command and a reusable workflow file. You can save the workflow for
+later, run it now, or edit a single answer. Press 'q' at any prompt
+to quit, or Ctrl-C to bail.
 """
 
 
@@ -12967,7 +12999,7 @@ def interactive_main(argv: list[str] | None = None) -> int:
             path.write_text(toml_str, encoding="utf-8")
             print(f"Saved: {path}")
             print()
-            print(f"Your {path.name} works the same as this CLI command:")
+            print(f"Your {path.name} runs the same workflow as this command:")
             print("  # " + cli_string)
             print()
             print("Run it later with:")
