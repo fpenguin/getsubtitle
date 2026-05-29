@@ -11199,8 +11199,8 @@ copy-paste between this file and any workflow config. In execution order:
   [translate]     engine, model, mt_source, strip_reading_before_mt
                   [translate.ollama_models] — per-pair model overrides +
                                               auto_load / auto_unload flags
-  [modify]        single_line, strip_cc_noise, furigana, reading_format
-  [merge]         languages, sync, preserve_lines, priority, furigana
+  [modify]        single_line, strip_cc_noise, reading, reading_format
+  [merge]         languages, sync, preserve_lines, priority, reading
   [output]        target, layout, open_folder, force, debug_providers
   [experimental]  subdivx, addic7ed
 
