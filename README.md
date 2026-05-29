@@ -8,7 +8,6 @@ offer: the language you are learning, a pronunciation guide, your native
 language, and an optional bridge language, all synced into one study-friendly
 file for players like VLC, mpv, IINA, asbplayer, Plex, and Jellyfin.
 
-![asbplayer rendering Japanese ruby furigana from WebVTT](examples/asbplayer-ruby-vtt-preview.png)
 
 ## Why Learners Use It
 
@@ -23,15 +22,6 @@ file for players like VLC, mpv, IINA, asbplayer, Plex, and Jellyfin.
 - **Prepare a media library** by scanning Plex/Jellyfin folders, converting
   legacy `.smi`, and merging per episode.
 
-## What You Can Make
-
-```text
-Japanese audio
-日本語字幕 + ふりがな
-Korean / English / Spanish support line
-One synced SRT or WebVTT file
-```
-
 Good fits:
 
 | You want to... | GetSubtitle can... |
@@ -41,6 +31,15 @@ Good fits:
 | Learn English or Spanish from sitcoms | collect `en,es`, or translate missing tracks from another language |
 | Use asbplayer for sentence mining | output single-line WebVTT with ruby reading aids |
 | Clean up a Plex/Jellyfin library | scan folders, convert `.smi`, fill gaps, and merge per episode |
+
+
+## What You Can Make
+
+```text
+Multiple subtitles stacked together with reading support for specific language set(s).
+```
+![asbplayer rendering Japanese ruby furigana from WebVTT](examples/asbplayer-ruby-vtt-preview.png)
+
 
 ## Try These Workflows
 
@@ -70,6 +69,11 @@ getsubtitle translate ~/Movies/Subtitles/Friends -s 4 -e 3-5 -l es \
     --engine deepl --mt-source es:fr
 getsubtitle merge ~/Movies/Subtitles/Friends -s 4 -e 3-5 -l fr,en,es
 ```
+
+For machine translation, `--mt-source "es:fr|en"` means “make Spanish from
+French first, or English if French is unavailable.” Ollama users can also
+override one language pair for a single run with
+`--mt-model-pair ja:ko=qwen3:4b`.
 
 `-e all` on **non-anime TV** needs a TMDB key — set one once with
 `getsubtitle --set-key tmdb`, or pass an explicit range like `-e 1-22`.

@@ -126,6 +126,7 @@ model = "qwen3:4b"
 #           or "ja" (force all targets to translate from Japanese)
 #           or "ko:ja,es:en" (per-target as a comma-list)
 #   dict:   { ko = "ja", es = "en" } (per-target as a TOML table)
+#           { es = ["fr", "en"] } (fallback list — first available wins)
 # Default: "auto"
 # (`mt_source_lang` accepted as a back-compat alias)
 mt_source = "auto"
@@ -150,7 +151,8 @@ auto_load = true
 auto_unload = true
 
 # Optional per-language-pair Ollama model overrides. Keys are "src:tgt"
-# (colon or dash). --model on the CLI still wins for one-off runs.
+# (colon or dash). --model on the CLI still wins for one-off runs;
+# --mt-model-pair can override these for a single command.
 #
 # CJK pairs benefit from stronger multilingual models:
 # "en:ja" = "qwen3:4b"

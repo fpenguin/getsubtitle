@@ -91,7 +91,7 @@ KEY_PROVIDERS = {
         "env": "DEEPL_API_KEY",
         "account": "deepl",
         "url": "https://www.deepl.com/your-account/keys",
-        "use": "machine translation for --mt-engine deepl (free tier: 500K chars/mo)",
+        "use": "machine translation for --engine deepl (free tier: 500K chars/mo)",
     },
     "tmdb": {
         "label": "TMDB",
@@ -3186,14 +3186,20 @@ def find_existing_srts_for_episode(saved: list[Path], episode: str) -> dict[str,
     return out
 
 
-def parse_mt_source_lang(value: str | None, requested_langs: list[str]) -> dict[str, str] | None:
-    """Parse the --mt-source-lang value into a {target: source} mapping.
+def _normalize_lang_code(value: str) -> str:
+    value = value.strip().lower()
+    return LANGUAGE_ALIASES.get(value, value)
+
+
+def parse_mt_source_lang(value: str | None, requested_langs: list[str]) -> dict[str, tuple[str, ...]] | None:
+    """Parse the --mt-source value into a {target: (sources...)} mapping.
 
     Accepts:
       None / empty string       -> None (no override; auto-pick applies)
       "ja"                      -> applies "ja" as source for every target
       "ko:ja"                   -> {"ko": "ja"}
       "ko:ja,es:en"             -> {"ko": "ja", "es": "en"}
+      "es:fr|en"                -> {"es": ("fr", "en")} first available wins
 
     Raises CliError for ambiguous comma-lists-without-colons, unknown targets
     (not in --langs), empty halves, or duplicated targets.
@@ -3211,40 +3217,105 @@ def parse_mt_source_lang(value: str | None, requested_langs: list[str]) -> dict[
         # Single token (or multiple non-colon tokens, which we reject for
         # being ambiguous between "all targets from this" and "positional").
         if len(parts) == 1:
-            src = parts[0].lower()
-            src = LANGUAGE_ALIASES.get(src, src)
-            return {target.lower(): src for target in requested_langs}
+            src = _normalize_lang_code(parts[0])
+            return {_normalize_lang_code(target): (src,) for target in requested_langs}
         raise CliError(
-            f"--mt-source-lang: ambiguous value {value!r}. "
+            f"--mt-source: ambiguous value {value!r}. "
             "Use a single language code to apply to all targets, "
             "or 'target:source' pairs (e.g. ko:ja,es:en)."
         )
-    mapping: dict[str, str] = {}
+    mapping: dict[str, tuple[str, ...]] = {}
     # Normalise both -l targets and pair targets/sources through
     # LANGUAGE_ALIASES so users can type jp/cn/chinese/etc. interchangeably.
-    requested_lower = {LANGUAGE_ALIASES.get(l.lower(), l.lower()) for l in requested_langs}
+    requested_lower = {_normalize_lang_code(l) for l in requested_langs}
     for part in parts:
         if ":" not in part:
             raise CliError(
-                f"--mt-source-lang: every entry needs a target:source pair "
+                f"--mt-source: every entry needs a target:source pair "
                 f"(got {part!r}). Example: ko:ja,es:en"
             )
         target, _, source = part.partition(":")
-        target = target.strip().lower()
-        source = source.strip().lower()
+        target = _normalize_lang_code(target)
+        sources = tuple(
+            _normalize_lang_code(src)
+            for src in source.split("|")
+            if src.strip()
+        )
         if not target or not source:
-            raise CliError(f"--mt-source-lang: empty target or source in {part!r}")
-        target = LANGUAGE_ALIASES.get(target, target)
-        source = LANGUAGE_ALIASES.get(source, source)
+            raise CliError(f"--mt-source: empty target or source in {part!r}")
+        if not sources:
+            raise CliError(f"--mt-source: empty source list in {part!r}")
         if target not in requested_lower:
             raise CliError(
-                f"--mt-source-lang: target {target!r} is not in -l "
+                f"--mt-source: target {target!r} is not in -l "
                 f"({','.join(requested_langs)}). Add it to -l or remove the pair."
             )
         if target in mapping:
-            raise CliError(f"--mt-source-lang: target {target!r} mapped twice")
-        mapping[target] = source
+            raise CliError(f"--mt-source: target {target!r} mapped twice")
+        mapping[target] = sources
     return mapping
+
+
+def _format_mt_source_overrides(mapping: dict[str, tuple[str, ...]]) -> str:
+    return ", ".join(f"{target}<-{'|'.join(sources)}" for target, sources in mapping.items())
+
+
+def pick_forced_mt_source(
+    target: str,
+    source_candidates: tuple[str, ...],
+    available: dict[str, Path],
+) -> tuple[str, Path] | None:
+    """Pick the first requested MT source language present for an episode."""
+    target = _normalize_lang_code(target)
+    for src in source_candidates:
+        src = _normalize_lang_code(src)
+        if src != target and src in available:
+            return src, available[src]
+    return None
+
+
+def parse_mt_model_pair(value: str | None) -> dict[str, str]:
+    """Parse --mt-model-pair src:tgt=model[,src:tgt=model] into session map."""
+    if not value:
+        return {}
+    out: dict[str, str] = {}
+    for part in [p.strip() for p in value.split(",") if p.strip()]:
+        pair, sep, model = part.partition("=")
+        if not sep:
+            raise CliError(
+                f"--mt-model-pair: expected src:tgt=model, got {part!r}. "
+                "Example: ja:ko=qwen3:4b,en:es=llama3.2:3b"
+            )
+        if not model.strip():
+            raise CliError(f"--mt-model-pair: empty model name in {part!r}")
+        pair_norm = pair.strip().lower().replace("_", "-").replace(":", "-")
+        if "-" not in pair_norm:
+            raise CliError(f"--mt-model-pair: expected source-target pair in {part!r}")
+        src, tgt = pair_norm.split("-", 1)
+        src = _normalize_lang_code(src)
+        tgt = _normalize_lang_code(tgt)
+        if not src or not tgt:
+            raise CliError(f"--mt-model-pair: empty source or target in {part!r}")
+        out[f"{src}-{tgt}"] = model.strip()
+    return out
+
+
+def apply_mt_model_pair_overrides(value: str | None) -> dict[str, str | None]:
+    """Install CLI pair-model overrides for this process; return old values."""
+    parsed = parse_mt_model_pair(value)
+    previous: dict[str, str | None] = {}
+    for key, model in parsed.items():
+        previous[key] = _PIPELINE_TRANSLATE_PAIR_MODELS.get(key)
+        _PIPELINE_TRANSLATE_PAIR_MODELS[key] = model
+    return previous
+
+
+def restore_mt_model_pair_overrides(previous: dict[str, str | None]) -> None:
+    for key, old in previous.items():
+        if old is None:
+            _PIPELINE_TRANSLATE_PAIR_MODELS.pop(key, None)
+        else:
+            _PIPELINE_TRANSLATE_PAIR_MODELS[key] = old
 
 
 def _ollama_models_flag(name: str, default: bool = True) -> bool:
@@ -3270,7 +3341,7 @@ def select_translator(engine: str, model: str | None) -> _BaseTranslator:
         )
     if engine == "deepl":
         return DeepLTranslator(api_key=get_provider_api_key("deepl", prompt_if_missing=True))
-    raise CliError(f"Unknown --mt-engine: {engine}. Use argos, ollama, or deepl.")
+    raise CliError(f"Unknown --engine: {engine}. Use argos, ollama, or deepl.")
 
 
 def ollama_model_for_pair(source_lang: str, target_lang: str, cli_model: str | None = None) -> str:
@@ -4471,7 +4542,42 @@ def _smi_output_stem(smi_path: Path) -> Path:
     return stem
 
 
-def convert_smi_file(smi_path: Path, *, force: bool = False) -> tuple[list[Path], list[Path]]:
+def parse_convert_spec(value: str | None) -> tuple[str | None, set[str] | None]:
+    """Parse modify --convert.
+
+    Accepted:
+      smi-to-srt        -> convert every SAMI language stream
+      ko:smi-to-srt     -> convert only Korean streams (kr alias accepted)
+      ko,en:smi-to-srt  -> convert only Korean and English streams
+    """
+    if not value:
+        return None, None
+    raw = str(value).strip().lower()
+    if raw == "none":
+        return None, None
+    if ":" not in raw:
+        op = raw
+        langs = None
+    else:
+        lang_part, _, op = raw.rpartition(":")
+        langs = {
+            _normalize_lang_code(part)
+            for part in re.split(r"[,|]", lang_part)
+            if part.strip()
+        }
+        if not langs:
+            raise CliError(f"--convert: empty language scope in {value!r}")
+    if op != "smi-to-srt":
+        raise CliError("--convert: supported values are smi-to-srt or LANG:smi-to-srt")
+    return op, langs
+
+
+def convert_smi_file(
+    smi_path: Path,
+    *,
+    force: bool = False,
+    only_langs: set[str] | None = None,
+) -> tuple[list[Path], list[Path]]:
     """Convert one SMI file to one or more sibling .srt files.
 
     Returns (written, skipped). `skipped` contains target paths that already
@@ -4486,12 +4592,17 @@ def convert_smi_file(smi_path: Path, *, force: bool = False) -> tuple[list[Path]
     written: list[Path] = []
     skipped: list[Path] = []
     for lang, cues in sorted(by_lang.items()):
+        if only_langs is not None and lang not in only_langs:
+            continue
         out_path = stem.with_name(stem.name + f".{lang}.srt")
         if out_path.exists() and not force:
             skipped.append(out_path)
             continue
         out_path.write_text(sami_cues_to_srt(cues), encoding="utf-8")
         written.append(out_path)
+    if only_langs is not None and not written and not skipped:
+        wanted = ",".join(sorted(only_langs))
+        raise CliError(f"{smi_path.name}: no SAMI cues found for requested language scope ({wanted})")
     return written, skipped
 
 
@@ -6639,7 +6750,7 @@ _COMBINE_PENDING: dict[Path, tuple[list[SrtCue], list[str]]] = {}
 # ===========================================================================
 # translate subcommand — offline MT against an existing folder of SRTs
 # ===========================================================================
-# Same MT engines and source-language priority as the in-download `--mt-engine`
+# Same MT engines and source-language priority as the in-download `--engine`
 # path; the difference is that this works without a URL and never re-downloads.
 # It scans PATH(s) for existing single-language SRTs, decides which requested
 # languages are missing per episode, and writes <name>.<lang>.mt.srt next to
@@ -6686,9 +6797,9 @@ def build_translate_parser() -> argparse.ArgumentParser:
         epilog=textwrap.dedent(
             """
             Examples:
-              getsubtitle translate ~/Movies/Subtitles/MF\\ Ghost -l ja,ko --mt-engine argos
-              getsubtitle translate FOLDER -s 1 -e 11 -l ko --mt-source-lang ja --mt-engine ollama
-              getsubtitle translate FOLDER -l ja,ko,en,es --mt-engine deepl --dry-run
+              getsubtitle translate ~/Movies/Subtitles/MF\\ Ghost -l ja,ko --engine argos
+              getsubtitle translate FOLDER -s 1 -e 11 -l ko --mt-source ja --engine ollama
+              getsubtitle translate FOLDER -l ja,ko,en,es --engine deepl --dry-run
             """
         ),
     )
@@ -6699,6 +6810,7 @@ def build_translate_parser() -> argparse.ArgumentParser:
     p.add_argument("--engine", "--mt-engine", dest="mt_engine", choices=["argos", "ollama", "deepl"], help="Translation engine. Default: argos (via [translate].engine in user_settings.toml). --mt-engine still accepted as alias.")
     p.add_argument("--no-mt-engine", dest="mt_engine", action="store_const", const="", help="Disable machine translation for this run even when [translate].engine is set in user_settings.toml.")
     p.add_argument("--model", "--mt-model", dest="mt_model", metavar="NAME", help=f"Ollama model when --engine ollama. Default: {DEFAULT_OLLAMA_MODEL}. --mt-model still accepted as alias.")
+    p.add_argument("--mt-model-pair", metavar="PAIRS", help="Per-pair Ollama model overrides for this run, e.g. ja:ko=qwen3:4b,en:es=llama3.2:3b. Ignored unless --engine ollama.")
     p.add_argument("--mt-source", "--mt-source-lang", dest="mt_source_lang", metavar="CODES", help="Force the source language(s). Single code (ja) applies to all targets; target:source pairs (ko:ja,es:en) map per target. Default: auto-pick. --mt-source-lang still accepted as alias.")
     p.add_argument("-o", "--output", metavar="DIR", help="Output directory. Default: beside each episode's source SRT.")
     p.add_argument("--subdirectory", action="store_true", help="Bulk mode: treat each immediate subdirectory of PATH as its own show and run translate once per subdir.")
@@ -6740,7 +6852,7 @@ def translate_main(argv: list[str]) -> int:
     ) else None
     if not args.mt_engine:
         raise CliError(
-            "translate needs an engine. Pass --mt-engine {argos|ollama|deepl} "
+            "translate needs an engine. Pass --engine {argos|ollama|deepl} "
             "or set [translate].engine in user_settings.toml."
         )
     langs = split_csv(args.langs, "ja")
@@ -6756,7 +6868,7 @@ def translate_main(argv: list[str]) -> int:
         _cfg_tr = {}
     strip_reading_before_mt = bool(_cfg_tr.get("strip_reading_before_mt", True))
 
-    # Parse --mt-source-lang once (so a bad value errors before the scan).
+    # Parse --mt-source once (so a bad value errors before the scan).
     source_overrides = parse_mt_source_lang(args.mt_source_lang, langs)
 
     paths = [Path(p).expanduser() for p in args.paths]
@@ -6783,7 +6895,7 @@ def translate_main(argv: list[str]) -> int:
             print("Episodes selected: 0")
     print(f"Target languages: {', '.join(langs)}  (engine: {args.mt_engine})")
     if source_overrides:
-        print(f"Source overrides: {', '.join(f'{t}<-{s}' for t, s in source_overrides.items())}")
+        print(f"Source overrides: {_format_mt_source_overrides(source_overrides)}")
 
     # Plan: list of (episode_key, source_path, source_lang, target_lang, dest_path)
     plan: list[tuple[tuple[int, int], Path, str, str, Path]] = []
@@ -6804,11 +6916,11 @@ def translate_main(argv: list[str]) -> int:
                 continue
             forced_source = source_overrides.get(target) if source_overrides else None
             if forced_source:
-                src_lang = forced_source
-                src_path = available.get(src_lang)
-                if not src_path:
-                    skipped.append((key, f"{target}: forced source {src_lang!r} not available for this episode"))
+                picked_forced = pick_forced_mt_source(target, forced_source, available)
+                if not picked_forced:
+                    skipped.append((key, f"{target}: none of the forced sources ({'|'.join(forced_source)}) available for this episode"))
                     continue
+                src_lang, src_path = picked_forced
             else:
                 picked = pick_mt_source(target, available)
                 if not picked:
@@ -6851,6 +6963,9 @@ def translate_main(argv: list[str]) -> int:
 
     first_src = plan[0][2] if plan else None
     first_tgt = plan[0][3] if plan else None
+    pair_model_previous = apply_mt_model_pair_overrides(
+        args.mt_model_pair if args.mt_engine == "ollama" else None
+    )
     translator_cache: dict[tuple[str, str | None], _BaseTranslator] = {}
 
     def translator_for(src_lang: str, target_lang: str) -> _BaseTranslator:
@@ -6869,9 +6984,8 @@ def translate_main(argv: list[str]) -> int:
         # specific where it matters (e.g. argospm install translate-ja_ko).
         sample_src = plan[0][2] if plan else None
         sample_tgt = plan[0][3] if plan else None
-        raise CliError(
-            f"{translator.name}: not ready.\n{translator.setup_help(sample_src, sample_tgt)}"
-        )
+        restore_mt_model_pair_overrides(pair_model_previous)
+        raise CliError(f"{translator.name}: not ready.\n{translator.setup_help(sample_src, sample_tgt)}")
 
     print(f"\nTranslating with {translator.name}:")
     written: list[tuple[Path, float]] = []
@@ -6941,6 +7055,7 @@ def translate_main(argv: list[str]) -> int:
     print(f"\nWrote {len(written)} machine-translated file(s).")
     if written:
         print("Reminder: .mt.srt files are machine-quality — verify before relying on them.")
+    restore_mt_model_pair_overrides(pair_model_previous)
     return 0 if written else 1
 
 
@@ -7007,7 +7122,7 @@ def build_modify_parser() -> argparse.ArgumentParser:
     p.add_argument("--reading", dest="reading", metavar="SPEC", help="Generate per-language reading aids. SPEC is a comma list of LANG:MODE pairs, e.g. 'ja:hiragana', 'ja:katakana', 'ja:romaji', 'ko:revised', 'ko:yale', 'zh:marks', 'zh:numbers', 'zh:letters'. Pipe shorthand 'ja:hiragana|romaji' generates both side files. MODE 'true' picks the language's sensible default. Japanese / Korean / Mandarin ship now; Cantonese / Thai / Arabic / Hindi / Russian land per the roadmap.")
     p.add_argument("--no-reading", dest="reading", action="store_const", const="", help="Disable reading-aid generation for this run, overriding [modify].reading from user_settings.toml.")
     p.add_argument("--reading-format", "--format", dest="reading_format", metavar="CODES", help="Reading-aid output format(s) — comma list of srt, ass, vtt, or 'all'. Default: srt. Overrides [modify].reading_format from user_settings.toml.")
-    p.add_argument("--convert", choices=["smi-to-srt"], metavar="PAIR", help="Convert subtitle file format. Currently supports: smi-to-srt (Microsoft SAMI → one sibling .<lang>.srt per language found inside).")
+    p.add_argument("--convert", metavar="SPEC", help="Convert subtitle file format. Supports smi-to-srt (all SAMI language streams) or LANG:smi-to-srt, e.g. ko:smi-to-srt, for one language.")
     p.add_argument("--force", action="store_true", help="With --convert: overwrite existing sibling .srt files. Without --force, conversion skips targets that already exist.")
     p.add_argument("--subdirectory", action="store_true", help="Bulk mode: treat each immediate subdirectory of PATH as its own show and run modify once per subdir.")
     p.add_argument("--dry-run", action="store_true", help="Show what would be processed without writing anything.")
@@ -7049,13 +7164,14 @@ def modify_main(argv: list[str]) -> int:
     _apply_reading_to_args(args)
     args.ko_reading = getattr(args, "ko_reading", None)
     args.zh_reading = getattr(args, "zh_reading", None)
+    convert_op, convert_langs = parse_convert_spec(args.convert)
     ops_selected = [
         bool(args.strip_cc_noise),
         bool(args.single_line),
         bool(args.ja_reading),
         bool(args.ko_reading),
         bool(args.zh_reading),
-        bool(args.convert),
+        bool(convert_op),
     ]
     if not any(ops_selected):
         raise CliError(
@@ -7091,12 +7207,12 @@ def modify_main(argv: list[str]) -> int:
         scan_srt_files(paths) if inplace_ops else []
     )
     convert_files: list[Path] = (
-        scan_smi_files(paths) if args.convert == "smi-to-srt" else []
+        scan_smi_files(paths) if convert_op == "smi-to-srt" else []
     )
 
     if inplace_ops:
         print(f"Scanned: {len(scanned)} SRT file(s) across {len(paths)} path(s)")
-    if args.convert == "smi-to-srt":
+    if convert_op == "smi-to-srt":
         print(f"Scanned: {len(convert_files)} SMI file(s) across {len(paths)} path(s)")
 
     if not scanned and not convert_files:
@@ -7110,8 +7226,11 @@ def modify_main(argv: list[str]) -> int:
 
     # Describe the plan up front so --dry-run is meaningful.
     ops_desc: list[str] = []
-    if args.convert == "smi-to-srt":
-        ops_desc.append("convert smi → srt")
+    if convert_op == "smi-to-srt":
+        if convert_langs:
+            ops_desc.append(f"convert smi → srt ({','.join(sorted(convert_langs))} only)")
+        else:
+            ops_desc.append("convert smi → srt")
     if args.strip_cc_noise:
         ops_desc.append("strip CC noise")
     if args.single_line:
@@ -7153,8 +7272,9 @@ def modify_main(argv: list[str]) -> int:
 
     if convert_files:
         print(f"\nPlanned convert: {len(convert_files)} .smi file(s)")
+        scope = f"  [{','.join(sorted(convert_langs))} only]" if convert_langs else ""
         for path in convert_files[:20]:
-            print(f"  {path.name}")
+            print(f"  {path.name}{scope}")
         if len(convert_files) > 20:
             print(f"  ... and {len(convert_files) - 20} more")
 
@@ -7216,7 +7336,7 @@ def modify_main(argv: list[str]) -> int:
         for idx, smi in enumerate(convert_files, start=1):
             progress_bar(idx, len(convert_files), "converting", smi.name, transient=True)
             try:
-                written, skipped = convert_smi_file(smi, force=args.force)
+                written, skipped = convert_smi_file(smi, force=args.force, only_langs=convert_langs)
             except CliError as e:
                 # CliError carries "<name>: <reason>"; strip the name to group.
                 msg = str(e)
@@ -7246,7 +7366,7 @@ def modify_main(argv: list[str]) -> int:
         print(f"Korean romanization variants generated: {len(korean_generated)}")
     if args.zh_reading:
         print(f"Chinese pinyin variants generated: {len(chinese_generated)}")
-    if args.convert == "smi-to-srt":
+    if convert_op == "smi-to-srt":
         skipped_note = (
             f" ({len(convert_skipped)} skipped — output exists, pass --force to overwrite)"
             if convert_skipped else ""
@@ -8121,7 +8241,7 @@ _READING_ACCEPTED_MODES: dict[str, set[str]] = {
 
 
 def _parse_reading_spec(value) -> list[tuple[str, str]]:
-    """Pipeline `[modify].romanization = "ko:true, ja:hiragana"` (string OR list)
+    """Pipeline `[modify].reading = "ko:true, ja:hiragana"` (string OR list)
     → list of (lang_iso, mode) pairs.
 
     Accepted forms:
@@ -8168,13 +8288,13 @@ def _parse_reading_spec(value) -> list[tuple[str, str]]:
                 m = _READING_DEFAULTS.get(lang)
                 if m is None:
                     raise CliError(
-                        f"[modify].romanization: language {lang!r} has no built-in "
+                        f"[modify].reading: language {lang!r} has no built-in "
                         f"default. Specify a mode explicitly (e.g. {lang}:romanized)."
                     )
             accepted = _READING_ACCEPTED_MODES.get(lang)
             if accepted and m not in accepted:
                 raise CliError(
-                    f"[modify].romanization: {lang!r} doesn't support mode {m!r}. "
+                    f"[modify].reading: {lang!r} doesn't support mode {m!r}. "
                     f"Try one of: {', '.join(sorted(accepted - {'true'}))}."
                 )
             out.append((lang, m))
@@ -8249,7 +8369,7 @@ def _apply_reading_to_args(args) -> None:
 
 
 def _resolve_modify_reading(value) -> list[str]:
-    """Pipeline `[modify].romanization = "ko:true, ja:hiragana"` → CLI flag
+    """Pipeline `[modify].reading = "ko:true, ja:hiragana"` → CLI flag
     emission. The CLI flag is `--reading SPEC` (a comma string), so
     this just normalises and re-serializes the spec for the downstream
     parser, with backward-compat to the older `[modify].furigana` key
@@ -8300,13 +8420,12 @@ def _normalize_merge_langs(value) -> tuple[str, dict[str, str]]:
 
 def _normalize_mt_source(value) -> str:
     """Normalize the [translate].mt_source value into the comma-list string
-    accepted by --mt-source-lang.
+    accepted by --mt-source.
 
     Accepts:
       - string: "ja" (global) or "ko:ja,es:en" (per-target)
       - dict: { ko = "ja", es = "en" } (per-target, cleaner)
-              { en = ["ko", "ja"] } (fallback list — first item used today;
-              future round will pick first AVAILABLE on disk)
+              { en = ["ko", "ja"] } (fallback list — first available wins)
     """
     if isinstance(value, str):
         return value
@@ -8314,10 +8433,9 @@ def _normalize_mt_source(value) -> str:
         parts: list[str] = []
         for target, source in value.items():
             if isinstance(source, (list, tuple)):
-                # First-listed source is the canonical pick for today's CLI.
+                source = "|".join(str(item).strip() for item in source if str(item).strip())
                 if not source:
                     continue
-                source = source[0]
             parts.append(f"{target}:{source}")
         return ",".join(parts)
     raise CliError(f"[translate].mt_source must be a string or dict (got {type(value).__name__}).")
@@ -8347,23 +8465,24 @@ def _toml_to_pipeline_argv(toml_data: dict) -> tuple[list[str], dict]:
 
       [translate]
       engine = "ollama"               # required: argos | ollama[:model] | deepl
-      mt_source = { ko = "ja", es = "en" }   # per-target source (dict form)
-      # or: mt_source = "ko:ja,es:en"        # comma-string form (mt_source_lang accepted as alias)
+      mt_source = { ko = "ja", es = ["fr", "en"] }
+                                      # per-target source; lists try first available
+      # or: mt_source = "ko:ja,es:fr|en"     # string form (mt_source_lang accepted as alias)
       "ja:ko" = "qwen3:4b"            # per-pair Ollama overrides (session-only)
       "en:es" = "llama3.2:3b"
 
       [modify]
       strip_cc_noise = true
       single_line = true
-      furigana = "hiragana"           # off | hiragana | romaji
-      reading_format = "all"          # srt | ass | vtt | all (alias: furigana_output_format)
+      reading = "ja:hiragana"         # reading aids, e.g. ja:hiragana, ko:revised
+      reading_format = "all"          # srt | ass | vtt | all
       convert = "smi-to-srt"          # "none" or omitted = no conversion
 
       [merge]
       languages = "ja:vtt, en, ko:smi"   # per-lang :format input hints
       master = "ja"
       sync = "strict"
-      furigana = true                 # inline 漢字（かんじ） into merged ja
+      reading = "ja:hiragana"         # inline readings into the matching line
       format = "vtt"                  # final stacked-output format
 
       [output]
@@ -8635,12 +8754,13 @@ def _merge_overrides_into_toml(data: dict, overrides: dict, verb_blocks: dict) -
             "--run": ("run", True),
         },
         "translate": {
-            "--mt-source": ("mt_source", None),
             "--mt-source-lang": ("mt_source", None),
+            "--mt-source": ("mt_source", None),
             "--engine": ("engine", None),
             "--mt-engine": ("engine", None),
             "--model": ("model", None),
             "--mt-model": ("model", None),
+            "--mt-model-pair": ("mt_model_pair", None),
             "--force": ("force", True),
         },
         "modify": {
@@ -8820,7 +8940,7 @@ def build_parser() -> argparse.ArgumentParser:
               # Translate missing ko/es from the best available downloaded SRT
               # (e.g. ja -> ko, en -> es). Output saved as Show.lang.mt.srt.
               getsubtitle "https://www.imdb.com/title/tt0245429/" \\
-                -l ja,ko,en,es --mt-engine argos
+                -l ja,ko,en,es --engine argos
 
             Subcommands:
               combine PATH ...        Stack downloaded SRTs into one file per episode.
@@ -8887,6 +9007,7 @@ def build_parser() -> argparse.ArgumentParser:
     translation.add_argument("--engine", "--mt-engine", dest="mt_engine", choices=["argos", "ollama", "deepl"], help="Translate missing requested languages from the best available SRT. Engines: argos (offline; pip install argostranslate), ollama (offline LLM; needs Ollama daemon), deepl (online; free tier, needs DEEPL_API_KEY). Default: argos (via [translate].engine).")
     translation.add_argument("--no-engine", "--no-mt-engine", dest="mt_engine", action="store_const", const="", help="Disable machine translation for this run even when [translate].engine is set in user_settings.toml.")
     translation.add_argument("--model", "--mt-model", dest="mt_model", metavar="NAME", help=f"Ollama model for --engine ollama. Default: {DEFAULT_OLLAMA_MODEL}")
+    translation.add_argument("--mt-model-pair", metavar="PAIRS", help="Per-pair Ollama model overrides for this run, e.g. ja:ko=qwen3:4b,en:es=llama3.2:3b. Ignored unless --engine ollama.")
     translation.add_argument("--mt-source", "--mt-source-lang", dest="mt_source_lang", metavar="CODES", help="Force the source language(s) for MT. Single code (ja) applies to all targets; target:source pairs (ko:ja,es:en) map per target.")
 
     advanced = p.add_argument_group("Advanced / Experimental")
@@ -9426,7 +9547,8 @@ def validate_user_config(raw: dict) -> dict:
         tr_out["engine"] = tr["engine"]
     if "model" in tr:
         tr_out["model"] = _validate_str(tr["model"], "translate.model")
-    # mt_source accepts string ("ja" / "ko:ja,es:en") or dict ({ko = "ja"}).
+    # mt_source accepts string ("ja" / "ko:ja,es:en") or dict
+    # ({ko = "ja"} / {es = ["fr", "en"]}).
     # mt_source_lang remains a silent alias for back-compat.
     _mt_source_key = "mt_source" if "mt_source" in tr else ("mt_source_lang" if "mt_source_lang" in tr else None)
     if _mt_source_key is not None:
@@ -9434,6 +9556,14 @@ def validate_user_config(raw: dict) -> dict:
         if isinstance(val, str):
             tr_out["mt_source_lang"] = val
         elif isinstance(val, dict):
+            for target, source in val.items():
+                if isinstance(source, str):
+                    continue
+                if isinstance(source, list) and all(isinstance(item, str) for item in source):
+                    continue
+                raise CliError(
+                    f"translate.{_mt_source_key}.{target}: expected string or list of strings"
+                )
             tr_out["mt_source_lang"] = val   # left as dict; _normalize_mt_source converts at use
         else:
             raise CliError(f"translate.{_mt_source_key}: expected string or dict")
@@ -9579,15 +9709,15 @@ auto_unload = true                # free model from RAM/VRAM after MT
 [modify]
 single_line = true                # asbplayer-friendly one-line cues
 strip_cc_noise = true             # remove broadcast ➡ continuation arrows
-furigana = "hiragana"             # off | hiragana | romaji
-reading_format = "srt"            # srt | ass | vtt | all (alias: furigana_output_format)
+reading = "ja:hiragana"           # e.g. ja:hiragana, ko:revised, zh:marks
+reading_format = "srt"            # srt | ass | vtt | all
 
 [merge]
 languages = "ja,en"
 sync = "auto"                     # auto | strict | loose
 preserve_lines = false
 priority = []                     # e.g. ["ja", "en", "ko"]
-furigana = true                   # inline ja readings into merged output
+reading = "ja:hiragana"           # inline readings into merged output
 
 [output]
 target = "~/Movies/Subtitles"
@@ -10144,7 +10274,7 @@ def _setup_print_recommendations(recs: list[_SetupRecommendation]) -> None:
 
 def _setup_config_text(choice: _SetupChoice) -> str:
     """Emit a user_settings.toml using v1.1 canonical key names.
-    Reading aids land under `[modify].romanization` (NOT the legacy
+    Reading aids land under `[modify].reading` (NOT the legacy
     `[modify].furigana = "hiragana"` form). Engine picks Ollama when
     the daemon is reachable and the user wanted offline MT."""
     fetch_langs = ",".join(
@@ -11021,11 +11151,8 @@ Examples:
 Set defaults in user_settings.toml
 ──────────────────────────────────────────────────────────────────────
   [modify]
-  romanization = "ja:hiragana,ko:revised"
+  reading = "ja:hiragana,ko:revised"
   reading_format = "srt"                # srt | ass | vtt | all
-
-  [merge]
-  furigana = true                       # inline ja readings into merged file
 
   [translate]
   strip_reading_before_mt = true       # strip ja readings before MT
@@ -11034,7 +11161,7 @@ Filenames:
   ja: <name>.ja.furigana-{hiragana|romaji}.{asb.srt|ruby.vtt|stacked.ass}
   ko: <name>.ko.romanization-{revised|yale}.{asb.srt|ruby.vtt|stacked.ass}
 
-`--help furigana` is a silent alias for this page.
+`--help romanization` and `--help furigana` are aliases for this page.
 """,
     "translate": """\
 Machine-translate missing subtitles.
@@ -11068,6 +11195,8 @@ Examples (standalone translate subcommand):
 Explicit source mapping (per-target):
   # Force en<-ja and es<-en regardless of what auto-pick would do.
   getsubtitle translate FOLDER -l ja,en,es --engine argos --mt-source en:ja,es:en
+  # Try French first, then English if French is missing on disk.
+  getsubtitle translate FOLDER -l fr,en,es --engine deepl --mt-source "es:fr|en"
   # Inside a fetch, same syntax:
   getsubtitle URL -l ja,en,es --engine deepl --mt-source en:ja,es:en
 
@@ -11090,7 +11219,12 @@ Translation options:
                            has an engine set. Equivalent to engine = "".
   --model NAME             Ollama model. Default: qwen3:4b
                            --mt-model is still accepted as an alias.
+  --mt-model-pair PAIRS    Per-pair Ollama model override for one command:
+                           ja:ko=qwen3:4b,en:es=llama3.2:3b
+                           --model still wins over pair-specific values.
   --mt-source CODE         Force translation source language (default: auto)
+                           Lists use |: es:fr|en means first available wins.
+                           Quote values containing | in your shell.
                            --mt-source-lang is still accepted as an alias.
   -o DIR                   (translate subcommand) output directory
   --dry-run                (translate subcommand) show plan, write nothing
@@ -11130,6 +11264,8 @@ Examples:
   getsubtitle modify FOLDER --reading ja:romaji            # Japanese romaji
   getsubtitle modify FOLDER --reading "ja:hiragana|romaji" # both side files
   getsubtitle modify FOLDER --convert smi-to-srt
+  getsubtitle modify FOLDER --convert ko:smi-to-srt        # Korean only
+  getsubtitle modify FOLDER --convert ko,en:smi-to-srt     # Korean + English
   getsubtitle modify FOLDER --convert smi-to-srt --force
   getsubtitle modify FOLDER --strip-cc-noise --single-line --reading ja:hiragana --dry-run
 
@@ -11168,7 +11304,7 @@ Other:
 
 Composes with the other subcommands:
   getsubtitle modify    FOLDER --convert smi-to-srt
-  getsubtitle translate FOLDER -l ja,en --mt-engine argos
+  getsubtitle translate FOLDER -l ja,en --engine argos
   getsubtitle modify    FOLDER --strip-cc-noise --single-line --reading ja:hiragana
   getsubtitle merge     FOLDER -l ja,en
 """,
@@ -11500,9 +11636,9 @@ Pipeline TOML schema (sections in execution order):
 
   [translate]
   engine = "ollama"                # required: argos | ollama[:model] | deepl
-  mt_source = { ko = "ja", es = "en", ja = "ko" }
-                                   # per-target source map (dict form);
-                                   # comma-string `mt_source = "ko:ja,es:en"` also works
+  mt_source = { ko = "ja", es = ["fr", "en"], ja = "ko" }
+                                   # per-target source map; lists try first available
+                                   # comma-string `mt_source = "ko:ja,es:fr|en"` also works
                                    # (`mt_source_lang` kept as alias)
   "ja:ko" = "qwen3:4b"             # per-pair Ollama models (session-only;
   "en:es" = "llama3.2:3b"          # don't touch user_settings.toml)
@@ -11510,7 +11646,7 @@ Pipeline TOML schema (sections in execution order):
   [modify]
   strip_cc_noise = true
   single_line = true
-  furigana = "hiragana"            # off | hiragana | romaji
+  reading = "ja:hiragana"          # e.g. ja:hiragana, ko:revised, zh:marks
   reading_format = "all"           # srt | ass | vtt | all
                                    # aliases: furigana_output_format, format
   convert = "smi-to-srt"           # or "none"
@@ -11521,7 +11657,7 @@ Pipeline TOML schema (sections in execution order):
                                    # (supports :srt, :vtt, :ass, :ssa, :smi)
   master = "ja"
   sync = "strict"                  # auto | strict | loose
-  furigana = true                  # inline 漢字（かんじ） into the merged ja line
+  reading = "ja:hiragana"          # inline readings into the matching line
   format = "vtt"                   # final stacked output format
 
   [output]
@@ -11540,7 +11676,7 @@ Naming conventions:
     TOML uses snake_case (mt_source, reading_format, strip_cc_noise).
     Either spelling works in TOML — hyphens normalize to underscores so
     `dry-run` and `dry_run` are interchangeable.
-  - Canonical TOML keys (v1.1):
+  - Canonical TOML keys (v1.8):
       [translate]  mt_source           (was: mt_source_lang)
       [modify]     reading_format      (was: furigana_output_format)
       [output]     target              (was: root)
@@ -13526,6 +13662,9 @@ def main(argv: list[str] | None = None) -> int:
         explicit_mt_model = args.mt_model if (
             option_was_passed(raw_argv, "--model") or option_was_passed(raw_argv, "--mt-model")
         ) else None
+        pair_model_previous = apply_mt_model_pair_overrides(
+            args.mt_model_pair if args.mt_engine == "ollama" else None
+        )
         translator_cache: dict[tuple[str, str | None], _BaseTranslator] = {}
         # [translate].strip_reading_before_mt: same defense as translate_main.
         # Default true; only meaningful when an MT source is ja.
@@ -13546,6 +13685,7 @@ def main(argv: list[str] | None = None) -> int:
         # Pre-flight so users get one clear install message instead of N
         # identical errors when the engine isn't ready.
         if not translator.is_available():
+            restore_mt_model_pair_overrides(pair_model_previous)
             raise CliError(
                 f"{translator.name}: not ready.\n{translator.setup_help()}"
             )
@@ -13566,15 +13706,15 @@ def main(argv: list[str] | None = None) -> int:
                     continue  # We already have a downloaded SRT for this lang.
                 forced_source = source_overrides.get(target) if source_overrides else None
                 if forced_source:
-                    src_lang = forced_source
-                    src_path = available.get(src_lang)
-                    if not src_path:
+                    picked_forced = pick_forced_mt_source(target, forced_source, available)
+                    if not picked_forced:
                         warnings.append(
-                            f"{target} ep{ep}: forced source {src_lang!r} wasn't downloaded "
-                            f"this run. Add {src_lang!r} to -l (e.g. -l {src_lang},{target}…) "
+                            f"{target} ep{ep}: none of the forced sources ({'|'.join(forced_source)}) "
+                            f"were downloaded this run. Add one source to -l "
                             f"or run `getsubtitle translate FOLDER` on an existing folder."
                         )
                         continue
+                    src_lang, src_path = picked_forced
                 else:
                     picked = pick_mt_source(target, available)
                     if not picked:
@@ -13647,6 +13787,7 @@ def main(argv: list[str] | None = None) -> int:
             if released:
                 uniq = sorted(set(released))
                 print(f"Unloaded Ollama model(s) from memory: {', '.join(uniq)}")
+        restore_mt_model_pair_overrides(pair_model_previous)
 
     generated: list[Path] = []
     ko_generated: list[Path] = []

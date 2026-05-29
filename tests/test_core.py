@@ -3332,6 +3332,49 @@ def test_translate_main_uses_pair_specific_ollama_model_from_config():
     assert "aya-expanse:8b" not in seen_models
 
 
+def test_translate_main_uses_pair_specific_ollama_model_from_cli():
+    import tempfile
+    from pathlib import Path
+
+    seen_models = []
+
+    class _FakeTranslator(MODULE["_BaseTranslator"]):
+        name = "ollama"
+        def __init__(self, model):
+            self.model = model
+        def is_available(self):
+            return True
+        def translate_batch(self, texts, source, target, on_progress=None):
+            return [f"[{self.model}] {t}" for t in texts]
+
+    scope = MODULE["translate_main"].__globals__
+    saved_select = scope["select_translator"]
+    try:
+        def fake_select(engine, model):
+            seen_models.append(model)
+            return _FakeTranslator(model)
+
+        scope["select_translator"] = fake_select
+        with _isolated_config('[translate]\nmodel = "aya-expanse:8b"\n'):
+            with tempfile.TemporaryDirectory() as d:
+                root = Path(d)
+                (root / "Show.S01E07.ja.srt").write_text(
+                    "1\n00:00:01,000 --> 00:00:02,000\nこんにちは\n", encoding="utf-8"
+                )
+                rc = MODULE["translate_main"]([
+                    str(root), "-l", "ko", "--engine", "ollama",
+                    "--mt-model-pair", "ja:ko=qwen3:4b",
+                ])
+                out_path = root / "Show.S01E07.ko.mt.srt"
+                assert rc == 0
+                assert "[qwen3:4b] こんにちは" in out_path.read_text(encoding="utf-8")
+    finally:
+        scope["select_translator"] = saved_select
+
+    assert "qwen3:4b" in seen_models
+    assert "aya-expanse:8b" not in seen_models
+
+
 def test_translate_main_refuses_overwrite_without_force():
     import tempfile
     from pathlib import Path
@@ -3460,14 +3503,14 @@ def test_split_csv_resolves_jp_and_cn():
 def test_parse_mt_source_lang_resolves_jp_alias_in_single_form():
     # Single-token form: 'jp' should resolve to 'ja' for all targets.
     p = MODULE["parse_mt_source_lang"]
-    assert p("jp", ["ko", "es"]) == {"ko": "ja", "es": "ja"}
+    assert p("jp", ["ko", "es"]) == {"ko": ("ja",), "es": ("ja",)}
 
 
 def test_parse_mt_source_lang_resolves_jp_and_cn_in_pairs():
     # Pair form: aliases on both target and source sides.
     # Target 'cn' (alias for zh) must match -l 'zh'; source 'jp' resolves to 'ja'.
     p = MODULE["parse_mt_source_lang"]
-    assert p("ko:jp,cn:en", ["ko", "zh"]) == {"ko": "ja", "zh": "en"}
+    assert p("ko:jp,cn:en", ["ko", "zh"]) == {"ko": ("ja",), "zh": ("en",)}
 
 
 def test_parse_mt_source_lang_none_or_empty_returns_none():
@@ -3479,17 +3522,17 @@ def test_parse_mt_source_lang_none_or_empty_returns_none():
 
 def test_parse_mt_source_lang_single_code_applies_to_all_targets():
     p = MODULE["parse_mt_source_lang"]
-    assert p("ja", ["ja", "ko", "es"]) == {"ja": "ja", "ko": "ja", "es": "ja"}
+    assert p("ja", ["ja", "ko", "es"]) == {"ja": ("ja",), "ko": ("ja",), "es": ("ja",)}
     # Case-insensitive: single token gets lowered, targets get lowered.
-    assert p("JA", ["KO", "ES"]) == {"ko": "ja", "es": "ja"}
+    assert p("JA", ["KO", "ES"]) == {"ko": ("ja",), "es": ("ja",)}
 
 
 def test_parse_mt_source_lang_explicit_pairs():
     p = MODULE["parse_mt_source_lang"]
-    assert p("ko:ja", ["ja", "ko"]) == {"ko": "ja"}
-    assert p("ko:ja,es:en", ["ja", "ko", "en", "es"]) == {"ko": "ja", "es": "en"}
+    assert p("ko:ja", ["ja", "ko"]) == {"ko": ("ja",)}
+    assert p("ko:ja,es:en", ["ja", "ko", "en", "es"]) == {"ko": ("ja",), "es": ("en",)}
     # Tolerates whitespace around tokens.
-    assert p(" ko : ja , es : en ", ["ja", "ko", "en", "es"]) == {"ko": "ja", "es": "en"}
+    assert p(" ko : ja , es : en ", ["ja", "ko", "en", "es"]) == {"ko": ("ja",), "es": ("en",)}
 
 
 def test_parse_mt_source_lang_ambiguous_comma_list_rejected():
@@ -3603,7 +3646,7 @@ def test_translate_main_forced_source_missing_is_skipped_with_clear_reason():
                 ])
     assert rc == 1  # nothing was planned
     text = out.getvalue()
-    assert "es: forced source 'en' not available" in text
+    assert "es: none of the forced sources (en) available" in text
 
 
 def test_translate_main_single_code_source_still_works():
@@ -3709,7 +3752,7 @@ def test_translate_main_dedupes_identical_skip_reasons():
     # Summary should show ONE deduped line, not 5 identical ones.
     assert "Skipped: 5" in text
     assert "5 episodes" in text
-    occurrences = text.count("forced source 'en' not available for this episode")
+    occurrences = text.count("none of the forced sources (en) available for this episode")
     assert occurrences == 1, f"reason should appear once in deduped output, got {occurrences}"
 
 
@@ -4710,10 +4753,24 @@ def test_normalize_mt_source_accepts_string_and_dict():
     out = f({"ko": "ja", "es": "en"})
     pairs = set(out.split(","))
     assert pairs == {"ko:ja", "es:en"}
-    # Dict with list fallback → first source used (today's CLI limitation).
+    # Dict with list fallback → pipe-list for "first available wins".
     out = f({"ko": ["ja", "en"], "es": "en"})
     pairs = set(out.split(","))
-    assert pairs == {"ko:ja", "es:en"}
+    assert pairs == {"ko:ja|en", "es:en"}
+
+
+def test_parse_mt_source_lang_accepts_fallback_list():
+    p = MODULE["parse_mt_source_lang"]
+    parsed = p("es:fr|en,ko:ja", ["es", "ko"])
+    assert parsed == {"es": ("fr", "en"), "ko": ("ja",)}
+
+
+def test_pick_forced_mt_source_uses_first_available_fallback():
+    from pathlib import Path
+    pick = MODULE["pick_forced_mt_source"]
+    available = {"en": Path("show.en.srt"), "ja": Path("show.ja.srt")}
+    assert pick("es", ("fr", "en"), available) == ("en", Path("show.en.srt"))
+    assert pick("es", ("fr", "ko"), available) is None
 
 
 def test_parse_reading_spec_string_and_list():
@@ -5534,6 +5591,31 @@ def test_modify_main_convert_smi_to_srt_end_to_end():
     assert "00:00:01,000 --> 00:00:03,500" in ko1
 
 
+def test_modify_main_convert_smi_scopes_language():
+    import tempfile, io, contextlib
+    from pathlib import Path
+    sami = (
+        "<SAMI><BODY>"
+        "<SYNC Start=1000><P Class=KRCC>한국어</P><P Class=ENCC>English</P></SYNC>"
+        "<SYNC Start=4000><P Class=KRCC>&nbsp;</P><P Class=ENCC>&nbsp;</P></SYNC>"
+        "</BODY></SAMI>"
+    )
+    with _isolated_config(None):
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            (root / "Show.S01E01.smi").write_text(sami, encoding="utf-8")
+            out = io.StringIO()
+            with contextlib.redirect_stdout(out):
+                rc = MODULE["modify_main"]([str(root), "--convert", "kr:smi-to-srt"])
+            text = out.getvalue()
+            ko_exists = (root / "Show.S01E01.ko.srt").exists()
+            en_exists = (root / "Show.S01E01.en.srt").exists()
+    assert rc == 0
+    assert "ko only" in text
+    assert ko_exists
+    assert not en_exists
+
+
 def test_modify_main_convert_smi_dry_run_writes_nothing():
     import tempfile, io, contextlib
     from pathlib import Path
@@ -6095,7 +6177,7 @@ def test_select_translator_unknown_engine_raises():
     try:
         MODULE["select_translator"]("notarealengine", None)
     except cli_error as e:
-        assert "Unknown --mt-engine" in str(e)
+        assert "Unknown --engine" in str(e)
     else:
         raise AssertionError("expected CliError for unknown engine")
 
@@ -6441,11 +6523,13 @@ def test_cli_engine_model_mt_source_languages_aliases():
     p = MODULE["build_translate_parser"]()
     ns = p.parse_args([
         "/tmp", "--engine", "argos", "--model", "qwen3:4b",
-        "--mt-source", "ko:ja", "--languages", "ja,ko",
+        "--mt-source", "ko:ja", "--mt-model-pair", "ja:ko=qwen3:4b",
+        "--languages", "ja,ko",
     ])
     assert ns.mt_engine == "argos"
     assert ns.mt_model == "qwen3:4b"
     assert ns.mt_source_lang == "ko:ja"
+    assert ns.mt_model_pair == "ja:ko=qwen3:4b"
     # dest stayed `langs` for back-compat with existing call sites;
     # --languages is the new documented spelling.
     assert ns.langs == "ja,ko"
@@ -6453,11 +6537,13 @@ def test_cli_engine_model_mt_source_languages_aliases():
     p2 = MODULE["build_parser"]()
     ns2 = p2.parse_args([
         "https://example.com", "--engine", "argos",
-        "--model", "m", "--mt-source", "ko:ja", "--languages", "ja,ko",
+        "--model", "m", "--mt-source", "ko:ja",
+        "--mt-model-pair", "ja:ko=qwen3:4b", "--languages", "ja,ko",
     ])
     assert ns2.mt_engine == "argos"
     assert ns2.mt_model == "m"
     assert ns2.mt_source_lang == "ko:ja"
+    assert ns2.mt_model_pair == "ja:ko=qwen3:4b"
     assert ns2.langs == "ja,ko"
 
 
@@ -6500,6 +6586,8 @@ def test_toml_mt_source_canonical_and_alias_in_user_config():
     # Dict form
     v = validate({"translate": {"mt_source": {"ko": "ja", "es": "en"}}})
     assert v["translate"]["mt_source_lang"] == {"ko": "ja", "es": "en"}
+    v = validate({"translate": {"mt_source": {"es": ["fr", "en"]}}})
+    assert v["translate"]["mt_source_lang"] == {"es": ["fr", "en"]}
     # Legacy alias still accepted
     v = validate({"translate": {"mt_source_lang": "auto"}})
     assert v["translate"]["mt_source_lang"] == "auto"

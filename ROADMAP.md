@@ -1,7 +1,32 @@
-# Roadmap  · v1.7
+# Roadmap  · v1.8
 
 What ships in v1.0, what's new in v1.1 / v1.2 / v1.3 / v1.4 / v1.5 /
-v1.6 / v1.7, what's experimental, and what's on the horizon.
+v1.6 / v1.7 / v1.8, what's experimental, and what's on the horizon.
+
+## v1.8 — what's new
+
+- **List-fallback `mt_source`.** TOML can now express source-language
+  preference lists, and the translator picks the first source actually
+  present for each episode:
+
+  ```toml
+  [translate]
+  mt_source = { es = ["fr", "en"], ko = ["ja", "en"] }
+  ```
+
+  The equivalent CLI spelling uses `|` inside the source half:
+  `--mt-source "es:fr|en,ko:ja|en"`.
+- **Per-pair MT model on the CLI.** `--mt-model-pair
+  ja:ko=qwen3:4b,en:es=llama3.2:3b` gives the existing
+  `[translate.ollama_models]` per-pair selection a one-command override.
+  `--model` still wins when both are present.
+- **Native SAMI per-language scoping.** `--convert ko:smi-to-srt` (alias
+  `kr:smi-to-srt`) converts only Korean streams from multi-language SAMI
+  files. `--convert smi-to-srt` still converts every stream.
+- **Canonical help/doc cleanup.** User-facing examples prefer
+  `--engine`, `--model`, `--mt-source`, and `--reading`. Legacy
+  `--mt-engine`, `--mt-model`, `--mt-source-lang`, and old reading names
+  remain compatibility aliases where supported.
 
 ## v1.7 — what's new
 
@@ -80,7 +105,8 @@ v1.6 / v1.7, what's experimental, and what's on the horizon.
 ## v1.4 — what's new
 
 - **`--reading` rename + ja:katakana mode.** `--reading` replaces
-  `--romanization` / `--furigana` as the canonical CLI flag (no aliases).
+  `--romanization` / `--furigana` as the canonical CLI flag. Legacy
+  names remain compatibility aliases where supported.
   Japanese now ships three reading modes: `ja:hiragana`, `ja:katakana`,
   and `ja:romaji`. TOML key `reading = "ja:hiragana,ko:revised"`.
 - **Interactive wizard UX overhaul.** Q11 actions expanded to
@@ -135,9 +161,8 @@ v1.6 / v1.7, what's experimental, and what's on the horizon.
   extras, unreachable Ollama daemon, missing API keys). Auto-saves a
   draft at `~/.cache/getsubtitle/wizard-draft.toml` so an interrupted
   wizard can resume.
-- **Reading-aid umbrella.** `--reading` replaces `--reading` as
-  the canonical CLI flag (`--reading` stays as a silent alias). The
-  spec now covers Japanese (ships now), plus Korean, Mandarin,
+- **Reading-aid umbrella.** `--reading` becomes the canonical CLI flag
+  for phonetic guides. The spec covers Japanese (ships now), plus Korean, Mandarin,
   Cantonese, Thai, Arabic, Hindi, Russian (wired through to CLI/TOML
   with backends landing per the planned section below).
 - **Naming-consistency renames** (Round 11): canonical TOML keys are
@@ -168,7 +193,7 @@ v1.6 / v1.7, what's experimental, and what's on the horizon.
 - Pipeline form chains verbs in one call: `getsubtitle --fetch X --translate ollama --modify --merge -l ja,en`. Verbs always execute in canonical order (fetch → translate → modify → merge).
 - Config-file form: `getsubtitle --config FILE.toml`. CLI flags layer over the TOML; per-verb inline blocks merge per-section. Two ship-with examples in the repo: `simpsons-s1-en-fr.toml`, `plex-movies-fill-merge.toml`.
 - Layered config: built-in defaults < `user_settings.toml` < `--config` TOML < CLI flags.
-- Topic-based help: `--help fetch | translate | modify | merge | pipeline | config | keys | furigana | advanced`.
+- Topic-based help: `--help fetch | translate | modify | merge | pipeline | config | keys | reading | advanced`.
 
 ### URL recognition
 
@@ -190,12 +215,12 @@ v1.6 / v1.7, what's experimental, and what's on the horizon.
 ### Machine translation
 
 - **Argos** (offline, default), **Ollama** (offline LLM, auto-pull + auto-unload on by default), **DeepL** (online, free tier).
-- Per-target source spec: `mt_source = { ko = "ja", es = "en" }` avoids wasteful en→ko / en→ja when better sources are on disk.
+- Per-target source spec: `mt_source = { ko = "ja", es = ["fr", "en"] }` avoids wasteful en→ko / en→ja when better sources are on disk and can try fallback sources in order.
 - Per-pair Ollama model overrides in `user_settings.toml`'s `[translate.ollama_models]`, or session-only in any `--config` TOML.
 - Engine spec accepts `ollama:qwen3:8b` colon-form to pin a model on the CLI.
 - Strip inline 漢字（かんじ） readings from `ja` sources before MT (default true) so translators don't see the readings as duplicate content.
 - Auto source-language picker prefers grammatically close pairs (ko ← ja, es ← en, en ← anything).
-- Explicit per-target overrides via `--mt-source-lang "ko:ja,es:en"`.
+- Explicit per-target overrides via `--mt-source "ko:ja,es:en"`.
 - Cue-level progress + deduped error messages.
 
 ### Merge (stacking)
@@ -204,8 +229,8 @@ v1.6 / v1.7, what's experimental, and what's on the horizon.
 - VTT ruby `<ruby><rt>` markup collapses to `漢字（かんじ）` parentheticals so furigana survives the read.
 - Time-overlap matching with `--sync auto | strict | loose` presets.
 - Master language: `--master` flag > `[merge].priority` config > first language in `-l`.
-- Inline 漢字（かんじ） readings on the merged Japanese line (`furigana = true`).
-- Output formats: `.srt` (default), `.vtt` (asbplayer ruby), `.ass` (experimental).
+- Inline readings on the matching merged line via `reading = "ja:hiragana"` or the CLI `--reading ja:hiragana`.
+- Output formats: `.srt` (default), `.vtt` (asbplayer ruby), `.smi`, `.ass`, and plain `.txt` without timestamps.
 
 ### Modify (post-processing)
 
@@ -231,13 +256,11 @@ v1.6 / v1.7, what's experimental, and what's on the horizon.
 
 ### Tests
 
-- 380+ automated tests covering URL parsing, provider response shapes, TMDB / AniList resolution, SAMI parsing, VTT/ASS input parsing, MT helpers + auto_load/auto_unload, merge with format hints, pipeline orchestration, `--config` CLI overrides, config validation, source smoke diagnostics, help system, and dispatch routing.
+- 475 automated tests covering URL parsing, provider response shapes, TMDB / AniList resolution, SAMI parsing, VTT/ASS input parsing, MT helpers + auto_load/auto_unload, merge with format hints, pipeline orchestration, `--config` CLI overrides, config validation, source smoke diagnostics, help system, and dispatch routing.
 
 ## Planned (post-v1.0)
 
-- **Per-pair MT model on the CLI**: `--mt-model-pair ja:ko=qwen3:4b,en:es=llama3.2:3b` so the per-pair selection from `[translate.ollama_models]` has a one-flag CLI equivalent.
-- **List-fallback `mt_source`**: today `mt_source = { en = ["ko", "ja"] }` only uses the first; planned to walk the list and pick the first source actually on disk.
-- **Romanization expansion (international)**: the v1.1 `[modify].romanization`
+- **Reading-aid expansion (international)**: the v1.1 `[modify].reading`
   schema grows per language. Shipped: Japanese (furigana, v1.0), Korean
   (Revised + G2P + Yale, v1.2), Mandarin (pinyin marks / numbers /
   letters, v1.3). Still to come: Cantonese jyutping (`yue:numbers`),
@@ -247,23 +270,13 @@ v1.6 / v1.7, what's experimental, and what's on the horizon.
   `romanization-th`, …) so users only install the backends they need.
   Filenames use the `.romanization-{mode}` infix (ja keeps
   `.furigana-{mode}` for back-compat).
-- **Native SAMI per-language scoping**: `[modify].convert = "kr:smi-to-srt"` to convert only Korean SAMI streams.
-- **Help/doc cleanup for canonical aliases**: `--engine` / `--model` are the
-  canonical translate flags, while `--mt-engine` / `--mt-model` remain silent
-  compatibility aliases for existing scripts.
 - **`--pipeline run NAME`** registry: name a pipeline TOML and run it by short name without typing the path.
 
-## Planned: merge improvements
+## Planned: merge improvements (post-v2.0)
 
 - Semantic alignment fallback when time-overlap matching is weak (`--sync smart --semantic-engine ollama`).
 - Optional subtitle labels and ordering for combined files.
 - Integration tests using temporary SRT/VTT/SMI folders for end-to-end merge output.
-
-## Planned: UX polish
-
-- Examples gallery (real downloaded folder layouts; multiple seasons; mixed sources).
-- asbplayer visual QA notes for VTT ruby output.
-- Better surface for "this provider matched but the file failed to download" failures.
 
 ## Intentionally out of scope
 
