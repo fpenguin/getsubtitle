@@ -12135,21 +12135,40 @@ def _wizard_q4_master(state: _WizardState) -> None:
     if len(state.order) <= 1:
         state.master = ""
         return
+    # Offer a context-aware second option: if the user is collecting a
+    # CJK or otherwise reading-aid-bearing language, surface it by name
+    # since that's the most common "the timing should follow my study
+    # language, not English" case. Otherwise just present first/custom.
+    learner_priority = ("ja", "ko", "zh", "yue", "th", "ar", "hi", "ru")
+    language_names = {
+        "ja": "Japanese", "ko": "Korean", "zh": "Mandarin",
+        "yue": "Cantonese", "th": "Thai", "ar": "Arabic",
+        "hi": "Hindi", "ru": "Russian", "en": "English",
+        "es": "Spanish", "fr": "French", "de": "German",
+        "it": "Italian", "pt": "Portuguese",
+    }
+    candidate = next(
+        (l for l in learner_priority
+         if l in state.order and l != state.order[0]),
+        None,
+    )
     print()
     print("Q5. Which language controls cue timing (the 'master' track)?")
     print(f"    a) First displayed — {state.order[0]} (recommended)")
-    print("    b) Japanese (if collected)")
-    print("    c) Custom")
-    pick = _wizard_prompt("Choose a/b/c", "a").lower()
+    if candidate:
+        label = language_names.get(candidate, candidate.upper())
+        print(f"    b) {label} — {candidate}")
+        print("    c) Custom")
+        choices = "a/b/c"
+    else:
+        print("    b) Custom")
+        choices = "a/b"
+    pick = _wizard_prompt(f"Choose {choices}", "a").lower()
     if pick.startswith("a"):
         state.master = ""  # default — first language wins
-    elif pick.startswith("b"):
-        if "ja" not in state.order:
-            print("    (Japanese isn't in your list; falling back to first.)")
-            state.master = ""
-        else:
-            state.master = "ja"
-    elif pick.startswith("c"):
+    elif pick.startswith("b") and candidate:
+        state.master = candidate
+    elif pick.startswith("c") or (pick.startswith("b") and not candidate):
         raw = _wizard_prompt("Master language code", state.order[0])
         cand = LANGUAGE_ALIASES.get(raw.lower(), raw.lower())
         if cand not in state.order:
@@ -12227,8 +12246,18 @@ def _wizard_q7_reading_aids(state: _WizardState) -> None:
         return
     print()
     print("Q8. Reading aids (phonetic guides for the original script).")
-    print("    VTT format renders them as ruby above the kanji/hangul/hanzi;")
-    print("    SRT / SMI / ASS show them as parenthetical 漢字（かんじ） form.")
+    # Pick a script-appropriate example so Korean / Mandarin users don't
+    # see a kanji-only sample. Falls back to a Japanese example only when
+    # ja is the first relevant language.
+    primary = relevant[0][0]  # base language code from the first menu row
+    example = {
+        "ja": "漢字（かんじ）",
+        "ko": "한글 (hangeul)",
+        "zh": "漢字 (pīnyīn)",
+        "yue": "漢字 (jyutping)",
+    }.get(primary, "original (reading)")
+    print("    VTT renders them as ruby above the script; SRT / SMI / ASS")
+    print(f"    show them as parenthetical {example} form.")
     print("    Pick any combination by number. Empty = no reading aids.")
     for i, (lang, spec, label, shipping) in enumerate(relevant, start=1):
         print(f"    {i}) {label}   [{spec}]")
@@ -12262,12 +12291,8 @@ def _wizard_q7_reading_aids(state: _WizardState) -> None:
 
 def _wizard_q8_asbplayer(state: _WizardState) -> None:
     print()
-    print("Q9. Apply a learner-friendly cleanup preset?")
-    print("    The preset flattens cues to a single line and strips broadcast")
-    print("    captioning noise (e.g. the ➡ continuation arrow). This makes")
-    print("    subtitles easier to skim in VLC, mpv, IINA, Infuse, asbplayer,")
-    print("    Plex web, and most other players. For reading aids (ja/ko/zh),")
-    print("    VTT output additionally renders them as ruby above the script.")
+    print("Q9. Apply learner-friendly cleanup? (single-line cues + strip")
+    print("    broadcast noise like ➡). Works in any player.")
     state.asbplayer = _wizard_yesno("Apply cleanup preset?", default=True)
 
 
@@ -12279,8 +12304,8 @@ def _wizard_q9_format(state: _WizardState) -> None:
     print("Q10. Final output format.")
     print("    a) SRT  — most compatible (default if no ruby reading aid)")
     print("    b) VTT  — renders ruby reading aids above the script.")
-    print("             Used by web/browser players and asbplayer; supported")
-    print("             by mpv/IINA via auxiliary tracks.")
+    print("             Supported by VLC, mpv/IINA, browsers, web players,")
+    print("             and asbplayer.")
     print("    c) SMI")
     print("    d) ASS")
     print("    e) TXT - without timestamp")
@@ -12313,16 +12338,13 @@ def _wizard_q10_output(state: _WizardState) -> None:
 
 def _wizard_q11_action(state: _WizardState) -> str:
     """Final action. Returns one of 'run', 'save', 'restart', 'quit', 'edit'."""
-    # Stretch the separator wide enough to cover a realistic CLI command
-    # AND the widest TOML line. The CLI form is the longest sandwich-bread;
-    # measure it, add room for the two-space indent, and pad to at least 78
-    # columns (the standard terminal-comfort width). This also makes the
-    # banner visually distinct from incidental log lines.
+    # Fixed-width separator. Stretching to the CLI command produces
+    # ~190-char rules that wrap on most terminals and look terrible;
+    # 70 fits a standard 80-col terminal with two columns of breathing
+    # room. The CLI form can soft-wrap; that's fine.
     cli_string = _wizard_emit_cli_string(state)
     toml_str = _wizard_emit_toml(state)
-    width = max(78, len(cli_string) + 2,
-                max((len(ln) + 2 for ln in toml_str.splitlines()), default=0))
-    rule = "=" * width
+    rule = "=" * 70
     print()
     print(rule)
     print("Based on your choice, you can try:")
@@ -12805,7 +12827,22 @@ def interactive_main(argv: list[str] | None = None) -> int:
             print("  " + cli_string)
             print()
             _wizard_clear_draft()
-            return main(_wizard_emit_cli(state)[1:])
+            rc = main(_wizard_emit_cli(state)[1:])
+            # Post-run: offer to open the output folder. Defaults to Yes
+            # so the natural flow is "wizard finishes -> file manager pops
+            # open at the new subtitles." Skipped silently on a failed run
+            # so we don't open empty/non-existent directories.
+            if rc == 0 and state.output:
+                try:
+                    target = Path(state.output).expanduser()
+                    if target.exists() and _wizard_yesno("Open folder?", default=True):
+                        try:
+                            open_folder(target)
+                        except CliError as e:
+                            print(f"  (could not open folder: {e})")
+                except _WizardAbort:
+                    pass
+            return rc
 
 
 def main(argv: list[str] | None = None) -> int:

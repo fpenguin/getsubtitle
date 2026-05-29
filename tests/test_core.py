@@ -6906,10 +6906,12 @@ def test_save_subtitle_movie_filename_has_no_season_episode():
         scope["download_bytes"] = saved_dl
 
 
-def test_wizard_q11_banner_separator_stretches_to_cli_width():
-    """The Q11 banner '=' rule must cover the widest line inside (CLI
-    command or any TOML line) plus a 2-char indent gutter, and never be
-    narrower than 78 chars."""
+def test_wizard_q11_banner_uses_fixed_70_char_rule():
+    """The Q11 banner '=' rule is a fixed 70 chars. Stretching to the CLI
+    command width produced ~190-char rules that wrap on standard 80-col
+    terminals; 70 fits any terminal with room to spare and the CLI command
+    soft-wraps below it instead. CLI form and TOML preview both appear
+    inside the banner; no 'About to run' confirm."""
     import io, contextlib
     s = MODULE["_WizardState"](
         source="https://www.themoviedb.org/movie/8392",
@@ -6923,10 +6925,6 @@ def test_wizard_q11_banner_separator_stretches_to_cli_width():
         is_movie=True,
     )
     cli = MODULE["_wizard_emit_cli_string"](s)
-    toml_text = MODULE["_wizard_emit_toml"](s)
-    expected_min = max(78, len(cli) + 2,
-                       max(len(ln) + 2 for ln in toml_text.splitlines()))
-    # Render Q11 with stubbed input -> pick 'a' (Run).
     buf = io.StringIO()
     fn_g = MODULE["_wizard_q11_action"].__globals__
     saved_input = fn_g.get("input")
@@ -6938,14 +6936,125 @@ def test_wizard_q11_banner_separator_stretches_to_cli_width():
         if saved_input is not None:
             fn_g["input"] = saved_input
     out = buf.getvalue()
-    # The rule character appears at least once at the expected width.
-    rule = "=" * expected_min
-    assert rule in out, f"banner rule too narrow; expected at least {expected_min} '=' chars"
-    # The CLI line and the TOML preview both appear inside the banner.
+    rule = "=" * 70
+    assert rule in out
+    # No oversize rule.
+    assert "=" * 80 not in out
+    # CLI + TOML still both rendered.
     assert cli in out
     assert "Equivalent TOML workflow:" in out
-    # 'About to run' is gone (the run-confirm step was removed).
     assert "About to run" not in out
+
+
+def test_wizard_q4_master_option_b_is_context_aware():
+    """Q5 (timing master) option (b) used to be hardcoded 'Japanese'.
+    Korean learners would see an irrelevant option. New behavior:
+    pick the most-likely study language present in the order list as
+    option (b); if none of the learner-priority codes are present,
+    collapse to a) first / b) custom."""
+    import io, contextlib
+    # Korean + English -> option (b) should surface Korean, not Japanese.
+    s = MODULE["_WizardState"](languages=["ko", "en"], order=["ko", "en"])
+    buf = io.StringIO()
+    fn_g = MODULE["_wizard_q4_master"].__globals__
+    saved_input = fn_g.get("input")
+    try:
+        fn_g["input"] = lambda *a, **k: "a"
+        with contextlib.redirect_stdout(buf):
+            MODULE["_wizard_q4_master"](s)
+    finally:
+        if saved_input is not None:
+            fn_g["input"] = saved_input
+    out = buf.getvalue()
+    assert "Japanese" not in out, "Q5 leaks hardcoded Japanese for ko learner"
+    # First-displayed pick keeps master empty (first language wins downstream).
+    assert s.master == ""
+
+    # English + Spanish -> no CJK/learner code present, drop option (b).
+    s2 = MODULE["_WizardState"](languages=["en", "es"], order=["en", "es"])
+    buf2 = io.StringIO()
+    try:
+        fn_g["input"] = lambda *a, **k: "a"
+        with contextlib.redirect_stdout(buf2):
+            MODULE["_wizard_q4_master"](s2)
+    finally:
+        if saved_input is not None:
+            fn_g["input"] = saved_input
+    out2 = buf2.getvalue()
+    # Only 'Custom' should appear as the second option, not a language label.
+    assert "Custom" in out2
+    assert "Japanese" not in out2
+    assert "Korean" not in out2
+
+
+def test_wizard_q7_reading_aid_example_is_script_appropriate():
+    """Q8 header used to show 漢字（かんじ） regardless of the user's
+    primary script. Korean and Mandarin learners now see appropriate
+    examples (한글 / 漢字 (pīnyīn)) instead of a Japanese-only one."""
+    import io, contextlib
+    fn_g = MODULE["_wizard_q7_reading_aids"].__globals__
+    saved_input = fn_g.get("input")
+    try:
+        fn_g["input"] = lambda *a, **k: "none"
+        # Korean primary.
+        s_ko = MODULE["_WizardState"](languages=["ko", "en"], order=["ko", "en"])
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            MODULE["_wizard_q7_reading_aids"](s_ko)
+        out = buf.getvalue()
+        assert "한글" in out, "Korean learner should see hangul example"
+        assert "漢字（かんじ）" not in out, "Korean learner should not see ja example"
+        # Mandarin primary.
+        s_zh = MODULE["_WizardState"](languages=["zh", "en"], order=["zh", "en"])
+        buf2 = io.StringIO()
+        with contextlib.redirect_stdout(buf2):
+            MODULE["_wizard_q7_reading_aids"](s_zh)
+        out2 = buf2.getvalue()
+        assert "pīnyīn" in out2, "Mandarin learner should see pinyin example"
+    finally:
+        if saved_input is not None:
+            fn_g["input"] = saved_input
+
+
+def test_wizard_q8_preset_description_is_short():
+    """Q9 used to be a 6-line essay about specific players. The shorter
+    version is at most 3 lines including the prompt label."""
+    import io, contextlib
+    fn_g = MODULE["_wizard_q8_asbplayer"].__globals__
+    saved_input = fn_g.get("input")
+    try:
+        fn_g["input"] = lambda *a, **k: "n"
+        s = MODULE["_WizardState"]()
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            MODULE["_wizard_q8_asbplayer"](s)
+    finally:
+        if saved_input is not None:
+            fn_g["input"] = saved_input
+    out = buf.getvalue()
+    # Count non-empty body lines (exclude blank line + the prompt itself).
+    body = [ln for ln in out.splitlines()
+            if ln.strip() and "Apply cleanup preset?" not in ln]
+    assert len(body) <= 3, f"Q9 body too long: {body!r}"
+
+
+def test_wizard_q9_format_vtt_mentions_vlc():
+    """Q10 b) VTT description must mention VLC explicitly — it's the
+    most common player among non-developer users."""
+    import io, contextlib
+    fn_g = MODULE["_wizard_q9_format"].__globals__
+    saved_input = fn_g.get("input")
+    try:
+        fn_g["input"] = lambda *a, **k: "a"
+        s = MODULE["_WizardState"](reading_aids=[], asbplayer=False)
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            MODULE["_wizard_q9_format"](s)
+    finally:
+        if saved_input is not None:
+            fn_g["input"] = saved_input
+    out = buf.getvalue()
+    assert "VLC" in out, "Q10 VTT description should mention VLC"
 
 
 def test_wizard_reading_aid_labels_format_agnostic():
