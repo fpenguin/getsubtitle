@@ -1862,14 +1862,16 @@ def test_combine_main_writes_vtt_with_ruby_furigana():
                 str(root), "-l", "ja,ko", "--reading", "ja:hiragana", "--format", "vtt",
             ])
             assert rc == 0
-            out = root / "Show.S01E07.ja-ko.vtt"
+            # --reading ja:hiragana rewrites the ja token to ja-furigana in
+            # the output filename (see combined_output_name's `furigana=` arg).
+            out = root / "Show.S01E07.ja-furigana-ko.vtt"
             assert out.exists()
             body = out.read_text(encoding="utf-8")
             assert body.startswith("WEBVTT\n")
             assert "00:00:01.000 --> 00:00:03.000" in body
             assert "<ruby>片桐<rt>かたぎり</rt></ruby> 君" in body
             assert "카타기리 군" in body
-            assert not (root / "Show.S01E07.ja-ko.srt").exists()
+            assert not (root / "Show.S01E07.ja-furigana-ko.srt").exists()
     finally:
         combine_scope["apply_japanese_ruby"] = saved_apply_japanese_ruby
 
