@@ -1,114 +1,59 @@
 # GetSubtitle
 
-GetSubtitle downloads, cleans, translates, and stacks subtitles into
-one study-friendly file for language learners. Pair Japanese with
-furigana and your native language, fill missing tracks with AI
-translation, or merge a folder of `.srt` files into one synced
-WebVTT for VLC, mpv, IINA, asbplayer, Plex, or Jellyfin.
+Turn movies, anime, dramas, and sitcoms into subtitle stacks for language
+learning.
+
+GetSubtitle helps you watch with the subtitle setup streaming apps rarely
+offer: the language you are learning, a pronunciation guide, your native
+language, and an optional bridge language, all synced into one study-friendly
+file for players like VLC, mpv, IINA, asbplayer, Plex, and Jellyfin.
 
 ![asbplayer rendering Japanese ruby furigana from WebVTT](examples/asbplayer-ruby-vtt-preview.png)
 
-## Quickstart
+## Why Learners Use It
 
-### Option A: GitHub installer — macOS / Linux
+- **Watch with two, three, or four subtitles at once** instead of switching
+  tracks back and forth.
+- **Add reading aids**: Japanese furigana, Korean Revised Romanization, and
+  Mandarin pinyin.
+- **Fill missing subtitles** with DeepL, Ollama, or Argos when the language
+  you need is unavailable.
+- **Clean messy captions** by removing broadcast noise and flattening cues for
+  easier reading and sentence mining.
+- **Prepare a media library** by scanning Plex/Jellyfin folders, converting
+  legacy `.smi`, and merging per episode.
 
-Recommended while the project is distributed from GitHub:
+## What You Can Make
+
+```text
+Japanese audio
+日本語字幕 + ふりがな
+Korean / English / Spanish support line
+One synced SRT or WebVTT file
+```
+
+Good fits:
+
+| You want to... | GetSubtitle can... |
+|---|---|
+| Learn Japanese from anime or dramas | download `ja`, add furigana, merge with your native language |
+| Use Korean as your support language | fetch or translate `ko`, then stack `ja,ko` |
+| Learn English or Spanish from sitcoms | collect `en,es`, or translate missing tracks from another language |
+| Use asbplayer for sentence mining | output single-line WebVTT with ruby reading aids |
+| Clean up a Plex/Jellyfin library | scan folders, convert `.smi`, fill gaps, and merge per episode |
+
+## Try These Workflows
+
+### Easiest: `getsubtitle --interactive`
+
+Let the wizard ask what you watch, which languages you want, whether to add
+reading aids, and whether to run now or save a reusable workflow:
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/fpenguin/getsubtitle/main/setup.sh -o setup.sh
-sh setup.sh
-getsubtitle -i
+getsubtitle --interactive
 ```
 
-The installer creates an isolated Python environment, asks which reading-aid
-backends to install, adds a `getsubtitle` command shim in `~/.local/bin`, and
-offers to run `getsubtitle setup`.
-
-### Option B: GitHub installer — Windows PowerShell
-
-```powershell
-Invoke-WebRequest https://raw.githubusercontent.com/fpenguin/getsubtitle/main/setup.ps1 -OutFile setup.ps1
-.\setup.ps1
-getsubtitle -i
-```
-
-If PowerShell blocks local scripts, run this once for the current terminal:
-
-```powershell
-Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass
-.\setup.ps1
-```
-
-The installer creates an isolated environment under `%LOCALAPPDATA%\getsubtitle`,
-asks which reading-aid backends to install, writes `getsubtitle.cmd` to
-`%USERPROFILE%\bin`, and offers to run `getsubtitle setup`.
-
-### Option C: pipx from GitHub
-
-Good if you already use `pipx`:
-
-```sh
-pipx install "getsubtitle[furigana,romanization-ko,romanization-zh] @ git+https://github.com/fpenguin/getsubtitle.git"
-getsubtitle setup
-getsubtitle -i
-```
-
-On Windows, install pipx first if needed:
-
-```powershell
-py -m pip install --user pipx
-py -m pipx ensurepath
-```
-
-### Option D: developer checkout
-
-```sh
-git clone https://github.com/fpenguin/getsubtitle.git
-cd getsubtitle
-./setup.sh        # macOS/Linux; must run from the repo root
-```
-
-On Windows:
-
-```powershell
-git clone https://github.com/fpenguin/getsubtitle.git
-cd getsubtitle
-.\setup.ps1       # must run from the repo root
-```
-
-The installer detects the source checkout (presence of `pyproject.toml`
-and `getsubtitle_core.py` in the current directory) and creates an
-editable venv at `./.venv` instead of the global app venv. Activate it
-each session: `source .venv/bin/activate`.
-
-Manual editable install:
-
-```sh
-pip install -e ".[furigana,romanization-ko,romanization-zh]"
-```
-
-PyPI note: the `getsubtitle` package name is already occupied by an older
-unrelated project, so `pip install getsubtitle` does **not** install this tool
-yet. Use the GitHub installer or `pipx` command above for now.
-
-After installation:
-
-```sh
-# First-time setup picks providers, keys, and recommendations for you
-getsubtitle setup
-
-# Interactive wizard builds and runs one command at a time
-getsubtitle -i
-```
-
-`getsubtitle -i` asks a handful of questions (which steps to run, what
-to work on, which languages, what to do at the end), shows you the
-terminal command and a reusable workflow file, then lets you Run, Save,
-or Edit. It probes your environment for missing pieces (pykakasi,
-Ollama, API keys, …) before running and offers to open the output
-folder when it's done.
-
-## Examples
+### CLI Examples
 
 ```sh
 # Easy: movie, TMDB link — Totoro, Japanese + English
@@ -129,18 +74,10 @@ getsubtitle merge ~/Movies/Subtitles/Friends -s 4 -e 3-5 -l fr,en,es
 `-e all` on **non-anime TV** needs a TMDB key — set one once with
 `getsubtitle --set-key tmdb`, or pass an explicit range like `-e 1-22`.
 
-## What you can build
+## Reading Aids
 
-| Learner goal                       | Useful workflow                                          |
-|------------------------------------|----------------------------------------------------------|
-| Learn Japanese from anime/dramas   | Download `ja`, add furigana, merge with your language    |
-| Use Korean as your native support  | Fetch/translate `ko`, then merge `ja,ko`                 |
-| Learn Spanish from English media   | Fetch `en,es`, or translate missing `es` from `en`       |
-| Prepare a Plex/Jellyfin library    | Scan folders, convert `.smi`, fill gaps, merge per episode |
-| Mine lines in asbplayer            | Output single-line SRT or ruby WebVTT                    |
-
-**Reading aids** — phonetic guides inlined into the original-script
-line, in either ruby (VTT) or parenthetical (SRT/SMI/ASS) form.
+Reading aids are phonetic guides inlined into the original-script line, in
+either ruby (VTT) or parenthetical (SRT/SMI/ASS) form.
 
 | Language       | Modes                                | Status                                                       |
 |----------------|--------------------------------------|--------------------------------------------------------------|
@@ -153,7 +90,98 @@ line, in either ruby (VTT) or parenthetical (SRT/SMI/ASS) form.
 `reading = "ja:hiragana,ko:revised,zh:marks"` in TOML; `--reading
 ja:hiragana,ko:revised,zh:marks` on the CLI.
 
-## Setup notes
+## Start Here
+
+After installing, run:
+
+```sh
+getsubtitle setup
+getsubtitle -i
+```
+
+`getsubtitle setup` asks what languages you know, what you are learning, what
+you watch, and where you watch it. Then it recommends providers, API keys,
+player settings, and optional dependencies with rough setup time.
+
+`getsubtitle -i` is the guided workflow builder. It asks a handful of
+questions, shows the command and reusable TOML workflow, then lets you Run,
+Save, Edit, Restart, or Quit.
+
+## Install
+
+### macOS / Linux
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/fpenguin/getsubtitle/main/setup.sh -o setup.sh
+sh setup.sh
+getsubtitle -i
+```
+
+The installer creates an isolated Python environment, asks which reading-aid
+backends to install, adds a `getsubtitle` command shim in `~/.local/bin`, and
+offers to run `getsubtitle setup`.
+
+### Windows PowerShell
+
+```powershell
+Invoke-WebRequest https://raw.githubusercontent.com/fpenguin/getsubtitle/main/setup.ps1 -OutFile setup.ps1
+.\setup.ps1
+getsubtitle -i
+```
+
+If PowerShell blocks local scripts, run this once for the current terminal:
+
+```powershell
+Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass
+.\setup.ps1
+```
+
+The installer creates an isolated environment under `%LOCALAPPDATA%\getsubtitle`,
+asks which reading-aid backends to install, writes `getsubtitle.cmd` to
+`%USERPROFILE%\bin`, and offers to run `getsubtitle setup`.
+
+### pipx
+
+Good if you already use `pipx`:
+
+```sh
+pipx install "getsubtitle[furigana,romanization-ko,romanization-zh] @ git+https://github.com/fpenguin/getsubtitle.git"
+getsubtitle setup
+getsubtitle -i
+```
+
+On Windows, install pipx first if needed:
+
+```powershell
+py -m pip install --user pipx
+py -m pipx ensurepath
+```
+
+### Developer Checkout
+
+```sh
+git clone https://github.com/fpenguin/getsubtitle.git
+cd getsubtitle
+./setup.sh        # macOS/Linux; must run from the repo root
+```
+
+On Windows:
+
+```powershell
+git clone https://github.com/fpenguin/getsubtitle.git
+cd getsubtitle
+.\setup.ps1       # must run from the repo root
+```
+
+The installer detects the source checkout and creates an editable venv at
+`./.venv`. Activate it each session with `source .venv/bin/activate`
+on macOS/Linux or `.\.venv\Scripts\Activate.ps1` on Windows.
+
+PyPI note: the `getsubtitle` package name is already occupied by an older
+unrelated project, so `pip install getsubtitle` does **not** install this tool
+yet. Use the GitHub installer or `pipx` command above for now.
+
+## Setup Notes
 
 **Optional dependencies** — install only what you need:
 
