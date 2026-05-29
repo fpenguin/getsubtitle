@@ -10,7 +10,7 @@ WebVTT for VLC, mpv, IINA, asbplayer, Plex, or Jellyfin.
 
 ## Quickstart
 
-### Option A: GitHub installer
+### Option A: GitHub installer — macOS / Linux
 
 Recommended while the project is distributed from GitHub:
 
@@ -24,7 +24,26 @@ The installer creates an isolated Python environment, asks which reading-aid
 backends to install, adds a `getsubtitle` command shim in `~/.local/bin`, and
 offers to run `getsubtitle setup`.
 
-### Option B: pipx from GitHub
+### Option B: GitHub installer — Windows PowerShell
+
+```powershell
+Invoke-WebRequest https://raw.githubusercontent.com/fpenguin/getsubtitle/main/setup.ps1 -OutFile setup.ps1
+.\setup.ps1
+getsubtitle -i
+```
+
+If PowerShell blocks local scripts, run this once for the current terminal:
+
+```powershell
+Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass
+.\setup.ps1
+```
+
+The installer creates an isolated environment under `%LOCALAPPDATA%\getsubtitle`,
+asks which reading-aid backends to install, writes `getsubtitle.cmd` to
+`%USERPROFILE%\bin`, and offers to run `getsubtitle setup`.
+
+### Option C: pipx from GitHub
 
 Good if you already use `pipx`:
 
@@ -34,12 +53,27 @@ getsubtitle setup
 getsubtitle -i
 ```
 
-### Option C: developer checkout
+On Windows, install pipx first if needed:
+
+```powershell
+py -m pip install --user pipx
+py -m pipx ensurepath
+```
+
+### Option D: developer checkout
 
 ```sh
 git clone https://github.com/fpenguin/getsubtitle.git
 cd getsubtitle
-./setup.sh        # must run from the repo root
+./setup.sh        # macOS/Linux; must run from the repo root
+```
+
+On Windows:
+
+```powershell
+git clone https://github.com/fpenguin/getsubtitle.git
+cd getsubtitle
+.\setup.ps1       # must run from the repo root
 ```
 
 The installer detects the source checkout (presence of `pyproject.toml`
