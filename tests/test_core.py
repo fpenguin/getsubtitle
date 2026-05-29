@@ -728,15 +728,22 @@ def test_tmdb_search_movie_returns_top_match_with_imdb():
 
 def test_tmdb_search_returns_none_without_key():
     # No api_key arg and no env / Keychain → None, no network call.
+    # runpy.run_path returns a shallow COPY of the executed-module globals,
+    # so patching MODULE["foo"] doesn't reach the function's __globals__.
+    # Patch keychain_get directly in the function's __globals__ to also
+    # bypass any real provider key the dev box may have stored.
     import os
-    saved = os.environ.pop("TMDB_API_KEY", None)
+    saved_env = os.environ.pop("TMDB_API_KEY", None)
+    tv_g = MODULE["tmdb_search_tv"].__globals__
+    saved_kc = tv_g["keychain_get"]
     try:
-        # Force keychain miss too — get_provider_api_key falls through.
+        tv_g["keychain_get"] = lambda *a, **k: None
         assert MODULE["tmdb_search_tv"]("anything") is None
         assert MODULE["tmdb_search_movie"]("anything") is None
     finally:
-        if saved is not None:
-            os.environ["TMDB_API_KEY"] = saved
+        tv_g["keychain_get"] = saved_kc
+        if saved_env is not None:
+            os.environ["TMDB_API_KEY"] = saved_env
 
 
 def test_tmdb_search_handles_no_results():
@@ -1794,11 +1801,13 @@ def test_combine_main_writes_combined_file():
         )
         rc = MODULE["combine_main"]([str(root), "-l", "ja,ko"])
         assert rc == 0
-        out = root / "Show.S01E07.ja-furigana-ko.srt"
+        out = root / "Show.S01E07.ja-ko.srt"
         assert out.exists()
         body = out.read_text(encoding="utf-8")
-        # Default merge includes inline Japanese readings, while preserving
-        # the original Japanese text and Korean support line.
+        # The original Japanese kanji and the Korean support line are
+        # both present in the stacked output. (Furigana would only inline
+        # if --reading ja:hiragana were passed; see the multi-variant
+        # merge tests for stacked-variant coverage.)
         assert "彼女" in body
         assert "運命" in body
         assert "人間" in body
@@ -1853,14 +1862,14 @@ def test_combine_main_writes_vtt_with_ruby_furigana():
                 str(root), "-l", "ja,ko", "--reading", "ja:hiragana", "--format", "vtt",
             ])
             assert rc == 0
-            out = root / "Show.S01E07.ja-furigana-ko.vtt"
+            out = root / "Show.S01E07.ja-ko.vtt"
             assert out.exists()
             body = out.read_text(encoding="utf-8")
             assert body.startswith("WEBVTT\n")
             assert "00:00:01.000 --> 00:00:03.000" in body
             assert "<ruby>片桐<rt>かたぎり</rt></ruby> 君" in body
             assert "카타기리 군" in body
-            assert not (root / "Show.S01E07.ja-furigana-ko.srt").exists()
+            assert not (root / "Show.S01E07.ja-ko.srt").exists()
     finally:
         combine_scope["apply_japanese_ruby"] = saved_apply_japanese_ruby
 
@@ -1879,8 +1888,8 @@ def test_combine_main_episode_filter_writes_only_requested_episode():
             )
         rc = MODULE["combine_main"]([str(root), "-e", "8", "-l", "ja,ko"])
         assert rc == 0
-        assert not (root / "Show.S01E07.ja-furigana-ko.srt").exists()
-        assert (root / "Show.S01E08.ja-furigana-ko.srt").exists()
+        assert not (root / "Show.S01E07.ja-ko.srt").exists()
+        assert (root / "Show.S01E08.ja-ko.srt").exists()
 
 
 def test_combine_main_season_and_episode_range_filter():
@@ -1897,10 +1906,10 @@ def test_combine_main_season_and_episode_range_filter():
             )
         rc = MODULE["combine_main"]([str(root), "-s", "2", "-e", "1-2", "-l", "ja,ko"])
         assert rc == 0
-        assert not (root / "Show.S01E01.ja-furigana-ko.srt").exists()
-        assert (root / "Show.S02E01.ja-furigana-ko.srt").exists()
-        assert (root / "Show.S02E02.ja-furigana-ko.srt").exists()
-        assert not (root / "Show.S02E03.ja-furigana-ko.srt").exists()
+        assert not (root / "Show.S01E01.ja-ko.srt").exists()
+        assert (root / "Show.S02E01.ja-ko.srt").exists()
+        assert (root / "Show.S02E02.ja-ko.srt").exists()
+        assert not (root / "Show.S02E03.ja-ko.srt").exists()
 
 
 def test_combine_main_force_overwrites_existing():
@@ -1914,7 +1923,7 @@ def test_combine_main_force_overwrites_existing():
         (root / "Show.S01E07.ko.srt").write_text(
             "1\n00:00:01,000 --> 00:00:02,000\n안녕\n", encoding="utf-8"
         )
-        out = root / "Show.S01E07.ja-furigana-ko.srt"
+        out = root / "Show.S01E07.ja-ko.srt"
         out.write_text("EXISTING", encoding="utf-8")
         # Without --force, must not overwrite.
         MODULE["combine_main"]([str(root), "-l", "ja,ko"])
@@ -1939,7 +1948,7 @@ def test_combine_main_master_override_changes_timings():
         )
         rc = MODULE["combine_main"]([str(root), "-l", "ja,ko", "--master", "ko"])
         assert rc == 0
-        out = root / "Show.S01E07.ja-furigana-ko.srt"
+        out = root / "Show.S01E07.ja-ko.srt"
         body = out.read_text(encoding="utf-8")
         # Master is ko -> output timing should be ko's 1.5->2.5.
         assert "00:00:01,500 --> 00:00:02,500" in body
@@ -1959,9 +1968,9 @@ def test_combine_main_output_dir_redirects_files():
         )
         rc = MODULE["combine_main"]([str(root), "-l", "ja,ko", "-o", str(out_dir)])
         assert rc == 0
-        assert (out_dir / "Show.S01E07.ja-furigana-ko.srt").exists()
+        assert (out_dir / "Show.S01E07.ja-ko.srt").exists()
         # Not beside the source.
-        assert not (root / "Show.S01E07.ja-furigana-ko.srt").exists()
+        assert not (root / "Show.S01E07.ja-ko.srt").exists()
 
 
 def test_combine_main_skips_when_match_rate_below_threshold():
@@ -1983,11 +1992,11 @@ def test_combine_main_skips_when_match_rate_below_threshold():
         rc = MODULE["combine_main"]([str(root), "-l", "ja,ko"])
         # Skipped -> no plan, return 1.
         assert rc == 1
-        assert not (root / "Show.S01E07.ja-furigana-ko.srt").exists()
+        assert not (root / "Show.S01E07.ja-ko.srt").exists()
         # With --force, the file is written anyway.
         rc2 = MODULE["combine_main"]([str(root), "-l", "ja,ko", "--force"])
         assert rc2 == 0
-        assert (root / "Show.S01E07.ja-furigana-ko.srt").exists()
+        assert (root / "Show.S01E07.ja-ko.srt").exists()
 
 
 def test_combine_main_skips_episode_with_entirely_missing_target_language():
@@ -2003,11 +2012,11 @@ def test_combine_main_skips_episode_with_entirely_missing_target_language():
         rc = MODULE["combine_main"]([str(root), "-l", "ja,ko"])
         # Nothing written without --force.
         assert rc == 1
-        assert not list(root.glob("*ja-furigana-ko.srt"))
+        assert not list(root.glob("*ja-ko.srt"))
         # --force writes anyway, producing a ja-only "combined" file.
         rc2 = MODULE["combine_main"]([str(root), "-l", "ja,ko", "--force"])
         assert rc2 == 0
-        out = root / "Show.S01E07.ja-furigana-ko.srt"
+        out = root / "Show.S01E07.ja-ko.srt"
         assert out.exists()
         assert "hi" in out.read_text(encoding="utf-8")
 
@@ -3979,16 +3988,23 @@ def test_detect_profile_from_title_kana_fast_path():
 
 def test_detect_profile_from_title_no_tmdb_falls_back_to_charset():
     # No TMDB key configured → fall back to Hangul / Latin heuristics.
+    # Force keychain_get to None so a real key stored on the dev box does
+    # not turn this into a live TMDB lookup (runpy returns a shallow-copy
+    # globals dict, so patching MODULE alone is not enough).
     import os
     MODULE["_PROFILE_CACHE"].clear()
-    saved = os.environ.pop("TMDB_API_KEY", None)
+    saved_env = os.environ.pop("TMDB_API_KEY", None)
+    fn_g = MODULE["detect_profile_from_title"].__globals__
+    saved_kc = fn_g["keychain_get"]
     try:
+        fn_g["keychain_get"] = lambda *a, **k: None
         assert MODULE["detect_profile_from_title"]("기생수") == "ko"
         assert MODULE["detect_profile_from_title"]("Moving (2023)") == "en"
         assert MODULE["detect_profile_from_title"]("The Witcher") == "en"
     finally:
-        if saved is not None:
-            os.environ["TMDB_API_KEY"] = saved
+        fn_g["keychain_get"] = saved_kc
+        if saved_env is not None:
+            os.environ["TMDB_API_KEY"] = saved_env
 
 
 def test_detect_profile_from_title_uses_tmdb_original_language():
@@ -5052,7 +5068,7 @@ def test_merge_l_accepts_format_hints_in_bare_cli():
     captured_paths: list = []
     scope = MODULE["combine_main"].__globals__
     saved_scanner = scope["scan_subtitle_files_extended"]
-    def fake_scanner(paths, *, format_hints=None, include_furigana=False):
+    def fake_scanner(paths, *, format_hints=None, include_furigana=False, pseudo_langs=None):
         captured_hints.update(format_hints or {})
         captured_paths.extend(paths)
         return []   # empty → "no episodes" path; we just want to verify the hint extraction
@@ -6762,15 +6778,18 @@ def test_wizard_dependency_probe_flags_deferred_backends_as_warn():
 
 def test_wizard_dependency_probe_flags_deepl_missing_key_as_block():
     """DeepL MT without an API key is a blocker — runtime would crash.
-    Force the key lookup to return None by patching the runpy-populated
-    namespace directly (MODULE is a dict, not the module object)."""
+    Force the key lookup to return None by patching the function's
+    __globals__ dict directly. runpy returns a shallow COPY of the
+    executed-module globals, so assigning MODULE["foo"] does NOT alter
+    the dict that the function actually consults at call time."""
     state = _wizard_state(mt_engine="deepl")
-    saved = MODULE["get_provider_api_key"]
+    fn_g = MODULE["_wizard_probe_dependencies"].__globals__
+    saved = fn_g["get_provider_api_key"]
     try:
-        MODULE["get_provider_api_key"] = lambda *a, **k: None
+        fn_g["get_provider_api_key"] = lambda *a, **k: None
         gaps = MODULE["_wizard_probe_dependencies"](state)
     finally:
-        MODULE["get_provider_api_key"] = saved
+        fn_g["get_provider_api_key"] = saved
     deepl_gaps = [g for g in gaps if "DeepL" in g[1]]
     assert deepl_gaps and deepl_gaps[0][0] == "block"
 
