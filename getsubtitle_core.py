@@ -222,6 +222,11 @@ class MediaInfo:
     tvdb_id: str | None = None
     mal_id: str | None = None
     netflix_id: str | None = None
+    # True when the source is identifiably a movie. Used by output_dir +
+    # download filename to skip the Season/Episode placeholders that make
+    # sense for TV series but produce ugly 'Season Unknown' / 'S00E00'
+    # paths for single-item movies.
+    is_movie: bool = False
 
 
 def title_source_url(title: str) -> str:
@@ -1295,6 +1300,14 @@ def infer_from_catalog_url(url: str, provider: str) -> MediaInfo:
     imdb_id = imdb_match.group(1) if provider == "imdb" and imdb_match else None
     tmdb_match = re.search(r"/(?:movie|tv)/(\d+)", parsed.path)
     tmdb_id = tmdb_match.group(1) if provider == "tmdb" and tmdb_match else None
+    # Identify movie sources straight from the URL where possible. TMDB
+    # uses /movie/, Letterboxd uses /film/. Skips season/episode subdirs
+    # and the S00E00 filename placeholder downstream.
+    path_low = parsed.path.lower()
+    is_movie = (
+        (provider == "tmdb" and "/movie/" in path_low)
+        or (provider == "letterboxd" and "/film/" in path_low)
+    )
     mal_match = re.search(r"/anime/(\d+)", parsed.path)
     mal_id = mal_match.group(1) if provider == "myanimelist" and mal_match else None
     tvdb_id: str | None = None
@@ -1316,6 +1329,7 @@ def infer_from_catalog_url(url: str, provider: str) -> MediaInfo:
         tmdb_id=tmdb_id,
         mal_id=mal_id,
         tvdb_id=tvdb_id,
+        is_movie=is_movie,
     )
 
 
@@ -3389,7 +3403,17 @@ def output_dir(base: Path, media: MediaInfo, season: str, layout: str) -> Path:
     show = safe_filename(media.title or "Unknown Show")
     if layout == "plex":
         return base
-    season_label = "All Seasons" if season == "all" else f"Season {int(season):02d}" if season.isdigit() else "Season Unknown"
+    # Movies have no season — drop the per-season subfolder so the layout
+    # is `Movies/Subtitles/<Title>/<Title>.<lang>.srt` instead of
+    # `Movies/Subtitles/<Title>/Season Unknown/<Title> - S00E00.<lang>.srt`.
+    if media.is_movie:
+        return base / show
+    if season == "all":
+        season_label = "All Seasons"
+    elif season.isdigit():
+        season_label = f"Season {int(season):02d}"
+    else:
+        season_label = "Season Unknown"
     return base / show / season_label
 
 
@@ -3543,9 +3567,15 @@ def save_subtitle(sub: SubtitleFile, dest_dir: Path, media: MediaInfo, season: s
         return saved
 
     show = safe_filename(media.title or "Unknown Show")
-    ep = "all" if episode == "all" else "00" if episode == "auto" else f"{int(episode):02d}"
-    ss = "all" if season == "all" else "00" if season == "auto" else f"{int(season):02d}"
-    filename = f"{show} - S{ss}E{ep}.{sub.language}{ext}"
+    if media.is_movie:
+        # Movies get a flat `Title.<lang>.srt` filename. Skipping
+        # SxxExx prevents the cosmetic "S00E00" placeholder that the TV
+        # convention would otherwise emit.
+        filename = f"{show}.{sub.language}{ext}"
+    else:
+        ep = "all" if episode == "all" else "00" if episode == "auto" else f"{int(episode):02d}"
+        ss = "all" if season == "all" else "00" if season == "auto" else f"{int(season):02d}"
+        filename = f"{show} - S{ss}E{ep}.{sub.language}{ext}"
     out = dest_dir / filename
     out.write_bytes(raw)
     saved.append(out)
@@ -11641,9 +11671,12 @@ _WIZARD_DRAFT_FILENAME = "wizard-draft.toml"
 # is_shipping). `spec_value` is what we splice into the --reading
 # spec (e.g. "ja:hiragana"). `is_shipping` controls whether we warn.
 _WIZARD_READING_AID_MENU: list[tuple[str, str, str, bool]] = [
-    ("ja", "ja:hiragana",       "Japanese — hiragana furigana above kanji", True),
-    ("ja", "ja:katakana",       "Japanese — katakana above kanji",          True),
-    ("ja", "ja:romaji",         "Japanese — romaji above kanji",            True),
+    # Labels are format-agnostic — "ruby above" only applies to VTT; SRT/SMI/
+    # ASS fall back to parenthetical 漢字（かんじ） form. The wording below
+    # works for both.
+    ("ja", "ja:hiragana",       "Japanese — hiragana readings for kanji",   True),
+    ("ja", "ja:katakana",       "Japanese — katakana readings for kanji",   True),
+    ("ja", "ja:romaji",         "Japanese — romaji readings for kanji",     True),
     ("ko", "ko:revised",        "Korean — Revised Romanization (G2P)",      True),
     ("ko", "ko:yale",           "Korean — Yale Romanization",               True),
     ("zh", "zh:marks",          "Mandarin — pinyin with tone marks",        True),
@@ -11754,6 +11787,7 @@ class _WizardState:
     output: str = ""                       # Q10
     final_action: str = "run"              # Q12: run | save | restart | quit | edit
     save_path: str = ""                    # Q11 sub-prompt
+    is_movie: bool = False                 # Q1 hint: skip Q6 (episode scope) when set
 
     def to_toml(self) -> str:
         """Serialize as a TOML draft for resume support. Quick-and-dirty
@@ -11772,6 +11806,20 @@ class _WizardState:
 
 
 # ─── Wizard questions Q1-Q12 ────────────────────────────────────────────
+
+def _wizard_url_is_movie(url: str) -> bool:
+    """Heuristic: True when a URL clearly identifies a movie (not a TV
+    series). Recognises TMDB /movie/, Letterboxd /film/, and IMDb
+    title-pages tagged via 'movie' in the URL fragment. Used to skip
+    Q6 (episode scope) and to avoid Season/Episode placeholders in
+    download filenames."""
+    if not url:
+        return False
+    low = url.lower()
+    if "/movie/" in low or "/film/" in low:
+        return True
+    return False
+
 
 def _wizard_describe_url_source(url: str) -> str:
     parsed = urllib.parse.urlparse(url)
@@ -11965,6 +12013,7 @@ def _wizard_q1_source(state: _WizardState) -> None:
             src = _wizard_prompt("URL")
             if _looks_like_url(src):
                 state.source = src
+                state.is_movie = _wizard_url_is_movie(src)
                 print(f"    Identified as: {_wizard_describe_url_source(src)}")
                 return
             print("    That does not look like an http/https URL. Try again, or enter 'q' to quit.")
@@ -11984,10 +12033,21 @@ def _wizard_q1_source(state: _WizardState) -> None:
             if picked is None:
                 # No matches OR user explicitly chose to keep raw text.
                 state.source = title
+                # Title-text input is genuinely ambiguous; ask once so we
+                # can skip Q6 (and avoid Season Unknown / S00E00 on disk).
+                state.is_movie = _wizard_yesno(
+                    "Is this a movie? (No = TV show / anime)", default=False
+                )
             else:
                 picked_url, provider, label = picked
                 state.source = picked_url
                 state.source_kind = "url"
+                # The picker tags each candidate with a provider; tmdb-movie
+                # is an unambiguous movie signal, ditto Letterboxd film URLs.
+                state.is_movie = (
+                    provider == "tmdb-movie"
+                    or _wizard_url_is_movie(picked_url)
+                )
                 print(f"    Locked to ID source: {label} [{provider}]")
             return
     print("Q2. Enter the folder or file path.")
@@ -12100,8 +12160,15 @@ def _wizard_q4_master(state: _WizardState) -> None:
 
 
 def _wizard_q5_scope(state: _WizardState) -> None:
-    """Episode scope — only when source is a URL."""
+    """Episode scope — only when source is a URL or title for a TV series."""
     if state.source_kind not in ("url", "title"):
+        state.season = ""
+        state.episode = ""
+        return
+    # Movies have no season/episode. Skip Q6 entirely so the user doesn't
+    # see an irrelevant prompt and the downstream filename builder doesn't
+    # invent 'Season Unknown' / 'S00E00' placeholders.
+    if state.is_movie:
         state.season = ""
         state.episode = ""
         return
@@ -12159,7 +12226,9 @@ def _wizard_q7_reading_aids(state: _WizardState) -> None:
         state.reading_aids = []
         return
     print()
-    print("Q8. Reading aids (phonetic guides above/beside the original script).")
+    print("Q8. Reading aids (phonetic guides for the original script).")
+    print("    VTT format renders them as ruby above the kanji/hangul/hanzi;")
+    print("    SRT / SMI / ASS show them as parenthetical 漢字（かんじ） form.")
     print("    Pick any combination by number. Empty = no reading aids.")
     for i, (lang, spec, label, shipping) in enumerate(relevant, start=1):
         print(f"    {i}) {label}   [{spec}]")
@@ -12193,10 +12262,13 @@ def _wizard_q7_reading_aids(state: _WizardState) -> None:
 
 def _wizard_q8_asbplayer(state: _WizardState) -> None:
     print()
-    print("Q9. Optimize output for asbplayer (the common asbplayer setup is")
-    print("    single-line cues + cleaned broadcast noise + ruby VTT for")
-    print("    furigana)?")
-    state.asbplayer = _wizard_yesno("Apply asbplayer preset?", default=True)
+    print("Q9. Apply a learner-friendly cleanup preset?")
+    print("    The preset flattens cues to a single line and strips broadcast")
+    print("    captioning noise (e.g. the ➡ continuation arrow). This makes")
+    print("    subtitles easier to skim in VLC, mpv, IINA, Infuse, asbplayer,")
+    print("    Plex web, and most other players. For reading aids (ja/ko/zh),")
+    print("    VTT output additionally renders them as ruby above the script.")
+    state.asbplayer = _wizard_yesno("Apply cleanup preset?", default=True)
 
 
 def _wizard_q9_format(state: _WizardState) -> None:
@@ -12205,19 +12277,23 @@ def _wizard_q9_format(state: _WizardState) -> None:
     default = "vtt" if (state.asbplayer and needs_ruby) else "srt"
     print()
     print("Q10. Final output format.")
-    print("    a) SRT  — most compatible (default if no ruby/reading aid)")
-    print("    b) VTT  — required for asbplayer ruby reading aid")
+    print("    a) SRT  — most compatible (default if no ruby reading aid)")
+    print("    b) VTT  — renders ruby reading aids above the script.")
+    print("             Used by web/browser players and asbplayer; supported")
+    print("             by mpv/IINA via auxiliary tracks.")
     print("    c) SMI")
     print("    d) ASS")
     print("    e) TXT - without timestamp")
     pick = _wizard_prompt("Choose a/b/c/d/e", {"vtt": "b", "srt": "a"}.get(default, "a")).lower()
     state.format = {"a": "srt", "b": "vtt", "c": "smi", "d": "ass", "e": "txt"}.get(pick[:1], default)
     if needs_ruby and state.format != "vtt":
-        print("    Note: hiragana furigana looks best as VTT ruby. "
-              "SRT will fall back to parenthetical 漢字（かんじ） form.")
+        print("    Note: hiragana readings render as ruby (above-the-kanji)")
+        print("          only in VTT; SRT/SMI/ASS fall back to parenthetical")
+        print("          漢字（かんじ） form.")
     if state.format == "vtt" and state.asbplayer and needs_ruby:
-        print("    Reminder: asbplayer needs Settings > Misc > Subtitles > "
-              "Subtitle HTML = Render.")
+        print("    Reminder: in asbplayer, enable Settings > Misc > Subtitles >")
+        print("              Subtitle HTML = Render to see ruby. Most other")
+        print("              players render VTT ruby out of the box.")
 
 
 def _wizard_q10_output(state: _WizardState) -> None:
@@ -12237,17 +12313,27 @@ def _wizard_q10_output(state: _WizardState) -> None:
 
 def _wizard_q11_action(state: _WizardState) -> str:
     """Final action. Returns one of 'run', 'save', 'restart', 'quit', 'edit'."""
+    # Stretch the separator wide enough to cover a realistic CLI command
+    # AND the widest TOML line. The CLI form is the longest sandwich-bread;
+    # measure it, add room for the two-space indent, and pad to at least 78
+    # columns (the standard terminal-comfort width). This also makes the
+    # banner visually distinct from incidental log lines.
+    cli_string = _wizard_emit_cli_string(state)
+    toml_str = _wizard_emit_toml(state)
+    width = max(78, len(cli_string) + 2,
+                max((len(ln) + 2 for ln in toml_str.splitlines()), default=0))
+    rule = "=" * width
     print()
-    print("======================")
+    print(rule)
     print("Based on your choice, you can try:")
-    print("======================")
-    print("  " + _wizard_emit_cli_string(state))
-    print()
+    print(rule)
+    print("  " + cli_string)
+    print(rule)
     print("Equivalent TOML workflow:")
-    print()
-    for line in _wizard_emit_toml(state).splitlines():
+    print(rule)
+    for line in toml_str.splitlines():
         print("  " + line)
-    print("======================")
+    print(rule)
     # Consistency check: reading aid wants VTT ruby but format is something else.
     needs_ruby = any(
         spec.startswith("ja:hiragana") or spec.startswith("ja:furigana")
@@ -12711,14 +12797,13 @@ def interactive_main(argv: list[str] | None = None) -> int:
             return 0
 
         if action == "run":
-            # Last-chance confirm before kicking off what may be a long
-            # network job. Default to Yes so muscle memory still works.
+            # User picked Run explicitly at Q11 — that IS the confirmation.
+            # Drop the redundant 'Proceed?' prompt and just show what's
+            # running so the log makes sense if it scrolls off the banner.
             print()
-            print("About to run:")
+            print("Running:")
             print("  " + cli_string)
-            if not _wizard_yesno("Proceed?", default=True):
-                print("Aborted. Re-run `getsubtitle --interactive` to pick up your draft.")
-                return 0
+            print()
             _wizard_clear_draft()
             return main(_wizard_emit_cli(state)[1:])
 

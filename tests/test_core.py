@@ -6808,6 +6808,157 @@ def test_wizard_state_to_toml_round_trip_safe():
     assert text.endswith("\n")
 
 
+# ─── v1.6 wizard UX touch-ups ───────────────────────────────────────
+
+
+def test_wizard_url_is_movie_detection():
+    """TMDB /movie/ and Letterboxd /film/ are unambiguous movie URLs;
+    TV/anime URLs and unknown shapes are not."""
+    is_movie = MODULE["_wizard_url_is_movie"]
+    assert is_movie("https://www.themoviedb.org/movie/8392")
+    assert is_movie("https://letterboxd.com/film/totoro/")
+    assert not is_movie("https://www.themoviedb.org/tv/65701")
+    assert not is_movie("https://anilist.co/anime/21519/")
+    assert not is_movie("https://www.imdb.com/title/tt0096283/")  # ambiguous
+    assert not is_movie("")
+
+
+def test_wizard_q5_scope_skipped_for_movies():
+    """When state.is_movie is True, Q6 (episode scope) is skipped so the
+    user does not see an irrelevant prompt and the downstream filename
+    builder does not invent 'Season Unknown' / 'S00E00' placeholders."""
+    s = MODULE["_WizardState"](
+        source="https://www.themoviedb.org/movie/8392",
+        source_kind="url",
+        languages=["ja", "en"],
+        order=["ja", "en"],
+        is_movie=True,
+    )
+    MODULE["_wizard_q5_scope"](s)
+    # No prompt was raised (would have hit a non-tty EOFError); the season
+    # / episode fields stay empty for the movie path.
+    assert s.season == ""
+    assert s.episode == ""
+
+
+def test_mediainfo_movie_skips_season_subdir():
+    """output_dir flattens the layout for movies: archive layout becomes
+    base/Title/ instead of base/Title/Season XX/."""
+    from pathlib import Path
+    movie = MODULE["MediaInfo"](
+        source_url="x", provider="tmdb", title="My Neighbor Totoro", is_movie=True
+    )
+    out = MODULE["output_dir"](Path("/tmp/Subs"), movie, "auto", "archive")
+    assert str(out) == "/tmp/Subs/My Neighbor Totoro"
+    # TV series unchanged.
+    show = MODULE["MediaInfo"](source_url="x", provider="tmdb", title="Breaking Bad")
+    assert str(MODULE["output_dir"](Path("/tmp/Subs"), show, "1", "archive")) == \
+        "/tmp/Subs/Breaking Bad/Season 01"
+    assert str(MODULE["output_dir"](Path("/tmp/Subs"), show, "auto", "archive")) == \
+        "/tmp/Subs/Breaking Bad/Season Unknown"
+
+
+def test_infer_from_catalog_url_sets_is_movie_for_tmdb_movie():
+    """TMDB /movie/ URLs come back with is_movie=True; /tv/ URLs do not."""
+    movie = MODULE["infer_from_catalog_url"]("https://www.themoviedb.org/movie/8392", "tmdb")
+    assert movie.is_movie is True
+    assert movie.tmdb_id == "8392"
+    show = MODULE["infer_from_catalog_url"]("https://www.themoviedb.org/tv/65701", "tmdb")
+    assert show.is_movie is False
+    assert show.tmdb_id == "65701"
+
+
+def test_save_subtitle_movie_filename_has_no_season_episode():
+    """Movies get a flat Title.<lang>.srt filename instead of the
+    Title - S00E00.<lang>.srt placeholder. Same MediaInfo for both
+    branches keeps the test focused on the is_movie switch."""
+    import tempfile
+    from pathlib import Path
+    fake_bytes = b"1\n00:00:01,000 --> 00:00:02,000\nhi\n"
+    scope = MODULE["save_subtitle"].__globals__
+    saved_dl = scope["download_bytes"]
+    try:
+        scope["download_bytes"] = lambda url, headers=None: fake_bytes
+
+        class FakeSub:
+            name = "totoro.srt"
+            language = "en"
+            url = "mock://"
+            download_headers = None
+
+        with tempfile.TemporaryDirectory() as d:
+            # Movie path — no S00E00.
+            movie = MODULE["MediaInfo"](
+                source_url="x", provider="tmdb", title="My Neighbor Totoro",
+                is_movie=True,
+            )
+            saved = MODULE["save_subtitle"](
+                FakeSub(), Path(d), movie, "auto", "auto"
+            )
+            assert saved[0].name == "My Neighbor Totoro.en.srt"
+            # TV path — keeps the SxxExx pattern.
+            show = MODULE["MediaInfo"](
+                source_url="x", provider="tmdb", title="Breaking Bad", is_movie=False
+            )
+            saved = MODULE["save_subtitle"](FakeSub(), Path(d), show, "1", "7")
+            assert saved[0].name == "Breaking Bad - S01E07.en.srt"
+    finally:
+        scope["download_bytes"] = saved_dl
+
+
+def test_wizard_q11_banner_separator_stretches_to_cli_width():
+    """The Q11 banner '=' rule must cover the widest line inside (CLI
+    command or any TOML line) plus a 2-char indent gutter, and never be
+    narrower than 78 chars."""
+    import io, contextlib
+    s = MODULE["_WizardState"](
+        source="https://www.themoviedb.org/movie/8392",
+        source_kind="url",
+        languages=["ja", "en"],
+        order=["ja", "en"],
+        reading_aids=["ja:hiragana"],
+        asbplayer=True,
+        format="vtt",
+        output="~/Movies/Subtitles",
+        is_movie=True,
+    )
+    cli = MODULE["_wizard_emit_cli_string"](s)
+    toml_text = MODULE["_wizard_emit_toml"](s)
+    expected_min = max(78, len(cli) + 2,
+                       max(len(ln) + 2 for ln in toml_text.splitlines()))
+    # Render Q11 with stubbed input -> pick 'a' (Run).
+    buf = io.StringIO()
+    fn_g = MODULE["_wizard_q11_action"].__globals__
+    saved_input = fn_g.get("input")
+    try:
+        fn_g["input"] = lambda *a, **k: "a"
+        with contextlib.redirect_stdout(buf):
+            MODULE["_wizard_q11_action"](s)
+    finally:
+        if saved_input is not None:
+            fn_g["input"] = saved_input
+    out = buf.getvalue()
+    # The rule character appears at least once at the expected width.
+    rule = "=" * expected_min
+    assert rule in out, f"banner rule too narrow; expected at least {expected_min} '=' chars"
+    # The CLI line and the TOML preview both appear inside the banner.
+    assert cli in out
+    assert "Equivalent TOML workflow:" in out
+    # 'About to run' is gone (the run-confirm step was removed).
+    assert "About to run" not in out
+
+
+def test_wizard_reading_aid_labels_format_agnostic():
+    """The Q8 reading-aid menu labels no longer say 'above kanji' — that
+    only applies to VTT ruby. The wording must work for SRT/SMI/ASS too."""
+    menu = MODULE["_WIZARD_READING_AID_MENU"]
+    ja_rows = [row for row in menu if row[0] == "ja"]
+    labels = [row[2] for row in ja_rows]
+    for label in labels:
+        assert "above kanji" not in label.lower(), label
+        assert "readings for kanji" in label.lower(), label
+
+
 # ─── Korean romanization ────────────────────────────────────────────
 
 # ─── Chinese romanization ───────────────────────────────────────────
