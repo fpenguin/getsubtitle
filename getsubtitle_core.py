@@ -298,6 +298,22 @@ class AniListCandidate:
     native: str | None
     season_year: int | None
     episodes: int | None
+    # AniList enum: TV / TV_SHORT / MOVIE / SPECIAL / OVA / ONA / MUSIC.
+    # The wizard treats MOVIE (and single-episode SPECIAL/OVA/ONA) as
+    # movie-shape sources so the user does not see Q6 and downstream
+    # filenames skip the Season Unknown / S00E00 placeholders.
+    format: str | None = None
+
+    def is_movie(self) -> bool:
+        if (self.format or "").upper() == "MOVIE":
+            return True
+        # AniList sometimes mislabels MOVIE as SPECIAL/OVA. Falling back
+        # on episodes==1 catches those — and is also a meaningful signal
+        # for single-OVA releases that the user likely wants treated as
+        # a single item rather than as S01E01 of a series.
+        if self.episodes == 1 and (self.format or "").upper() in {"SPECIAL", "OVA", "ONA", ""}:
+            return True
+        return False
 
     def label(self) -> str:
         names = [n for n in [self.romaji, self.english, self.native] if n]
@@ -320,6 +336,17 @@ class AniListInfo:
     title: str | None
     episodes: int | None
     title_aliases: list[str] | None = None
+    # AniList format enum (TV / TV_SHORT / MOVIE / SPECIAL / OVA / ONA /
+    # MUSIC). MOVIE — or a single-episode SPECIAL/OVA/ONA — flips the
+    # output to movie layout (no Season subfolder, no S00E00 placeholder).
+    format: str | None = None
+
+    def is_movie(self) -> bool:
+        if (self.format or "").upper() == "MOVIE":
+            return True
+        if self.episodes == 1 and (self.format or "").upper() in {"SPECIAL", "OVA", "ONA", ""}:
+            return True
+        return False
 
 
 def _norm_title_key(title: str) -> str:
@@ -1291,6 +1318,35 @@ def bridge_external_ids_to_anilist(media: MediaInfo) -> None:
         media.anilist_id = int(anilist_id)
 
 
+def bridge_external_ids_to_anilist_by_title(media: MediaInfo) -> None:
+    """Last-resort fallback when the anime-IDs database doesn't cover this
+    title (common for anime movies and obscure OVAs that have IMDb/TMDB
+    pages but no entry in the cross-reference DB). Searches AniList by
+    title and picks the top hit — only used when the user explicitly
+    requested ja so Jimaku can be queried.
+
+    Safe to call with no IDs set; bails when there's no usable title."""
+    if media.anilist_id:
+        return
+    title = (media.title or "").strip()
+    if not title:
+        return
+    try:
+        candidates = search_anilist(title, limit=3)
+    except CliError:
+        return
+    if not candidates:
+        return
+    # Bias toward movies when the source URL is a TMDB /movie/ or
+    # Letterboxd /film/ — protects against picking a TV-series candidate
+    # by the same name (e.g. "Frieren" the movie vs the TV series).
+    if media.is_movie:
+        movie_hits = [c for c in candidates if c.is_movie()]
+        if movie_hits:
+            candidates = movie_hits
+    media.anilist_id = candidates[0].id
+
+
 def infer_from_catalog_url(url: str, provider: str) -> MediaInfo:
     parsed = urllib.parse.urlparse(url)
     html = request_text(url)
@@ -1716,6 +1772,7 @@ def search_anilist(title: str, limit: int = 8) -> list[AniListCandidate]:
         title { romaji english native }
           seasonYear
           episodes
+          format
         }
       }
     }
@@ -1736,6 +1793,7 @@ def search_anilist(title: str, limit: int = 8) -> list[AniListCandidate]:
                 native=title_data.get("native"),
                 season_year=item.get("seasonYear"),
                 episodes=item.get("episodes"),
+                format=item.get("format"),
             )
         )
     return candidates
@@ -1749,6 +1807,7 @@ def fetch_anilist_info(anilist_id: int) -> AniListInfo:
         title { romaji english native }
         synonyms
         episodes
+        format
       }
     }
     """
@@ -1773,6 +1832,7 @@ def fetch_anilist_info(anilist_id: int) -> AniListInfo:
         title=title,
         episodes=int(episodes) if episodes else None,
         title_aliases=[alias for alias in aliases if _norm_title_key(alias) != _norm_title_key(title or "")],
+        format=media.get("format"),
     )
 
 
@@ -11911,47 +11971,52 @@ def _wizard_describe_path_source(raw_path: str) -> tuple[Path, str]:
     return path, f"{kind}: {videos} video file(s), {subtitles} subtitle file(s){suffix}"
 
 
-def _wizard_title_candidates(title: str) -> list[dict[str, str]]:
-    rows: list[dict[str, str]] = []
+def _wizard_title_candidates(title: str) -> list[dict]:
+    """Return a list of {provider, label, url, is_movie} dicts. `is_movie`
+    is the candidate's own opinion (TMDB movie endpoint, AniList format=
+    MOVIE / single-episode SPECIAL/OVA/ONA) and lets the wizard skip Q6
+    when the user picks it."""
+    rows: list[dict] = []
     tmdb_key = get_provider_api_key("tmdb")
     if tmdb_key:
         tv = tmdb_search_tv(title, api_key=tmdb_key)
         if tv:
-            rows.append(
-                {
-                    "provider": "tmdb-tv",
-                    "label": f"TMDB TV: {tv.get('title') or title} ({tv.get('year') or '?'})",
-                    "url": f"https://www.themoviedb.org/tv/{tv['tmdb_id']}",
-                }
-            )
+            rows.append({
+                "provider": "tmdb-tv",
+                "label": f"TMDB TV: {tv.get('title') or title} ({tv.get('year') or '?'})",
+                "url": f"https://www.themoviedb.org/tv/{tv['tmdb_id']}",
+                "is_movie": False,
+            })
         movie = tmdb_search_movie(title, api_key=tmdb_key)
         if movie:
-            rows.append(
-                {
-                    "provider": "tmdb-movie",
-                    "label": f"TMDB Movie: {movie.get('title') or title} ({movie.get('year') or '?'})",
-                    "url": f"https://www.themoviedb.org/movie/{movie['tmdb_id']}",
-                }
-            )
+            rows.append({
+                "provider": "tmdb-movie",
+                "label": f"TMDB Movie: {movie.get('title') or title} ({movie.get('year') or '?'})",
+                "url": f"https://www.themoviedb.org/movie/{movie['tmdb_id']}",
+                "is_movie": True,
+            })
     try:
         for cand in search_anilist(title, limit=3):
-            rows.append(
-                {
-                    "provider": "anilist",
-                    "label": f"AniList: {cand.label()}",
-                    "url": f"https://anilist.co/anime/{cand.id}/",
-                }
-            )
+            rows.append({
+                "provider": "anilist",
+                "label": f"AniList: {cand.label()}",
+                "url": f"https://anilist.co/anime/{cand.id}/",
+                "is_movie": cand.is_movie(),
+            })
     except CliError:
         pass
     return rows
 
 
-def _wizard_pick_title_candidate(title: str) -> tuple[str, str, str] | None | str:
+def _wizard_pick_title_candidate(title: str) -> tuple[str, str, str, bool] | None | str:
     """Pick a title hit. Return shape:
-      - (url, provider, label) — user picked a candidate
-      - None                   — user chose to keep raw title text
-      - "retry"                — user wants to re-enter the title
+      - (url, provider, label, is_movie) — user picked a candidate
+      - None                             — user chose to keep raw title text
+      - "retry"                          — user wants to re-enter the title
+
+    The is_movie flag is the candidate's own opinion (TMDB /movie/,
+    AniList format=MOVIE, single-episode SPECIAL/OVA/ONA, …) and lets
+    the wizard skip Q6 + flatten the download filename layout.
     """
     rows = _wizard_title_candidates(title)
     if not rows:
@@ -11981,7 +12046,7 @@ def _wizard_pick_title_candidate(title: str) -> tuple[str, str, str] | None | st
     if not (0 <= idx < len(rows)):
         return None
     row = rows[idx]
-    return row["url"], row["provider"], row["label"]
+    return row["url"], row["provider"], row["label"], row.get("is_movie", False)
 
 
 def _wizard_q1_source(state: _WizardState) -> None:
@@ -12039,15 +12104,13 @@ def _wizard_q1_source(state: _WizardState) -> None:
                     "Is this a movie? (No = TV show / anime)", default=False
                 )
             else:
-                picked_url, provider, label = picked
+                picked_url, provider, label, picked_is_movie = picked
                 state.source = picked_url
                 state.source_kind = "url"
-                # The picker tags each candidate with a provider; tmdb-movie
-                # is an unambiguous movie signal, ditto Letterboxd film URLs.
-                state.is_movie = (
-                    provider == "tmdb-movie"
-                    or _wizard_url_is_movie(picked_url)
-                )
+                # Trust the picker's own movie tag — TMDB /movie/ and
+                # AniList format=MOVIE both flow through here. URL-shape
+                # detection is the fallback for other providers.
+                state.is_movie = picked_is_movie or _wizard_url_is_movie(picked_url)
                 print(f"    Locked to ID source: {label} [{provider}]")
             return
     print("Q2. Enter the folder or file path.")
@@ -12135,40 +12198,19 @@ def _wizard_q4_master(state: _WizardState) -> None:
     if len(state.order) <= 1:
         state.master = ""
         return
-    # Offer a context-aware second option: if the user is collecting a
-    # CJK or otherwise reading-aid-bearing language, surface it by name
-    # since that's the most common "the timing should follow my study
-    # language, not English" case. Otherwise just present first/custom.
-    learner_priority = ("ja", "ko", "zh", "yue", "th", "ar", "hi", "ru")
-    language_names = {
-        "ja": "Japanese", "ko": "Korean", "zh": "Mandarin",
-        "yue": "Cantonese", "th": "Thai", "ar": "Arabic",
-        "hi": "Hindi", "ru": "Russian", "en": "English",
-        "es": "Spanish", "fr": "French", "de": "German",
-        "it": "Italian", "pt": "Portuguese",
-    }
-    candidate = next(
-        (l for l in learner_priority
-         if l in state.order and l != state.order[0]),
-        None,
-    )
+    # Q5 inherits its choices from Q4's order list. The smart "first
+    # learner-priority match" heuristic confused users (Korean learner
+    # collecting en,ja,ko sees option b) Japanese — ja). Cleaner:
+    # offer first-displayed (the common case) and a custom override
+    # over the collected languages.
     print()
     print("Q5. Which language controls cue timing (the 'master' track)?")
     print(f"    a) First displayed — {state.order[0]} (recommended)")
-    if candidate:
-        label = language_names.get(candidate, candidate.upper())
-        print(f"    b) {label} — {candidate}")
-        print("    c) Custom")
-        choices = "a/b/c"
-    else:
-        print("    b) Custom")
-        choices = "a/b"
-    pick = _wizard_prompt(f"Choose {choices}", "a").lower()
+    print(f"    b) Custom — any of: {', '.join(state.order)}")
+    pick = _wizard_prompt("Choose a/b", "a").lower()
     if pick.startswith("a"):
         state.master = ""  # default — first language wins
-    elif pick.startswith("b") and candidate:
-        state.master = candidate
-    elif pick.startswith("c") or (pick.startswith("b") and not candidate):
+    elif pick.startswith("b"):
         raw = _wizard_prompt("Master language code", state.order[0])
         cand = LANGUAGE_ALIASES.get(raw.lower(), raw.lower())
         if cand not in state.order:
@@ -12822,12 +12864,33 @@ def interactive_main(argv: list[str] | None = None) -> int:
             # User picked Run explicitly at Q11 — that IS the confirmation.
             # Drop the redundant 'Proceed?' prompt and just show what's
             # running so the log makes sense if it scrolls off the banner.
+            #
+            # Deferred reading-aid backends (yue, th, ar, hi, ru) crash
+            # the modify step at runtime. Strip them BEFORE dispatching
+            # so the rest of the pipeline (fetch + merge + ja/ko/zh
+            # readings) still succeeds. Save flow keeps them so the
+            # generated TOML works once the backend ships.
+            shipped = {"ja", "ko", "zh"}
+            deferred = [s for s in state.reading_aids
+                        if s.split(":", 1)[0] not in shipped]
+            run_state = state
+            if deferred:
+                from dataclasses import replace as _dc_replace
+                run_state = _dc_replace(state, reading_aids=[
+                    s for s in state.reading_aids
+                    if s.split(":", 1)[0] in shipped
+                ])
+                print("Note: dropping reading-aid(s) without a shipped backend:")
+                print(f"  {', '.join(deferred)}")
+                print("  (Saved TOML keeps these so the workflow runs once the")
+                print("   backend ships. See ROADMAP.md.)")
+                cli_string = _wizard_emit_cli_string(run_state)
             print()
             print("Running:")
             print("  " + cli_string)
             print()
             _wizard_clear_draft()
-            rc = main(_wizard_emit_cli(state)[1:])
+            rc = main(_wizard_emit_cli(run_state)[1:])
             # Post-run: offer to open the output folder. Defaults to Yes
             # so the natural flow is "wizard finishes -> file manager pops
             # open at the new subtitles." Skipped silently on a failed run
@@ -12969,12 +13032,24 @@ def main(argv: list[str] | None = None) -> int:
             media.anilist_id = resolve_anilist_id(media.title)
     elif str(args.episode).lower() == "all" or "ja" in langs:
         bridge_external_ids_to_anilist(media)
+        # Anime-IDs DB lookup is sparse for movies and obscure OVAs (no IMDb
+        # entry, or no cross-ref to AniList). If ja was explicitly requested
+        # and the ID-based bridge didn't land, fall back to AniList title
+        # search so Jimaku still has a chance at finding native Japanese subs.
+        if not media.anilist_id and "ja" in langs and media.title:
+            bridge_external_ids_to_anilist_by_title(media)
 
     anilist_info = fetch_anilist_info(media.anilist_id) if media.anilist_id else None
     if anilist_info:
         if not media.title or (args.anilist and not args.title):
             media.title = anilist_info.title or media.title
         add_media_title_aliases(media, [anilist_info.title, *(anilist_info.title_aliases or [])])
+        # AniList format=MOVIE / single-episode SPECIAL/OVA/ONA flips
+        # MediaInfo.is_movie so output_dir + save_subtitle skip the
+        # Season Unknown / S00E00 placeholders. Don't downgrade a flag
+        # set earlier by URL parsing.
+        if not media.is_movie and anilist_info.is_movie():
+            media.is_movie = True
     if broad_provider_requested and not (media.imdb_id or media.tmdb_id):
         enrich_media_from_tmdb(
             media,

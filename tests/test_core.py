@@ -6946,45 +6946,95 @@ def test_wizard_q11_banner_uses_fixed_70_char_rule():
     assert "About to run" not in out
 
 
-def test_wizard_q4_master_option_b_is_context_aware():
-    """Q5 (timing master) option (b) used to be hardcoded 'Japanese'.
-    Korean learners would see an irrelevant option. New behavior:
-    pick the most-likely study language present in the order list as
-    option (b); if none of the learner-priority codes are present,
-    collapse to a) first / b) custom."""
+
+
+def test_wizard_q4_master_is_first_or_custom():
+    """Q5 (timing master) collapsed to two options:
+      a) First displayed — <first lang in Q4 order>
+      b) Custom — any of the collected languages
+    The earlier 'hardcoded Japanese' and 'learner-priority second
+    option' both confused users."""
     import io, contextlib
-    # Korean + English -> option (b) should surface Korean, not Japanese.
-    s = MODULE["_WizardState"](languages=["ko", "en"], order=["ko", "en"])
-    buf = io.StringIO()
     fn_g = MODULE["_wizard_q4_master"].__globals__
     saved_input = fn_g.get("input")
     try:
-        fn_g["input"] = lambda *a, **k: "a"
-        with contextlib.redirect_stdout(buf):
-            MODULE["_wizard_q4_master"](s)
+        for order in (["ko", "en"], ["en", "ja", "ko", "zh", "yue"], ["en", "es"]):
+            s = MODULE["_WizardState"](languages=list(order), order=list(order))
+            buf = io.StringIO()
+            fn_g["input"] = lambda *a, **k: "a"
+            with contextlib.redirect_stdout(buf):
+                MODULE["_wizard_q4_master"](s)
+            out = buf.getvalue()
+            # Two menu options only (no third "Custom" line beyond the (b) line).
+            assert out.count("\n    a)") == 1
+            assert out.count("\n    b)") == 1
+            assert "\n    c)" not in out
+            assert "First displayed" in out
+            assert "Custom" in out
+            assert s.master == ""  # 'a' keeps default empty
     finally:
         if saved_input is not None:
             fn_g["input"] = saved_input
-    out = buf.getvalue()
-    assert "Japanese" not in out, "Q5 leaks hardcoded Japanese for ko learner"
-    # First-displayed pick keeps master empty (first language wins downstream).
-    assert s.master == ""
 
-    # English + Spanish -> no CJK/learner code present, drop option (b).
-    s2 = MODULE["_WizardState"](languages=["en", "es"], order=["en", "es"])
-    buf2 = io.StringIO()
+
+def test_anilist_candidate_movie_detection():
+    Candidate = MODULE["AniListCandidate"]
+    assert Candidate(id=1, romaji="x", english=None, native=None,
+                     season_year=2024, episodes=1, format="MOVIE").is_movie()
+    assert Candidate(id=2, romaji="x", english=None, native=None,
+                     season_year=2024, episodes=1, format="SPECIAL").is_movie()
+    assert Candidate(id=3, romaji="x", english=None, native=None,
+                     season_year=2024, episodes=1, format="OVA").is_movie()
+    assert not Candidate(id=4, romaji="x", english=None, native=None,
+                         season_year=2024, episodes=12, format="TV").is_movie()
+    assert not Candidate(id=5, romaji="x", english=None, native=None,
+                         season_year=2024, episodes=3, format="OVA").is_movie()
+
+
+def test_wizard_deferred_reading_aids_dropped_at_run():
+    """Run-action strips yue/th/ar/hi/ru reading-aid entries so modify
+    doesn't crash; SAVE flow preserves them in the emitted TOML."""
+    state = MODULE["_WizardState"](
+        reading_aids=["ja:hiragana", "yue:numbers", "th:royal-thai"]
+    )
+    shipped = {"ja", "ko", "zh"}
+    kept = [s for s in state.reading_aids if s.split(":", 1)[0] in shipped]
+    dropped = [s for s in state.reading_aids if s.split(":", 1)[0] not in shipped]
+    assert kept == ["ja:hiragana"]
+    assert dropped == ["yue:numbers", "th:royal-thai"]
+    text = MODULE["_wizard_emit_toml"](state)
+    assert "yue:numbers" in text
+    assert "th:royal-thai" in text
+
+
+def test_anilist_title_fallback_helper_is_safe_without_ids():
+    """bridge_external_ids_to_anilist_by_title bails cleanly without a
+    title; never mutates anilist_id when AniList returns no candidates;
+    sets anilist_id from the top hit (movie-biased) on success."""
+    bridge = MODULE["bridge_external_ids_to_anilist_by_title"]
+    media = MODULE["MediaInfo"](source_url="x", provider="imdb", title="")
+    bridge(media)
+    assert media.anilist_id is None
+    fn_g = bridge.__globals__
+    saved = fn_g["search_anilist"]
     try:
-        fn_g["input"] = lambda *a, **k: "a"
-        with contextlib.redirect_stdout(buf2):
-            MODULE["_wizard_q4_master"](s2)
+        fn_g["search_anilist"] = lambda *a, **k: []
+        media2 = MODULE["MediaInfo"](source_url="x", provider="imdb", title="Some Title")
+        bridge(media2)
+        assert media2.anilist_id is None
+        Cand = MODULE["AniListCandidate"]
+        fn_g["search_anilist"] = lambda *a, **k: [Cand(
+            id=523, romaji="Tonari no Totoro", english="My Neighbor Totoro",
+            native=None, season_year=1988, episodes=1, format="MOVIE",
+        )]
+        media3 = MODULE["MediaInfo"](
+            source_url="https://www.themoviedb.org/movie/8392",
+            provider="tmdb", title="Totoro", is_movie=True,
+        )
+        bridge(media3)
+        assert media3.anilist_id == 523
     finally:
-        if saved_input is not None:
-            fn_g["input"] = saved_input
-    out2 = buf2.getvalue()
-    # Only 'Custom' should appear as the second option, not a language label.
-    assert "Custom" in out2
-    assert "Japanese" not in out2
-    assert "Korean" not in out2
+        fn_g["search_anilist"] = saved
 
 
 def test_wizard_q7_reading_aid_example_is_script_appropriate():
