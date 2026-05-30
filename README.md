@@ -65,15 +65,19 @@ getsubtitle "https://www.imdb.com/title/tt6150576/" \
 
 # Hard: Friends S4E3-5, fill missing Spanish from French, then merge
 getsubtitle "https://www.themoviedb.org/tv/1668-friends" -s 4 -e 3-5 -l fr,en,es
-getsubtitle translate ~/Movies/Subtitles/Friends -s 4 -e 3-5 -l es \
+getsubtitle translate ~/Downloads/GetSubtitle/Friends -s 4 -e 3-5 -l es \
     --engine deepl --mt-source es:fr
-getsubtitle merge ~/Movies/Subtitles/Friends -s 4 -e 3-5 -l fr,en,es
+getsubtitle merge ~/Downloads/GetSubtitle/Friends -s 4 -e 3-5 -l fr,en,es
 ```
 
 For machine translation, `--mt-source "es:fr|en"` means “make Spanish from
 French first, or English if French is unavailable.” Ollama users can also
 override one language pair for a single run with
 `--mt-model-pair ja:ko=qwen3:4b`.
+
+When Korean or Chinese subtitles are missing, fetch prints community search
+suggestions and can open likely sources in your browser. Disable that with
+`--no-manual-search`, or force it with `--manual-search always`.
 
 `-e all` on **non-anime TV** needs a TMDB key — set one once with
 `getsubtitle --set-key tmdb`, or pass an explicit range like `-e 1-22`.
@@ -294,7 +298,7 @@ getsubtitle --fetch /Plex/Anime --subdirectory \
 getsubtitle --fetch "https://www.imdb.com/title/tt28299608/" -s 1 -e all \
     --translate deepl \
     --merge -l ja,en --format vtt \
-    --output ~/Movies/StudyDeck
+    --output ~/Downloads/GetSubtitle/StudyDeck
 ```
 
 Add `--subdirectory` to any PATH-based verb to walk a whole library

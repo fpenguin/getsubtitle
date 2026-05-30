@@ -90,6 +90,15 @@ languages = "ja"
 # Default: "auto"
 release_source = "auto"
 
+# When automatic providers miss Korean/Chinese subtitles, print likely
+# community search links (GOM/Cineaste for Korean; ASSRT/SubHD/Zimuku for
+# Chinese) and optionally open them in your browser.
+# Choices: "off", "on-missing", "always"
+manual_search = "on-missing"
+
+# Choices: "ask", "always", "never"
+manual_search_open = "ask"
+
 
 # ─── [translate] ─── machine translation defaults ─────────────────────
 # These apply both when MT runs as a fallback after fetch (--engine)
@@ -256,8 +265,8 @@ reading = true
 
 # Default output folder for downloaded subtitles.
 # ~ is expanded to your home directory.
-# Default: "~/Movies/Subtitles"
-target = "~/Movies/Subtitles"
+# Default: "~/Downloads/GetSubtitle"
+target = "~/Downloads/GetSubtitle"
 
 # Folder layout for output files:
 #   "archive"  — Title/Season 01/files (organized by show + season)

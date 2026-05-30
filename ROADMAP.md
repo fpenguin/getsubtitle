@@ -1,7 +1,27 @@
-# Roadmap  · v1.8
+# Roadmap  · v1.9
 
 What ships in v1.0, what's new in v1.1 / v1.2 / v1.3 / v1.4 / v1.5 /
-v1.6 / v1.7 / v1.8, what's experimental, and what's on the horizon.
+v1.6 / v1.7 / v1.8 / v1.9, what's experimental, and what's on the horizon.
+
+## v1.9 — what's new
+
+- **Manual community search fallback for Korean and Chinese.** Fetch still
+  tries automatic providers first. If `ko` or `zh` is missing, it prints
+  likely community search links and can open several browser tabs for the
+  user. This intentionally does not bypass login, ads, CAPTCHA, or other
+  site restrictions. Controls: `--manual-search off|on-missing|always`,
+  `--manual-search-open ask|always|never`, `--no-manual-search`, and
+  `--no-manual-download`.
+- **Better manual-search next steps.** Suggestions now use scoped SMI
+  conversion such as `getsubtitle modify ~/Downloads --convert
+  ko:smi-to-srt`, point users at the expected show folder, and print a
+  merge command for that folder.
+- **Safer default output folder.** The built-in default changed from the
+  user's Movies folder to `~/Downloads/GetSubtitle`, which works on macOS
+  and Windows after normal `~` expansion.
+- **ASSRT API smoke script.** `scripts/test_assrt_api.py` probes the
+  ASSRT/Shooter API with `ASSRT_API_KEY`, so Chinese direct-provider
+  viability can be checked before adding it to the main downloader.
 
 ## v1.8 — what's new
 

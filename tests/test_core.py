@@ -4372,7 +4372,7 @@ def test_looks_like_url_helper():
     assert f("http://example.com")
     assert f("HTTPS://EXAMPLE.COM")
     assert not f("/Users/me/Movies")
-    assert not f("~/Movies/Show")
+    assert not f("~/Downloads/Show")
     assert not f("Show A")
 
 
@@ -6547,6 +6547,24 @@ def test_cli_engine_model_mt_source_languages_aliases():
     assert ns2.langs == "ja,ko"
 
 
+def test_cli_manual_search_fetch_flags():
+    p = MODULE["build_parser"]()
+    ns = p.parse_args([
+        "https://example.com/title", "-l", "ko,zh",
+        "--manual-search", "always",
+        "--manual-search-open", "never",
+    ])
+    assert ns.manual_search == "always"
+    assert ns.manual_search_open == "never"
+
+    ns2 = p.parse_args([
+        "https://example.com/title", "--no-manual-download",
+        "--no-manual-search-open",
+    ])
+    assert ns2.manual_search == "off"
+    assert ns2.manual_search_open == "never"
+
+
 def test_cli_legacy_mt_flags_still_accepted():
     """The pre-rename long names remain functional aliases."""
     p = MODULE["build_translate_parser"]()
@@ -6591,6 +6609,76 @@ def test_toml_mt_source_canonical_and_alias_in_user_config():
     # Legacy alias still accepted
     v = validate({"translate": {"mt_source_lang": "auto"}})
     assert v["translate"]["mt_source_lang"] == "auto"
+
+
+def test_fetch_manual_search_config_accepts_modes_and_booleans():
+    validate = MODULE["validate_user_config"]
+    v = validate({"fetch": {"manual_search": "always", "manual_search_open": "never"}})
+    assert v["fetch"]["manual_search"] == "always"
+    assert v["fetch"]["manual_search_open"] == "never"
+    v = validate({"fetch": {"manual_search": False, "manual_search_open": True}})
+    assert v["fetch"]["manual_search"] == "off"
+    assert v["fetch"]["manual_search_open"] == "always"
+
+
+def test_manual_search_suggestions_cover_korean_and_chinese_sources():
+    media = MODULE["MediaInfo"](
+        source_url="title://Fena",
+        provider="title",
+        title="Fena Pirate Princess",
+        title_aliases=["Kaizoku Oujo"],
+    )
+    suggestions = MODULE["build_manual_search_suggestions"](media, ["ko", "zh"])
+    labels = [s.label for s in suggestions]
+    urls = [s.url for s in suggestions]
+    assert "GOM Lab" in labels
+    assert "Cineaste" in labels
+    assert "ASSRT / Shooter" in labels
+    assert "SubHD" in labels
+    assert any("Fena+Pirate+Princess" in url for url in urls)
+
+
+def test_missing_languages_for_manual_search_only_tracks_ko_zh():
+    result = MODULE["SearchResult"]
+    missing = MODULE["missing_languages_for_manual_search"](
+        ["ko", "zh", "en"],
+        ["1", "2"],
+        [
+            result("ko", "1", "wyzie", "found"),
+            result("ko", "2", "wyzie", "missing"),
+            result("zh", "1", "wyzie", "found"),
+            result("zh", "2", "wyzie", "found"),
+        ],
+    )
+    assert missing == ["ko"]
+
+
+def test_manual_search_next_steps_are_scoped_and_output_aware():
+    import contextlib, io
+    from pathlib import Path
+
+    media = MODULE["MediaInfo"](
+        source_url="title://Fena",
+        provider="title",
+        title="Fena Pirate Princess",
+        season="1",
+    )
+    result = MODULE["SearchResult"]
+    out = io.StringIO()
+    with contextlib.redirect_stdout(out):
+        MODULE["maybe_print_manual_search_suggestions"](
+            media,
+            ["ja", "ko"],
+            ["1"],
+            [result("ja", "1", "jimaku", "found"), result("ko", "1", "wyzie", "missing")],
+            mode="on-missing",
+            open_mode="never",
+            expected_output_dir=Path("/tmp/GetSubtitle/Fena Pirate Princess/Season 01"),
+        )
+    text = out.getvalue()
+    assert "getsubtitle modify ~/Downloads --convert ko:smi-to-srt" in text
+    assert "Move the matching subtitle files into the show folder" in text
+    assert "getsubtitle merge '/tmp/GetSubtitle/Fena Pirate Princess/Season 01' -l ja,ko" in text
 
 
 def test_toml_pipeline_mt_source_lang_alias_emits_mt_source_flag():
@@ -6659,7 +6747,7 @@ def _wizard_state(**overrides):
         reading_aids=["ja:hiragana"],
         asbplayer=True,
         format="vtt",
-        output="~/Movies/Subtitles",
+        output="~/Downloads/GetSubtitle",
         steps={"fetch", "translate", "modify", "merge"},
     )
     for k, v in overrides.items():
@@ -7013,7 +7101,7 @@ def test_wizard_q11_banner_uses_fixed_70_char_rule():
         reading_aids=["ja:hiragana"],
         asbplayer=True,
         format="vtt",
-        output="~/Movies/Subtitles",
+        output="~/Downloads/GetSubtitle",
         is_movie=True,
     )
     cli = MODULE["_wizard_emit_cli_string"](s)
@@ -7100,12 +7188,12 @@ def test_wizard_emit_cli_merge_only_drops_fetch_and_translate():
     to merge them into one VTT. The emitted CLI is a PATH-form merge
     command with no --fetch or --translate noise."""
     s = MODULE["_WizardState"](
-        source="/Users/mba/Movies/Show",
+        source="/Users/mba/Downloads/Show",
         source_kind="path",
         languages=["ja", "en"],
         order=["ja", "en"],
         format="vtt",
-        output="~/Movies/Subtitles",
+        output="~/Downloads/GetSubtitle",
         steps={"merge"},
     )
     cli = MODULE["_wizard_emit_cli_string"](s)
@@ -7114,7 +7202,7 @@ def test_wizard_emit_cli_merge_only_drops_fetch_and_translate():
     assert "--modify" not in cli
     assert "--merge" in cli
     assert "--format vtt" in cli
-    assert cli.startswith("getsubtitle /Users/mba/Movies/Show")
+    assert cli.startswith("getsubtitle /Users/mba/Downloads/Show")
 
 
 def test_wizard_emit_toml_merge_only_omits_translate_and_modify_sections():
@@ -7299,7 +7387,7 @@ def test_wizard_default_full_pipeline_still_emits_fetch_modify_merge():
         reading_aids=["ja:hiragana"],
         asbplayer=True,
         format="vtt",
-        output="~/Movies/Subtitles",
+        output="~/Downloads/GetSubtitle",
         is_movie=True,
     )
     cli = MODULE["_wizard_emit_cli_string"](s)

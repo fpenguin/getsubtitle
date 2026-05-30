@@ -43,7 +43,7 @@ ADDIC7ED_BROWSER_UA = (
     "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
     "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
 )
-DEFAULT_OUTPUT_TEXT = "~/Movies/Subtitles"
+DEFAULT_OUTPUT_TEXT = "~/Downloads/GetSubtitle"
 DEFAULT_OUTPUT = Path(DEFAULT_OUTPUT_TEXT).expanduser()
 SUB_EXTENSIONS = {".ass", ".srt", ".vtt", ".ssa"}
 ARCHIVE_EXTENSIONS = {".zip"}
@@ -272,6 +272,14 @@ class SearchResult:
     status: str
     file: SubtitleFile | None = None
     error: str | None = None
+
+
+@dataclass
+class ManualSearchSuggestion:
+    language: str
+    label: str
+    url: str
+    note: str
 
 
 @dataclass
@@ -3535,8 +3543,8 @@ def output_dir(base: Path, media: MediaInfo, season: str, layout: str) -> Path:
     if layout == "plex":
         return base
     # Movies have no season — drop the per-season subfolder so the layout
-    # is `Movies/Subtitles/<Title>/<Title>.<lang>.srt` instead of
-    # `Movies/Subtitles/<Title>/Season Unknown/<Title> - S00E00.<lang>.srt`.
+    # is `Downloads/GetSubtitle/<Title>/<Title>.<lang>.srt` instead of
+    # `Downloads/GetSubtitle/<Title>/Season Unknown/<Title> - S00E00.<lang>.srt`.
     if media.is_movie:
         return base / show
     if season == "all":
@@ -6445,9 +6453,9 @@ def build_combine_parser() -> argparse.ArgumentParser:
         epilog=textwrap.dedent(
             """
             Examples:
-              getsubtitle combine ~/Movies/Subtitles/MF\\ Ghost -l ja,ko
+              getsubtitle combine ~/Downloads/GetSubtitle/MF\\ Ghost -l ja,ko
               getsubtitle combine FOLDER -l ja,ko --dry-run
-              getsubtitle combine FOLDER -l ja,ko -o ~/Movies/Subtitles/Combined
+              getsubtitle combine FOLDER -l ja,ko -o ~/Downloads/GetSubtitle/Combined
               getsubtitle combine FOLDER -l ja,ko --sync strict
               getsubtitle combine FOLDER -l ja,ko --force
               getsubtitle combine FOLDER -l ja,ko -furigana
@@ -6797,7 +6805,7 @@ def build_translate_parser() -> argparse.ArgumentParser:
         epilog=textwrap.dedent(
             """
             Examples:
-              getsubtitle translate ~/Movies/Subtitles/MF\\ Ghost -l ja,ko --engine argos
+              getsubtitle translate ~/Downloads/GetSubtitle/MF\\ Ghost -l ja,ko --engine argos
               getsubtitle translate FOLDER -s 1 -e 11 -l ko --mt-source ja --engine ollama
               getsubtitle translate FOLDER -l ja,ko,en,es --engine deepl --dry-run
             """
@@ -7572,10 +7580,10 @@ def build_fetch_parser() -> argparse.ArgumentParser:
               getsubtitle fetch "https://www.imdb.com/title/tt28299608/" -l ja,ko
 
               # PATH single show
-              getsubtitle fetch ~/Movies/Subtitles/MF\\ Ghost
+              getsubtitle fetch ~/Downloads/GetSubtitle/MF\\ Ghost
 
               # PATH library, every immediate subdir = a show
-              getsubtitle fetch ~/Movies/Subtitles --subdirectory --run
+              getsubtitle fetch ~/Downloads/GetSubtitle --subdirectory --run
 
             Profiles (auto-detected from TMDB original_language; override with --profile):
               ja  Japanese-origin → fetch ko; MT ja→ko fallback
@@ -8750,6 +8758,10 @@ def _merge_overrides_into_toml(data: dict, overrides: dict, verb_blocks: dict) -
             "--langs": ("languages", None),
             "-l": ("languages", None),
             "--release-source": ("release_source", None),
+            "--manual-search": ("manual_search", None),
+            "--no-manual-search": ("manual_search", "off"),
+            "--manual-search-open": ("manual_search_open", None),
+            "--no-manual-search-open": ("manual_search_open", "never"),
             "--layout": ("layout", None),
             "--run": ("run", True),
         },
@@ -8964,6 +8976,10 @@ def build_parser() -> argparse.ArgumentParser:
     search.add_argument("--title", metavar="TEXT", help="Title override when URL metadata is missing or blocked.")
     search.add_argument("--anilist", type=int, metavar="ID", help="AniList ID override for anime.")
     search.add_argument("--browser", action="store_true", help="Open the URL in your browser first, useful for login/Cloudflare pages.")
+    search.add_argument("--manual-search", nargs="?", const="on-missing", choices=["off", "on-missing", "always"], default="on-missing", metavar="{off,on-missing,always}", help="After automatic providers miss Korean/Chinese subtitles, show community search links and offer to open them. Default: on-missing.")
+    search.add_argument("--no-manual-search", "--no-manual-download", dest="manual_search", action="store_const", const="off", help="Disable community search suggestions after provider misses.")
+    search.add_argument("--manual-search-open", choices=["ask", "always", "never"], default="ask", metavar="{ask,always,never}", help="Whether to open manual-search links in your browser. Default: ask.")
+    search.add_argument("--no-manual-search-open", dest="manual_search_open", action="store_const", const="never", help="Print manual-search links but never open browser tabs.")
     search.add_argument(
         "--release-source",
         choices=[
@@ -9186,6 +9202,156 @@ def print_planned_downloads(planned: list[tuple[str, str, SubtitleFile]]) -> Non
                 print(f"    - {episode_label(ep)}: {sub.name}")
 
 
+def _manual_search_query_terms(media: MediaInfo) -> list[str]:
+    """Return title/query variants for community subtitle searches."""
+    seen: set[str] = set()
+    out: list[str] = []
+    candidates = [
+        media.title,
+        *(getattr(media, "title_aliases", None) or []),
+    ]
+    for item in candidates:
+        if not item:
+            continue
+        value = re.sub(r"\s+", " ", str(item)).strip()
+        key = value.casefold()
+        if value and key not in seen:
+            seen.add(key)
+            out.append(value)
+    if not out and media.source_url:
+        out.append(media.source_url)
+    return out[:4]
+
+
+def _manual_search_google_url(query: str) -> str:
+    return "https://www.google.com/search?q=" + urllib.parse.quote_plus(query)
+
+
+def build_manual_search_suggestions(
+    media: MediaInfo,
+    missing_langs: list[str],
+) -> list[ManualSearchSuggestion]:
+    """Build browser-openable community search targets for missing subtitles.
+
+    These suggestions are deliberately manual. They do not bypass ads,
+    login walls, CAPTCHAs, or any other access-control step; they only put
+    the user on likely search pages and let the normal site flow happen.
+    """
+    terms = _manual_search_query_terms(media)
+    title = terms[0] if terms else (media.title or "subtitle")
+    suggestions: list[ManualSearchSuggestion] = []
+
+    def add(lang: str, label: str, url: str, note: str) -> None:
+        suggestions.append(ManualSearchSuggestion(lang, label, url, note))
+
+    for lang in missing_langs:
+        if lang == "ko":
+            q = title
+            add("ko", "GOM Lab", "https://www.gomlab.com/en/subtitle-home",
+                "Korean-focused archive; often SMI. Complete any ad/login step manually.")
+            add("ko", "Cineaste", "https://cineaste.co.kr/bbs/board.php?bo_table=psd_caption",
+                "Korean subtitle community; search manually if the page blocks direct query URLs.")
+            add("ko", "Google Korean SMI search",
+                _manual_search_google_url(f'{q} 한글자막 smi OR srt'),
+                "Broad web search using Korean subtitle keywords.")
+            if len(terms) > 1:
+                add("ko", "Google alternate-title search",
+                    _manual_search_google_url(" OR ".join(f'"{term}"' for term in terms[:3]) + " 한글자막"),
+                    "Tries localized/English/original titles together.")
+        elif lang == "zh":
+            q = urllib.parse.quote_plus(title)
+            add("zh", "ASSRT / Shooter", f"https://2.assrt.net/sub/?searchword={q}",
+                "Chinese subtitle site with an API; manual web search works even before API setup.")
+            add("zh", "SubHD", f"https://subhd.tv/search/{q}",
+                "Chinese community subtitles; may require site login/manual download.")
+            add("zh", "Zimuku / SrtKu", "https://srtku.com/",
+                "Large Simplified/Traditional/bilingual archive; search/download manually.")
+            add("zh", "Google Chinese subtitle search",
+                _manual_search_google_url(f'{title} 中文字幕 中英双语 字幕 srt ass'),
+                "Broad web search for Simplified/Traditional/bilingual subtitles.")
+    return suggestions
+
+
+def missing_languages_for_manual_search(
+    requested_langs: list[str],
+    episodes: list[str],
+    results: list[SearchResult],
+) -> list[str]:
+    found = {(r.language, r.episode) for r in results if r.status == "found"}
+    missing: list[str] = []
+    for lang in requested_langs:
+        if lang not in {"ko", "zh"}:
+            continue
+        if any((lang, ep) not in found for ep in episodes):
+            missing.append(lang)
+    return missing
+
+
+def maybe_print_manual_search_suggestions(
+    media: MediaInfo,
+    requested_langs: list[str],
+    episodes: list[str],
+    results: list[SearchResult],
+    *,
+    mode: str = "on-missing",
+    open_mode: str = "ask",
+    expected_output_dir: Path | None = None,
+) -> None:
+    if mode == "off":
+        return
+    missing_langs = missing_languages_for_manual_search(requested_langs, episodes, results)
+    if mode == "on-missing" and not missing_langs:
+        return
+    if mode == "always":
+        missing_langs = [lang for lang in requested_langs if lang in {"ko", "zh"}]
+    if not missing_langs:
+        return
+    suggestions = build_manual_search_suggestions(media, missing_langs)
+    if not suggestions:
+        return
+
+    print("\nManual search suggestions:")
+    print("  Some requested subtitles were not found automatically.")
+    print("  These links do not bypass login, ads, or site restrictions; download manually,")
+    print("  then point getsubtitle at the downloaded .smi/.srt/.ass files.")
+    for idx, suggestion in enumerate(suggestions, start=1):
+        print(f"  {idx}. [{suggestion.language}] {suggestion.label}")
+        print(f"     {suggestion.url}")
+        print(f"     {suggestion.note}")
+
+    convert_spec = "smi-to-srt"
+    if missing_langs:
+        convert_spec = f"{','.join(missing_langs)}:smi-to-srt"
+    print("\nAfter downloading manually:")
+    print("  1. Convert/clean the downloaded subtitle files:")
+    print(f"     getsubtitle modify ~/Downloads --convert {convert_spec}")
+    if expected_output_dir is not None:
+        expected = str(expected_output_dir)
+        print("  2. Move the matching subtitle files into the show folder:")
+        print(f"     {shlex.quote(expected)}")
+        print("  3. Merge from that show folder:")
+        print(f"     getsubtitle merge {shlex.quote(expected)} -l {','.join(requested_langs)}")
+    else:
+        print("  2. Merge from the downloaded files:")
+        print(f"     getsubtitle merge ~/Downloads -l {','.join(requested_langs)}")
+
+    should_open = False
+    if open_mode == "always":
+        should_open = True
+    elif open_mode == "ask" and sys.stdin.isatty():
+        try:
+            answer = input("\nOpen these searches in your browser? [Y/n] ").strip().lower()
+            should_open = answer not in {"n", "no"}
+        except EOFError:
+            should_open = False
+    if should_open:
+        for suggestion in suggestions:
+            try:
+                open_in_browser(suggestion.url)
+            except CliError as e:
+                print(f"  (could not open {suggestion.label}: {e})")
+
+
 # ===========================================================================
 # User settings (non-secret config file)
 # ===========================================================================
@@ -9328,6 +9494,10 @@ BUILTIN_CONFIG_DEFAULTS: dict[str, dict[str, object]] = {
     "fetch": {
         "languages": "ja",
         "release_source": "auto",
+        # Community-search helper after automatic providers miss. The helper
+        # prints likely Korean/Chinese sites and can open browser searches.
+        "manual_search": "on-missing",      # off | on-missing | always
+        "manual_search_open": "ask",        # ask | always | never
     },
     "translate": {
         # Default engine: argos (offline, free, no daemon). Users without
@@ -9530,6 +9700,22 @@ def validate_user_config(raw: dict) -> dict:
             {"auto", "any", "netflix", "crunchyroll", "amazon",
              "hulu", "hbo", "disney", "apple", "paramount", "peacock"},
         )
+    if "manual_search" in f:
+        val = f["manual_search"]
+        if isinstance(val, bool):
+            f_out["manual_search"] = "on-missing" if val else "off"
+        else:
+            f_out["manual_search"] = _validate_enum(
+                val, "fetch.manual_search", {"off", "on-missing", "always"}
+            )
+    if "manual_search_open" in f:
+        val = f["manual_search_open"]
+        if isinstance(val, bool):
+            f_out["manual_search_open"] = "always" if val else "never"
+        else:
+            f_out["manual_search_open"] = _validate_enum(
+                val, "fetch.manual_search_open", {"ask", "always", "never"}
+            )
     out["fetch"] = f_out
 
     # [translate]
@@ -9691,6 +9877,8 @@ _EMBEDDED_EXAMPLE_TEMPLATE = """\
 [fetch]
 languages = "ja"                  # full names also work: "japanese,english"
 release_source = "auto"           # auto | any | netflix | crunchyroll | amazon | hulu | hbo | disney | apple | paramount | peacock
+manual_search = "on-missing"      # off | on-missing | always
+manual_search_open = "ask"        # ask | always | never
 
 [translate]
 engine = "argos"                  # "" | argos | ollama[:model] | deepl
@@ -9720,7 +9908,7 @@ priority = []                     # e.g. ["ja", "en", "ko"]
 reading = "ja:hiragana"           # inline readings into merged output
 
 [output]
-target = "~/Movies/Subtitles"
+target = "~/Downloads/GetSubtitle"
 layout = "archive"                # archive | flat | plex
 open_folder = false
 force = false
@@ -10311,6 +10499,8 @@ def _setup_config_text(choice: _SetupChoice) -> str:
         "[fetch]",
         f'languages = "{fetch_langs}"',
         'release_source = "auto"',
+        'manual_search = "on-missing"',
+        'manual_search_open = "ask"',
         "",
         "[modify]",
         "single_line = true",
@@ -10335,7 +10525,7 @@ def _setup_config_text(choice: _SetupChoice) -> str:
     lines += [
         "",
         "[output]",
-        'target = "~/Movies/Subtitles"',
+        'target = "~/Downloads/GetSubtitle"',
         'layout = "archive"',
         "open_folder = false",
         "",
@@ -10600,8 +10790,8 @@ def _setup_try_examples() -> None:
     print()
     print("Hard: Series + machine translation + merge — Friends S4E3-5, fill missing Spanish from French, then stack French/English/Spanish.")
     print('  getsubtitle "https://www.themoviedb.org/tv/1668-friends" -s 4 -e 3-5 -l fr,en,es')
-    print('  getsubtitle translate ~/Movies/Subtitles/Friends -s 4 -e 3-5 -l es --engine deepl --mt-source es:fr')
-    print('  getsubtitle merge ~/Movies/Subtitles/Friends -s 4 -e 3-5 -l fr,en,es')
+    print('  getsubtitle translate ~/Downloads/GetSubtitle/Friends -s 4 -e 3-5 -l es --engine deepl --mt-source es:fr')
+    print('  getsubtitle merge ~/Downloads/GetSubtitle/Friends -s 4 -e 3-5 -l fr,en,es')
     print()
     print("Frequently used settings can be saved into a file:")
     print('  getsubtitle "https://www.themoviedb.org/tv/1668-friends" -s 5 -e all --config ./friends.toml')
@@ -10823,6 +11013,10 @@ def _apply_download_config_defaults(parser: argparse.ArgumentParser) -> None:
         overrides["langs"] = fetch_cfg["languages"]
     if fetch_cfg.get("release_source"):
         overrides["release_source"] = fetch_cfg["release_source"]
+    if fetch_cfg.get("manual_search"):
+        overrides["manual_search"] = fetch_cfg["manual_search"]
+    if fetch_cfg.get("manual_search_open"):
+        overrides["manual_search_open"] = fetch_cfg["manual_search_open"]
     # [output] → output dir / layout / open_folder.
     if out_cfg.get("target"):
         overrides["output"] = str(Path(str(out_cfg["target"])).expanduser())
@@ -11187,7 +11381,7 @@ Examples (inline with fetch):
   getsubtitle URL -l ja --engine ollama --mt-source en
 
 Examples (standalone translate subcommand):
-  getsubtitle translate ~/Movies/Subtitles/MF\\ Ghost -l ja,en --engine argos
+  getsubtitle translate ~/Downloads/GetSubtitle/MF\\ Ghost -l ja,en --engine argos
   getsubtitle translate FOLDER -s 1 -e 11 -l en --engine deepl
   getsubtitle translate FOLDER -l ja,en,es --engine deepl --dry-run
   getsubtitle translate FOLDER -s 1 -e 1-3 -l en --mt-source ja --engine ollama --force
@@ -11331,7 +11525,7 @@ Precedence (lowest → highest):
 Sections — same names as the pipeline (--config) TOML so blocks
 copy-paste between this file and any workflow config. In execution order:
 
-  [fetch]         languages, release_source
+  [fetch]         languages, release_source, manual_search, manual_search_open
   [translate]     engine, model, mt_source, strip_reading_before_mt
                   [translate.ollama_models] — per-pair model overrides +
                                               auto_load / auto_unload flags
@@ -11423,12 +11617,12 @@ Examples (URL form):
   getsubtitle URL --title "MF Ghost" --anilist 143327 -l ja
 
 Examples (PATH single-show form):
-  getsubtitle fetch ~/Movies/Subtitles/MF\\ Ghost --run
-  getsubtitle fetch "~/Movies/유포니움/1기" --profile ja --run
+  getsubtitle fetch ~/Downloads/GetSubtitle/MF\\ Ghost --run
+  getsubtitle fetch "~/Downloads/유포니움/1기" --profile ja --run
 
 Examples (PATH library-walk form):
-  getsubtitle fetch ~/Movies/Subtitles --subdirectory          # dry-run
-  getsubtitle fetch ~/Movies/Subtitles --subdirectory --run    # do it
+  getsubtitle fetch ~/Downloads/GetSubtitle --subdirectory          # dry-run
+  getsubtitle fetch ~/Downloads/GetSubtitle --subdirectory --run    # do it
 
 Episode-range expansion (`-e all`):
   - Anime: episode count comes from AniList (no extra setup).
@@ -11454,11 +11648,17 @@ Fetch options:
   -l, --langs CODES        Languages to download. Default: ja
   -s, --season N|all       Season number. If omitted, infer when possible
   -e, --episode N|N-M|all  Episode, range, list, or all
-  -o, --output DIR         Output folder. Default: ~/Movies/Subtitles
+  -o, --output DIR         Output folder. Default: ~/Downloads/GetSubtitle
   --layout MODE            archive, flat, or plex. Default: archive
   --title TEXT             Title override when URL metadata is missing
   --anilist ID             AniList ID override for anime
   --browser                Open URL first for login/Cloudflare pages
+  --manual-search MODE     off | on-missing | always. Default: on-missing.
+                           When Korean/Chinese subtitles are missing after
+                           normal providers, print likely community searches.
+  --manual-search-open MODE
+                           ask | always | never. Default: ask. Opens multiple
+                           browser tabs for the manual-search links.
   --release-source MODE    auto | any | netflix | crunchyroll | amazon |
                            hulu | hbo | disney | apple | paramount |
                            peacock. Default: auto = infer from the URL's
@@ -11496,14 +11696,14 @@ Behavior:
     English line 1 English line 2
 
 Examples:
-  getsubtitle merge ~/Movies/Subtitles/MF\\ Ghost -l ja,en
-  getsubtitle merge ~/Movies/Subtitles/MF\\ Ghost -l ja,en --master ja --reading ja:hiragana
-  getsubtitle merge ~/Movies/Subtitles --subdirectory -l ja,en --format vtt
+  getsubtitle merge ~/Downloads/GetSubtitle/MF\\ Ghost -l ja,en
+  getsubtitle merge ~/Downloads/GetSubtitle/MF\\ Ghost -l ja,en --master ja --reading ja:hiragana
+  getsubtitle merge ~/Downloads/GetSubtitle --subdirectory -l ja,en --format vtt
   # Multi-variant: stack original + reading-aid variant(s) in one file.
-  getsubtitle merge ~/Movies/Subtitles/MF\\ Ghost -l ja,ja-hiragana,en
-  getsubtitle merge ~/Movies/Subtitles/MF\\ Ghost -l ja,ja-hiragana,ja-romaji,en
-  getsubtitle merge ~/Movies/Subtitles -l ko,ko-revised,en
-  getsubtitle merge ~/Movies/Subtitles -l zh,zh-marks,en
+  getsubtitle merge ~/Downloads/GetSubtitle/MF\\ Ghost -l ja,ja-hiragana,en
+  getsubtitle merge ~/Downloads/GetSubtitle/MF\\ Ghost -l ja,ja-hiragana,ja-romaji,en
+  getsubtitle merge ~/Downloads/GetSubtitle -l ko,ko-revised,en
+  getsubtitle merge ~/Downloads/GetSubtitle -l zh,zh-marks,en
 
 Merge options:
   -l, --langs CODES        Required. Language order for output
@@ -11611,10 +11811,10 @@ Examples (inline):
   getsubtitle --fetch "https://www.imdb.com/title/tt28299608/" -s 1 -e all \\
               --translate deepl \\
               --merge -l ja,en --format vtt \\
-              --output ~/Movies/StudyDeck
+              --output ~/Downloads/GetSubtitle/StudyDeck
 
   # Just fetch + merge (no MT), single show.
-  getsubtitle --fetch ~/Movies/Subtitles/MF\\ Ghost \\
+  getsubtitle --fetch ~/Downloads/GetSubtitle/MF\\ Ghost \\
               --merge -l ja,en
 
 Examples (config file with CLI overrides):
@@ -11633,6 +11833,8 @@ Pipeline TOML schema (sections in execution order):
   languages = "japanese,english,korean"
                                    # full names normalize to ja,en,ko;
                                    # alias keys: `langs`, `language`
+  manual_search = "on-missing"     # off | on-missing | always
+  manual_search_open = "ask"       # ask | always | never
 
   [translate]
   engine = "ollama"                # required: argos | ollama[:model] | deepl
@@ -12638,16 +12840,16 @@ def _wizard_q9_format(state: _WizardState) -> None:
 def _wizard_q10_output(state: _WizardState) -> None:
     print()
     print("Q12. Where should the final files go?")
-    print("    a) Default — ~/Movies/Subtitles")
+    print("    a) Default — ~/Downloads/GetSubtitle")
     print("    b) Same folder as the source files (in-place)")
     print("    c) Custom folder")
     pick = _wizard_prompt("Choose a/b/c", "a").lower()
     if pick.startswith("a"):
-        state.output = "~/Movies/Subtitles"
+        state.output = "~/Downloads/GetSubtitle"
     elif pick.startswith("b"):
         state.output = ""  # default downstream = beside source
     else:
-        state.output = _wizard_prompt("Output folder", "~/Movies/Subtitles")
+        state.output = _wizard_prompt("Output folder", "~/Downloads/GetSubtitle")
 
 
 def _wizard_q11_action(state: _WizardState) -> str:
@@ -13622,6 +13824,15 @@ def main(argv: list[str] | None = None) -> int:
 
     print_search_results(search_results)
     print_warnings(warnings)
+    maybe_print_manual_search_suggestions(
+        media,
+        langs,
+        episodes,
+        search_results,
+        mode=args.manual_search,
+        open_mode=args.manual_search_open,
+        expected_output_dir=output_dir(Path(args.output).expanduser(), media, media.season, args.layout),
+    )
 
     if not planned:
         print("\nNo downloads planned.")
