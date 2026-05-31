@@ -14218,6 +14218,34 @@ def _wizard_emit_cli_string(state: _WizardState) -> str:
     return " ".join(shlex.quote(p) if (" " in p or any(c in p for c in "$&|'\"")) else p for p in parts)
 
 
+def _wizard_collect_variant_files(state: _WizardState, target: Path) -> list[Path]:
+    """Find intermediate reading-aid variant files in `target` that the
+    just-finished wizard run generated as merge inputs. Used by the
+    post-run cleanup prompt so users aren't left with five files when
+    they only wanted the merged one."""
+    if not target.exists() or not target.is_dir():
+        return []
+    pseudo_langs = [lang for lang in state.order if is_pseudo_lang(lang)]
+    if not pseudo_langs:
+        return []
+    out: list[Path] = []
+    for pseudo in pseudo_langs:
+        pattern = _variant_filename_pattern(pseudo)
+        if pattern is None:
+            continue
+        for path in sorted(target.rglob("*.*")):
+            if pattern.search(path.name):
+                out.append(path)
+    # Deduplicate (a path could match multiple patterns) while preserving order.
+    seen: set[Path] = set()
+    unique: list[Path] = []
+    for p in out:
+        if p not in seen:
+            seen.add(p)
+            unique.append(p)
+    return unique
+
+
 def _wizard_open_folder_target(state: _WizardState) -> Path | None:
     if not state.output:
         return None
@@ -14622,14 +14650,48 @@ def interactive_main(argv: list[str] | None = None) -> int:
             print("  " + cli_string)
             print()
             _wizard_clear_draft()
-            rc = main(_wizard_emit_cli(run_state)[1:])
-            # Post-run: offer to open the output folder. Defaults to Yes
-            # so the natural flow is "wizard finishes -> file manager pops
-            # open at the new subtitles." Skipped silently on a failed run
-            # so we don't open empty/non-existent directories.
+            # Inject --no-open-folder-prompt so the merge/fetch subcommands
+            # don't ask "Open folder?" mid-run; the wizard handles a single
+            # post-run prompt below. Without this the user sees the prompt
+            # twice (merge_main asks, then the wizard asks again).
+            dispatch_argv = _wizard_emit_cli(run_state)[1:]
+            if "--no-open-folder-prompt" not in dispatch_argv:
+                dispatch_argv.append("--no-open-folder-prompt")
+            rc = main(dispatch_argv)
+            # Post-run cleanup + folder opener. Skipped silently on a
+            # failed run so we don't act on a half-finished output.
             if rc == 0 and state.output:
                 try:
                     target = _wizard_open_folder_target(run_state) or Path(state.output).expanduser()
+                    # Multi-variant merge leaves intermediate
+                    # `.furigana-*.vtt` / `.romanization-*.vtt` files
+                    # alongside the merged output. Most wizard users want
+                    # the merged file only; offer to delete the variants.
+                    variants = _wizard_collect_variant_files(run_state, target)
+                    if variants:
+                        print()
+                        print(
+                            f"Merge consumed {len(variants)} intermediate variant file(s):"
+                        )
+                        # Truncate long lists so the prompt stays scannable.
+                        for v in variants[:6]:
+                            print(f"  {v.name}")
+                        if len(variants) > 6:
+                            print(f"  … and {len(variants) - 6} more")
+                        print(
+                            "The merged file already contains all of these."
+                        )
+                        if _wizard_yesno(
+                            "Delete the intermediate variant files?", default=True
+                        ):
+                            removed = 0
+                            for v in variants:
+                                try:
+                                    v.unlink()
+                                    removed += 1
+                                except OSError as e:
+                                    print(f"  (could not delete {v.name}: {e})")
+                            print(f"Deleted {removed} variant file(s).")
                     if target.exists() and _wizard_yesno("Open folder?", default=True):
                         try:
                             open_folder(target)

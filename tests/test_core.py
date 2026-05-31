@@ -7976,6 +7976,57 @@ def test_wizard_smart_defaults_local_path_output_lands_beside_source():
         assert s.output == d
 
 
+def test_wizard_collect_variant_files_finds_intermediates_only():
+    """The post-run variant-cleanup helper picks up
+    .furigana-{mode}.vtt / .romanization-{mode}.vtt files and leaves
+    the original .ja.srt + merged output alone."""
+    import tempfile
+    from pathlib import Path
+    with tempfile.TemporaryDirectory() as d:
+        root = Path(d)
+        (root / "Show.S02E01.en.srt").write_text("en", encoding="utf-8")
+        (root / "Show.S02E01.ja.srt").write_text("ja", encoding="utf-8")
+        (root / "Show.S02E01.ja.furigana-hiragana.single-line.ruby.vtt").write_text("h", encoding="utf-8")
+        (root / "Show.S02E01.ja.furigana-katakana.single-line.ruby.vtt").write_text("k", encoding="utf-8")
+        (root / "Show.S02E01.ja.furigana-romaji.single-line.ruby.vtt").write_text("r", encoding="utf-8")
+        (root / "Show.S02E01.ja-hiragana-katakana-romaji-ja-en.vtt").write_text("merged", encoding="utf-8")
+        s = MODULE["_WizardState"](
+            source="/Volumes/Plex/Shows/X",
+            source_kind="path",
+            languages=["ja", "en"],
+            order=["ja-hiragana", "ja-katakana", "ja-romaji", "ja", "en"],
+            reading_aids=["ja:hiragana", "ja:katakana", "ja:romaji"],
+            output=str(root),
+            steps={"fetch", "modify", "merge"},
+        )
+        variants = MODULE["_wizard_collect_variant_files"](s, root)
+        names = sorted(v.name for v in variants)
+        # Exactly the three intermediate VTT variants — not the
+        # originals, not the merged output.
+        assert names == [
+            "Show.S02E01.ja.furigana-hiragana.single-line.ruby.vtt",
+            "Show.S02E01.ja.furigana-katakana.single-line.ruby.vtt",
+            "Show.S02E01.ja.furigana-romaji.single-line.ruby.vtt",
+        ]
+
+
+def test_wizard_collect_variant_files_empty_when_no_pseudo_langs():
+    """When the wizard didn't request any pseudo-lang merge, the
+    cleanup helper returns []."""
+    import tempfile
+    from pathlib import Path
+    with tempfile.TemporaryDirectory() as d:
+        root = Path(d)
+        (root / "Show.ja.srt").write_text("ja", encoding="utf-8")
+        (root / "Show.en.srt").write_text("en", encoding="utf-8")
+        s = MODULE["_WizardState"](
+            languages=["ja", "en"],
+            order=["ja", "en"],  # plain langs only
+            output=str(root),
+        )
+        assert MODULE["_wizard_collect_variant_files"](s, root) == []
+
+
 def test_wizard_q11_banner_surfaces_smart_defaults():
     """The Q-banner prints the smart-defaults block so users see what
     was auto-decided and can revise via the Edit action."""
