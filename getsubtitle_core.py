@@ -7867,6 +7867,37 @@ def modify_main(argv: list[str]) -> int:
     chinese_generated: list[Path] = []
     cantonese_generated: list[Path] = []
     grouped_errors: dict[str, list[str]] = {}
+    convert_written: list[Path] = []
+    convert_skipped: list[Path] = []
+
+    if convert_files:
+        print("\nConverting SMI:")
+        for idx, smi in enumerate(convert_files, start=1):
+            progress_bar(idx, len(convert_files), "converting", smi.name, transient=True)
+            try:
+                written, skipped = convert_smi_file(smi, force=args.force, only_langs=convert_langs)
+            except CliError as e:
+                # CliError carries "<name>: <reason>"; strip the name to group.
+                msg = str(e)
+                prefix = f"{smi.name}: "
+                key = msg[len(prefix):] if msg.startswith(prefix) else msg
+                grouped_errors.setdefault(key, []).append(smi.name)
+                continue
+            convert_written.extend(written)
+            convert_skipped.extend(skipped)
+
+    if inplace_ops and convert_written:
+        seen_paths = {row[0] for row in scanned}
+        for path in convert_written:
+            parsed = parse_srt_filename(path.name)
+            if parsed is None:
+                continue
+            season, episode, _lang, _is_mt = parsed
+            if selected_keys is not None and (season, episode) not in selected_keys:
+                continue
+            if path not in seen_paths:
+                scanned.append((path, *parsed))
+                seen_paths.add(path)
 
     if inplace_ops:
         print("\nProcessing SRT:")
@@ -7918,24 +7949,6 @@ def modify_main(argv: list[str]) -> int:
             after = path.read_bytes() if path.exists() else b""
             if before != after:
                 touched_in_place += 1
-
-    convert_written: list[Path] = []
-    convert_skipped: list[Path] = []
-    if convert_files:
-        print("\nConverting SMI:")
-        for idx, smi in enumerate(convert_files, start=1):
-            progress_bar(idx, len(convert_files), "converting", smi.name, transient=True)
-            try:
-                written, skipped = convert_smi_file(smi, force=args.force, only_langs=convert_langs)
-            except CliError as e:
-                # CliError carries "<name>: <reason>"; strip the name to group.
-                msg = str(e)
-                prefix = f"{smi.name}: "
-                key = msg[len(prefix):] if msg.startswith(prefix) else msg
-                grouped_errors.setdefault(key, []).append(smi.name)
-                continue
-            convert_written.extend(written)
-            convert_skipped.extend(skipped)
 
     extract_written: list[Path] = []
     extract_skipped: list[Path] = []
@@ -8625,6 +8638,54 @@ def _pipeline_url_fetch_output_target(fetch_target: str, fetch_options: list[str
     return str(output_dir(Path(output_root).expanduser(), media, media.season, layout))
 
 
+def _pipeline_existing_fetch_output_target(
+    guessed_target: str | None,
+    *,
+    output_root: str | None,
+    fetch_options: list[str],
+) -> str | None:
+    """After fetch runs, prefer the actual folder it wrote.
+
+    Title-search fetches can resolve a user query like "mashle - magic and
+    muscles" to a canonical AniList/TMDB title. The pre-fetch downstream
+    guess may therefore point at `/root/mashle - magic and muscles/Season 02`
+    while fetch actually saved `/root/MASHLE Kami .../Season 02`.
+    """
+    if guessed_target:
+        guessed_path = Path(guessed_target).expanduser()
+        if guessed_path.exists():
+            return str(guessed_path)
+    if not output_root:
+        return guessed_target
+    root = Path(output_root).expanduser()
+    if not root.exists() or not root.is_dir():
+        return guessed_target
+    layout = (_pipeline_option_value(fetch_options, "--layout") or "archive").lower()
+    season = (_pipeline_option_value(fetch_options, "--season", "-s") or "").strip().lower()
+    candidates: list[Path] = []
+    if layout == "archive":
+        if season and season not in {"auto", "all"} and season.isdigit():
+            season_dir = f"Season {int(season):02d}"
+            candidates = [
+                p for p in root.rglob(season_dir)
+                if p.is_dir() and any(child.is_file() and child.suffix.lower() in SUB_EXTENSIONS for child in p.iterdir())
+            ]
+        elif season == "all":
+            candidates = [
+                p for p in root.rglob("All Seasons")
+                if p.is_dir() and any(child.is_file() and child.suffix.lower() in SUB_EXTENSIONS for child in p.iterdir())
+            ]
+    if not candidates:
+        candidates = [
+            p for p in root.rglob("*")
+            if p.is_dir() and any(child.is_file() and child.suffix.lower() in SUB_EXTENSIONS for child in p.iterdir())
+        ]
+    if not candidates:
+        return guessed_target
+    candidates.sort(key=lambda p: p.stat().st_mtime, reverse=True)
+    return str(candidates[0])
+
+
 def pipeline_main(argv: list[str]) -> int:
     """Run a getsubtitle pipeline of verbs in canonical order.
 
@@ -8747,6 +8808,14 @@ def pipeline_main(argv: list[str]) -> int:
             sub_argv.append("--no-open-folder-prompt")
         rc = fetch_main(sub_argv)
         rc_total = rc or rc_total
+        if rc and has_downstream:
+            return rc_total
+        if has_downstream and fetch_target is not None and _looks_like_url(fetch_target):
+            downstream_target = _pipeline_existing_fetch_output_target(
+                downstream_target,
+                output_root=shared_output,
+                fetch_options=fetch_options,
+            )
 
     if "translate" in blocks:
         if downstream_target is None:
@@ -13053,6 +13122,7 @@ class _WizardState:
     mt_engine: str = ""                    # Q6: "" | argos | ollama | deepl
     reading_aids: list[str] = field(default_factory=list)     # Q7: spec entries
     asbplayer: bool = False                # Q8
+    convert_smi: bool = False              # Local modify: convert .smi before cleanup/readings
     format: str = ""                       # Q9: srt | vtt | ass
     output: str = ""                       # Q10
     final_action: str = "run"              # Q12: run | save | restart | quit | edit
@@ -13362,6 +13432,16 @@ def _wizard_q1_source(state: _WizardState) -> None:
                 _videos, subtitles, _season_dirs, truncated = _wizard_media_counts(path)
                 suffix = " (scan limited)" if truncated else ""
                 description = f"local folder beside video: {subtitles} subtitle file(s){suffix}"
+            if "modify" in state.steps:
+                smi_files = scan_smi_files([path])
+                if file_episode:
+                    smi_files = [
+                        smi for smi in smi_files
+                        if parse_episode_marker(smi.name) == file_episode
+                    ]
+                state.convert_smi = bool(smi_files)
+                if state.convert_smi:
+                    print("    SMI subtitles found; will convert them to SRT before cleanup/readings.")
             state.source = str(path)
             print(f"    Identified as: {description}")
             return
@@ -13443,6 +13523,7 @@ def _wizard_q1_source(state: _WizardState) -> None:
 def _wizard_q2_languages(state: _WizardState) -> None:
     print()
     print("Q4. Which subtitle languages do you want to collect?")
+    print("    List them in the order you want them displayed (top → bottom).")
     print("    Examples: ja,en   ja,ko,en,es   japanese,korean,english")
     raw = _wizard_prompt("Languages (comma-separated)", "ja,en")
     parts = [p.strip().lower() for p in raw.split(",") if p.strip()]
@@ -13476,6 +13557,91 @@ def _wizard_q2_languages(state: _WizardState) -> None:
             print("    Selected: fetch + modify.")
         else:
             print("    Reading aids skipped for this workflow.")
+    _wizard_offer_fetch_for_missing_local_languages(state)
+
+
+def _wizard_local_available_languages(state: _WizardState) -> set[str]:
+    """Best-effort language inventory for a local wizard source.
+
+    Used only for UX preflight: local modify/merge workflows can otherwise
+    build a syntactically valid command that has no chance of producing the
+    requested stack because the folder only contains another language.
+    """
+    if not state.source:
+        return set()
+    root = Path(state.source).expanduser()
+    if not root.exists():
+        return set()
+    paths = [root]
+    detected: set[str] = set()
+    rows = scan_subtitle_files_extended(paths, include_furigana=False)
+    if state.season or state.episode:
+        keys = {(season, episode) for _path, season, episode, _lang, _is_mt, _fmt in rows}
+        keys.update(
+            ep for ep in (parse_episode_marker(path.name) for path in scan_smi_files(paths))
+            if ep is not None
+        )
+        selected = set(filter_episode_keys(
+            keys,
+            season=state.season or "all",
+            episode=state.episode or "all",
+        ))
+        rows = [row for row in rows if (row[1], row[2]) in selected]
+    detected.update(lang for _path, _season, _episode, lang, _is_mt, _fmt in rows if not is_pseudo_lang(lang))
+
+    smi_files = scan_smi_files(paths)
+    if state.season or state.episode:
+        smi_files = [
+            path for path in smi_files
+            if parse_episode_marker(path.name) in selected
+        ]
+    for smi_path in smi_files:
+        try:
+            text = _sami_decode_bytes(smi_path.read_bytes())
+            detected.update(parse_sami(text).keys())
+        except Exception:
+            continue
+    return detected
+
+
+def _wizard_offer_fetch_for_missing_local_languages(state: _WizardState) -> None:
+    if "fetch" in state.steps or not (state.steps & {"modify", "merge"}):
+        return
+    if state.source_kind != "path" or not state.source or not state.languages:
+        return
+    available = _wizard_local_available_languages(state)
+    if not available:
+        return
+    missing = [lang for lang in state.languages if lang not in available]
+    if not missing:
+        return
+    print()
+    print("    Local subtitle check:")
+    print(f"      Found locally: {', '.join(sorted(available))}")
+    print(f"      Missing for your requested stack: {', '.join(missing)}")
+    print("    If you continue without Fetch, modify/merge can only use the")
+    print("    subtitle languages already in this folder.")
+    if _wizard_yesno("Search online for the missing languages now?", default=True):
+        local_target = state.source
+        print()
+        print("    Enter an IMDb/TMDB/AniList/Crunchyroll URL, or type the title.")
+        fetch_source = _wizard_prompt("URL or title to fetch")
+        if _looks_like_url(fetch_source):
+            state.source_kind = "url"
+            state.source = fetch_source
+            state.source_title = ""
+            state.is_movie = _wizard_url_is_movie(fetch_source)
+        else:
+            state.source_kind = "title"
+            state.source = fetch_source
+            state.source_title = ""
+        state.steps.add("fetch")
+        state.output = local_target
+        print(f"    Fetch will save into: {local_target}")
+        print("    Then Modify/Merge will continue from that folder.")
+    else:
+        print("    Tip: restart with `getsubtitle -i`, choose Fetch, and use a")
+        print("    catalog URL/title so getsubtitle can look online for missing tracks.")
 
 
 def _wizard_q3_order(state: _WizardState) -> None:
@@ -13568,7 +13734,7 @@ def _wizard_q5_scope(state: _WizardState) -> None:
         state.episode = ""
         return
     print()
-    print("Q7. What episode scope?")
+    print("Q5. What episode scope?")
     print("    a) Movie / single item (no season/episode)")
     print("    b) A specific season + episode (or range)")
     print("    c) Whole season, every episode (-e all)")
@@ -13599,7 +13765,7 @@ def _wizard_q5_scope(state: _WizardState) -> None:
 
 def _wizard_q6_translate(state: _WizardState) -> None:
     print()
-    print("Q8. If a language is missing, what should we do?")
+    print("Q6. If a language is missing, what should we do?")
     print("    a) Skip — accept the gap (no AI translation)")
     print("    b) Argos — on your computer, low quality (free)")
     print("    c) Ollama — on your computer, good quality (free; slower)")
@@ -13621,7 +13787,7 @@ def _wizard_q7_reading_aids(state: _WizardState) -> None:
         state.reading_aids = []
         return
     print()
-    print("Q9. Reading aids (phonetic guides for the original script).")
+    print("Q7. Reading aids (phonetic guides for the original script).")
     # Pick a script-appropriate example so Korean / Mandarin users don't
     # see a kanji-only sample. Falls back to a Japanese example only when
     # ja is the first relevant language.
@@ -13728,6 +13894,15 @@ def _wizard_q11_action(state: _WizardState) -> str:
     toml_str = _wizard_emit_toml(state)
     rule = "=" * 70
     print()
+    # Smart-defaults block: the five questions the wizard no longer
+    # asks. Surfaced so users see (and can revise) what was auto-picked.
+    notes = getattr(state, "_smart_defaults_notes", None) or {}
+    if notes:
+        print(rule)
+        print("Smart defaults filled in for you (edit via 'Edit a single answer'):")
+        print(rule)
+        for k, v in notes.items():
+            print(f"  {k:14} {v}")
     print(rule)
     print("Based on your choice, you can try:")
     print(rule)
@@ -13765,18 +13940,71 @@ def _wizard_q11_action(state: _WizardState) -> str:
 # Question dispatch table keeps the orchestrator readable and the test
 # harness focused — tests can call individual questions via this table.
 _WIZARD_STEPS: list[tuple[str, "callable"]] = [
+    # Streamlined down to a maximum of 7 user-facing questions. Five
+    # questions were removed in favor of smart defaults applied by
+    # `_wizard_apply_smart_defaults` before the Q-banner: display order
+    # (Q4 already implies it), master timing language (first lang
+    # wins), cleanup preset (always on for learners), output format
+    # (VTT when reading aids, else SRT), output folder (~/Movies/
+    # Subtitles for URL/title, source's parent for local paths).
     ("steps",         _wizard_q0_steps),
     ("source",        _wizard_q1_source),
     ("languages",     _wizard_q2_languages),
-    ("order",         _wizard_q3_order),
-    ("master",        _wizard_q4_master),
     ("scope",         _wizard_q5_scope),
     ("translate",     _wizard_q6_translate),
     ("reading_aids",  _wizard_q7_reading_aids),
-    ("asbplayer",     _wizard_q8_asbplayer),
-    ("format",        _wizard_q9_format),
-    ("output",        _wizard_q10_output),
 ]
+
+
+def _wizard_apply_smart_defaults(state: _WizardState) -> dict[str, str]:
+    """Fill in the five answers the wizard no longer asks. Returns a
+    dict of {label: human-readable value} for the banner to surface so
+    users see what was decided (and can revise via the Edit action by
+    re-running the wizard or hand-tweaking the saved workflow file)."""
+    notes: dict[str, str] = {}
+    # Display order = the order languages were typed at Q4.
+    if "merge" in state.steps and len(state.languages) >= 2 and not state.order:
+        state.order = list(state.languages)
+        notes["Display order"] = ", ".join(state.order) + "  (top → bottom on screen)"
+    elif "merge" in state.steps and not state.order:
+        state.order = list(state.languages)
+    # Master timing language: blank means 'first lang in order wins'.
+    # That's the right answer for nearly every merge.
+    if "merge" in state.steps and len(state.order) >= 2 and not state.master:
+        notes["Timing master"] = f"{state.order[0]}  (first language)"
+    # Cleanup preset: single-line cues + strip broadcast noise. Universal
+    # win for learners and works in every player.
+    if state.steps & {"modify", "merge"} and not state.asbplayer:
+        state.asbplayer = True
+        notes["Cleanup preset"] = "on  (single-line cues + strip broadcast noise)"
+    # Output format: VTT when reading aids are requested (so ruby
+    # renders), else SRT (most compatible).
+    if "merge" in state.steps and not state.format:
+        needs_ruby = any(
+            spec.startswith(("ja:hiragana", "ja:furigana"))
+            for spec in state.reading_aids
+        )
+        state.format = "vtt" if needs_ruby else "srt"
+        notes["Output format"] = (
+            f"{state.format.upper()}  ("
+            + ("VTT renders reading aids as ruby"
+               if needs_ruby
+               else "SRT — most compatible")
+            + ")"
+        )
+    # Output folder: URL/title sources land in ~/Movies/Subtitles by
+    # default; local-path sources land beside the source file/folder.
+    if not state.output:
+        if state.source_kind in ("url", "title"):
+            state.output = "~/Movies/Subtitles"
+            notes["Output folder"] = state.output
+        elif state.source_kind == "path" and state.source:
+            from pathlib import Path as _P
+            src = _P(state.source).expanduser()
+            target = src if src.is_dir() else src.parent
+            state.output = str(target)
+            notes["Output folder"] = state.output + "  (beside source)"
+    return notes
 
 
 def _run_wizard(state: _WizardState | None = None) -> tuple[_WizardState, str]:
@@ -13789,42 +14017,30 @@ def _run_wizard(state: _WizardState | None = None) -> tuple[_WizardState, str]:
     state = state or _WizardState()
     for label, fn in _WIZARD_STEPS:
         # Skip pre-answered questions so resume / setup-profile pre-fill
-        # actually saves keystrokes. The `prefilled` map maps each step
-        # label to the state field that, when truthy, means "already answered".
+        # actually saves keystrokes.
         prefilled = {
             "languages": bool(state.languages),
-            "order": bool(state.order),
             "translate": state.mt_engine != "",
             "reading_aids": bool(state.reading_aids),
-            "format": state.format != "",
         }
         if prefilled.get(label, False):
             continue
-        # Step gating: skip Qs whose verb isn't in state.steps. This is
-        # what makes 'merge-only' on a folder of .srt files skip the MT
-        # engine and reading-aid questions; modify-only on a single file
-        # skip the merge-order / master / format questions; etc.
+        # Step gating: skip Qs whose verb isn't in state.steps.
         skip = {
-            # Episode scope is fetch-only (URLs/titles need season+episode).
             "scope":        "fetch" not in state.steps,
             "translate":    "translate" not in state.steps,
             "reading_aids": "modify" not in state.steps,
-            # The asbplayer / cleanup preset is meaningful for both modify
-            # and merge — only skip when neither is selected.
-            "asbplayer":    not (state.steps & {"modify", "merge"}),
-            # Output format is a merge concern; for modify-only / translate-
-            # only the format is implied by --reading-format or the input.
-            "format":       "merge" not in state.steps,
-            # Display order + master only matter when merging two+ langs.
-            "order":        "merge" not in state.steps,
-            "master":       "merge" not in state.steps,
-            # Translate-only paths need a target-lang list but skip the rest
-            # of the multi-language questions when only ONE lang is wanted.
         }
         if skip.get(label, False):
             continue
         fn(state)
         _wizard_save_draft(state)
+    # Five questions the wizard no longer asks (display order, master
+    # timing, cleanup preset, output format, output folder) are now
+    # filled in here. The returned notes are surfaced in the Q-banner
+    # so users see what was decided.
+    state._smart_defaults_notes = _wizard_apply_smart_defaults(state)
+    _wizard_save_draft(state)
     while True:
         action = _wizard_q11_action(state)
         if action == "restart":
@@ -13910,6 +14126,8 @@ def _wizard_emit_cli(state: _WizardState) -> list[str]:
     if "fetch" not in steps and local_steps == {"modify"}:
         argv: list[str] = ["getsubtitle", "modify", state.source]
         add_local_episode_filter(argv)
+        if state.convert_smi:
+            argv += ["--convert", "smi-to-srt"]
         if state.asbplayer:
             argv += ["--strip-cc-noise", "--single-line"]
         if state.reading_aids:
@@ -13969,9 +14187,11 @@ def _wizard_emit_cli(state: _WizardState) -> list[str]:
     elif "fetch" in steps and state.source_kind in ("url", "title"):
         argv.append("--no-engine")
     # Modify block.
-    if "modify" in steps and (state.reading_aids or state.asbplayer):
+    if "modify" in steps and (state.reading_aids or state.asbplayer or state.convert_smi):
         argv.append("--modify")
         add_local_episode_filter(argv)
+        if state.convert_smi:
+            argv += ["--convert", "smi-to-srt"]
         if state.asbplayer:
             argv += ["--strip-cc-noise", "--single-line"]
         if state.reading_aids:
@@ -13996,6 +14216,29 @@ def _wizard_emit_cli_string(state: _WizardState) -> str:
     import shlex
     parts = _wizard_emit_cli(state)
     return " ".join(shlex.quote(p) if (" " in p or any(c in p for c in "$&|'\"")) else p for p in parts)
+
+
+def _wizard_open_folder_target(state: _WizardState) -> Path | None:
+    if not state.output:
+        return None
+    target = Path(state.output).expanduser()
+    if "fetch" not in state.steps:
+        return target
+    try:
+        blocks = split_pipeline_argv(_wizard_emit_cli(state)[1:])
+        fetch_target, fetch_options = _pipeline_resolve_target(blocks.get("fetch", []))
+        if fetch_target and _looks_like_url(fetch_target):
+            guessed = _pipeline_url_fetch_output_target(fetch_target, fetch_options, state.output)
+            resolved = _pipeline_existing_fetch_output_target(
+                guessed,
+                output_root=state.output,
+                fetch_options=fetch_options,
+            )
+            if resolved:
+                return Path(resolved).expanduser()
+    except CliError:
+        pass
+    return target
 
 
 def _wizard_merge_order(state: _WizardState) -> list[str]:
@@ -14048,7 +14291,7 @@ def _wizard_emit_toml(state: _WizardState) -> str:
         lines.append('mt_source = "auto"')
         lines.append("")
     # [modify]
-    has_modify = "modify" in steps and bool(state.reading_aids or state.asbplayer)
+    has_modify = "modify" in steps and bool(state.reading_aids or state.asbplayer or state.convert_smi)
     if has_modify:
         lines.append("[modify]")
         if local_episode_filter:
@@ -14056,6 +14299,8 @@ def _wizard_emit_toml(state: _WizardState) -> str:
                 lines.append(f'season = "{state.season}"')
             if state.episode:
                 lines.append(f'episode = "{state.episode}"')
+        if state.convert_smi:
+            lines.append('convert = "smi-to-srt"')
         if state.asbplayer:
             lines.append("single_line = true")
             lines.append("strip_cc_noise = true")
@@ -14384,7 +14629,7 @@ def interactive_main(argv: list[str] | None = None) -> int:
             # so we don't open empty/non-existent directories.
             if rc == 0 and state.output:
                 try:
-                    target = Path(state.output).expanduser()
+                    target = _wizard_open_folder_target(run_state) or Path(state.output).expanduser()
                     if target.exists() and _wizard_yesno("Open folder?", default=True):
                         try:
                             open_folder(target)

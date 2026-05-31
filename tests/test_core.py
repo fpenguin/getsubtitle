@@ -4630,6 +4630,7 @@ def test_pipeline_dispatch_runs_fetch_then_merge_in_canonical_order():
 
 def test_pipeline_url_fetch_passes_shared_output_and_resolves_anilist_folder():
     import io, contextlib
+    import tempfile
     captured: dict[str, list[str]] = {}
     scope = MODULE["pipeline_main"].__globals__
     saved_fetch = scope["fetch_main"]
@@ -4662,14 +4663,16 @@ def test_pipeline_url_fetch_passes_shared_output_and_resolves_anilist_folder():
     scope["combine_main"] = fake_combine
     scope["fetch_anilist_info"] = lambda _id: Info()
     try:
-        with _isolated_config(None), contextlib.redirect_stdout(io.StringIO()):
+        with tempfile.TemporaryDirectory() as td, _isolated_config(None), contextlib.redirect_stdout(io.StringIO()):
+            output_root = f"{td}/GetSubtitle"
             rc = MODULE["main"]([
                 "--fetch", "https://anilist.co/anime/171642/",
                 "--season", "all", "--episode", "all",
                 "--modify", "--strip-cc-noise",
                 "--merge", "--languages", "ja,en", "--format", "vtt",
-                "--output", "~/Downloads/GetSubtitle",
+                "--output", output_root,
             ])
+            expected = f"{output_root}/MF Ghost 2nd Season/All Seasons"
         assert rc == 0
     finally:
         scope["fetch_main"] = saved_fetch
@@ -4678,10 +4681,92 @@ def test_pipeline_url_fetch_passes_shared_output_and_resolves_anilist_folder():
         scope["fetch_anilist_info"] = saved_info
 
     assert "--output" in captured["fetch"]
-    assert captured["fetch"][captured["fetch"].index("--output") + 1] == "~/Downloads/GetSubtitle"
-    expected = "/Users/mba/Downloads/GetSubtitle/MF Ghost 2nd Season/All Seasons"
+    assert captured["fetch"][captured["fetch"].index("--output") + 1] == output_root
     assert captured["modify"][0] == expected
     assert captured["merge"][0] == expected
+
+
+def test_pipeline_post_fetch_uses_actual_resolved_output_folder_for_title_search():
+    import io, contextlib
+    import tempfile
+    from pathlib import Path
+
+    captured: dict[str, list[str]] = {}
+    scope = MODULE["pipeline_main"].__globals__
+    saved_fetch = scope["fetch_main"]
+    saved_modify = scope["modify_main"]
+    saved_combine = scope["combine_main"]
+
+    with tempfile.TemporaryDirectory() as td:
+        output_root = Path(td) / "Plex" / "MASHLE - MAGIC AND MUSCLES"
+        actual = output_root / "MASHLE Kami Shinkakusha Kouho Senbatsu Shiken-hen" / "Season 02"
+
+        def fake_fetch(argv):
+            captured["fetch"] = list(argv)
+            actual.mkdir(parents=True, exist_ok=True)
+            (actual / "MASHLE Kami Shinkakusha Kouho Senbatsu Shiken-hen - S02E01.ja.srt").write_text(
+                "1\n00:00:01,000 --> 00:00:02,000\nマッシュ\n",
+                encoding="utf-8",
+            )
+            return 0
+
+        def fake_modify(argv):
+            captured["modify"] = list(argv)
+            return 0
+
+        def fake_combine(argv):
+            captured["merge"] = list(argv)
+            return 0
+
+        scope["fetch_main"] = fake_fetch
+        scope["modify_main"] = fake_modify
+        scope["combine_main"] = fake_combine
+        try:
+            with _isolated_config(None), contextlib.redirect_stdout(io.StringIO()):
+                rc = MODULE["main"]([
+                    "--fetch", "--title", "mashle - magic and muscles",
+                    "--season", "2", "--episode", "1",
+                    "--languages", "ja,en",
+                    "--modify", "--strip-cc-noise",
+                    "--merge", "--languages", "ja,en", "--format", "vtt",
+                    "--output", str(output_root),
+                ])
+            assert rc == 0
+        finally:
+            scope["fetch_main"] = saved_fetch
+            scope["modify_main"] = saved_modify
+            scope["combine_main"] = saved_combine
+
+        wrong = output_root / "mashle - magic and muscles" / "Season 02"
+        assert captured["modify"][0] == str(actual)
+        assert captured["merge"][0] == str(actual)
+        assert captured["modify"][0] != str(wrong)
+
+
+def test_wizard_open_folder_target_prefers_actual_resolved_fetch_folder():
+    import tempfile
+    from pathlib import Path
+
+    with tempfile.TemporaryDirectory() as td:
+        output_root = Path(td) / "Plex" / "MASHLE - MAGIC AND MUSCLES"
+        actual = output_root / "MASHLE Kami Shinkakusha Kouho Senbatsu Shiken-hen" / "Season 02"
+        actual.mkdir(parents=True)
+        (actual / "MASHLE Kami Shinkakusha Kouho Senbatsu Shiken-hen - S02E01.ja.srt").write_text(
+            "1\n00:00:01,000 --> 00:00:02,000\nマッシュ\n",
+            encoding="utf-8",
+        )
+        state = MODULE["_WizardState"](
+            source="mashle - magic and muscles",
+            source_kind="title",
+            languages=["ja", "en"],
+            order=["ja", "en"],
+            season="2",
+            episode="1",
+            steps={"fetch", "modify", "merge"},
+            output=str(output_root),
+        )
+        target = MODULE["_wizard_open_folder_target"](state)
+    assert target == actual
 
 
 def test_pipeline_translate_rewrites_engine_to_canonical_flags():
@@ -5843,6 +5928,31 @@ def test_modify_main_convert_combined_with_strip_cc_noise():
     assert "convert smi → srt" in text and "strip CC noise" in text
     assert "➡" not in ja_body
     assert "안녕하세요" in ko_body
+
+
+def test_modify_main_convert_then_applies_reading_to_new_srt():
+    import tempfile, io, contextlib
+    from pathlib import Path
+    with _isolated_config(None):
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            (root / "Show.S01E01.smi").write_text(_SAMI_BASIC_KO, encoding="utf-8")
+            out = io.StringIO()
+            with contextlib.redirect_stdout(out):
+                rc = MODULE["modify_main"]([
+                    str(root),
+                    "--convert", "smi-to-srt",
+                    "--reading", "ko:yale",
+                    "--reading-format", "srt",
+                ])
+            text = out.getvalue()
+            converted = root / "Show.S01E01.ko.srt"
+            reading = root / "Show.S01E01.ko.romanization-yale.asb.srt"
+            assert rc == 0
+            assert converted.exists()
+            assert reading.exists()
+            assert "Converting SMI" in text
+            assert "Processing SRT" in text
 
 
 def test_modify_main_convert_skips_existing_without_force_via_cli():
@@ -7413,6 +7523,83 @@ def test_wizard_languages_can_decline_modify_reading_aids():
         fn_g["_wizard_yesno"] = saved_yesno
 
 
+def test_wizard_local_missing_languages_can_add_fetch_on_spot():
+    import contextlib
+    import io
+    import tempfile
+    from pathlib import Path
+
+    with tempfile.TemporaryDirectory() as d:
+        root = Path(d)
+        (root / "Mashle - s02e13.smi").write_text(_SAMI_BASIC_KO, encoding="utf-8")
+        s = MODULE["_WizardState"](
+            source=str(root),
+            source_kind="path",
+            season="2",
+            episode="13",
+            steps={"modify", "merge"},
+            convert_smi=True,
+        )
+        fn_g = MODULE["_wizard_q2_languages"].__globals__
+        saved_prompt = fn_g["_wizard_prompt"]
+        saved_yesno = fn_g["_wizard_yesno"]
+        answers = iter(["ja,en", "MASHLE: Magic and Muscles"])
+        try:
+            fn_g["_wizard_prompt"] = lambda _q, _d=None: next(answers)
+            fn_g["_wizard_yesno"] = lambda _q, default=True: True
+            with contextlib.redirect_stdout(io.StringIO()) as buf:
+                MODULE["_wizard_q2_languages"](s)
+            out = buf.getvalue()
+        finally:
+            fn_g["_wizard_prompt"] = saved_prompt
+            fn_g["_wizard_yesno"] = saved_yesno
+
+    assert "Found locally: ko" in out
+    assert "Missing for your requested stack: ja, en" in out
+    assert "fetch" in s.steps
+    assert s.source_kind == "title"
+    assert s.source == "MASHLE: Magic and Muscles"
+    assert s.output == str(root)
+    cli = MODULE["_wizard_emit_cli"](s)
+    assert cli[:3] == ["getsubtitle", "--fetch", "--title"]
+    assert "--output" in cli
+    assert cli[cli.index("--output") + 1] == str(root)
+
+
+def test_wizard_local_missing_languages_decline_fetch_prints_restart_hint():
+    import contextlib
+    import io
+    import tempfile
+    from pathlib import Path
+
+    with tempfile.TemporaryDirectory() as d:
+        root = Path(d)
+        (root / "Mashle - s02e13.smi").write_text(_SAMI_BASIC_KO, encoding="utf-8")
+        s = MODULE["_WizardState"](
+            source=str(root),
+            source_kind="path",
+            season="2",
+            episode="13",
+            steps={"modify", "merge"},
+        )
+        fn_g = MODULE["_wizard_q2_languages"].__globals__
+        saved_prompt = fn_g["_wizard_prompt"]
+        saved_yesno = fn_g["_wizard_yesno"]
+        try:
+            fn_g["_wizard_prompt"] = lambda _q, _d=None: "ja,en"
+            fn_g["_wizard_yesno"] = lambda _q, default=True: False
+            with contextlib.redirect_stdout(io.StringIO()) as buf:
+                MODULE["_wizard_q2_languages"](s)
+            out = buf.getvalue()
+        finally:
+            fn_g["_wizard_prompt"] = saved_prompt
+            fn_g["_wizard_yesno"] = saved_yesno
+
+    assert s.steps == {"modify", "merge"}
+    assert s.source_kind == "path"
+    assert "restart with `getsubtitle -i`, choose Fetch" in out
+
+
 def test_wizard_emit_cli_merge_only_drops_fetch_and_translate():
     """Scenario: user dropped a folder of .ja.srt/.en.srt and just wants
     to merge them into one VTT. The emitted CLI is a PATH-form merge
@@ -7519,6 +7706,37 @@ def test_wizard_local_video_file_becomes_parent_folder_with_episode_filter():
             assert s.season == "1"
             assert s.episode == "1"
             assert "Selected episode: S01E01" in buf.getvalue()
+        finally:
+            fn_g["_wizard_prompt"] = saved_prompt
+
+
+def test_wizard_local_video_file_with_smi_auto_adds_conversion():
+    import contextlib
+    import io
+    import tempfile
+    from pathlib import Path
+    with tempfile.TemporaryDirectory() as d:
+        root = Path(d)
+        video = root / "Mashle - s02e13.mkv"
+        video.write_bytes(b"")
+        (root / "Mashle - s02e13.smi").write_text(_SAMI_BASIC_KO, encoding="utf-8")
+        s = MODULE["_WizardState"](steps={"modify", "merge"})
+        fn_g = MODULE["_wizard_q1_source"].__globals__
+        saved_prompt = fn_g["_wizard_prompt"]
+        try:
+            fn_g["_wizard_prompt"] = lambda _q, default=None: str(video)
+            with contextlib.redirect_stdout(io.StringIO()) as buf:
+                MODULE["_wizard_q1_source"](s)
+            assert s.source == str(root)
+            assert s.season == "2"
+            assert s.episode == "13"
+            assert s.convert_smi is True
+            assert "SMI subtitles found" in buf.getvalue()
+            cli = MODULE["_wizard_emit_cli"](s)
+            assert "--convert" in cli
+            assert cli[cli.index("--convert") + 1] == "smi-to-srt"
+            toml = MODULE["_wizard_emit_toml"](s)
+            assert 'convert = "smi-to-srt"' in toml
         finally:
             fn_g["_wizard_prompt"] = saved_prompt
 
@@ -7679,9 +7897,112 @@ def test_wizard_intro_uses_beginner_friendly_terms():
     collapsed = " ".join(intro.split())
     assert "workflow file" in collapsed
     assert "terminal command" in collapsed
-    # No raw jargon.
+
+
+def test_wizard_intro_has_no_jargon():
+    """Intro should not contain 'TOML' or 'pipeline' raw jargon
+    (v1.7.1 reword + v1.8 still maintained)."""
+    intro = MODULE["_WIZARD_INTRO"]
     assert "TOML" not in intro
     assert "pipeline" not in intro
+
+
+# ─── v1.8 wizard streamlined to ≤7 Qs ─────────────────────────────
+
+
+def test_wizard_dispatch_table_has_at_most_seven_question_steps():
+    """The user-facing dispatch table caps at 7 entries (Q1-Q7). Five
+    earlier questions (display order, master timing, cleanup preset,
+    output format, output folder) are now filled in by
+    _wizard_apply_smart_defaults instead of asked."""
+    steps = MODULE["_WIZARD_STEPS"]
+    assert len(steps) <= 7, f"too many wizard steps: {[s[0] for s in steps]}"
+    # The five removed steps must not be present.
+    labels = {s[0] for s in steps}
+    for removed in ("order", "master", "asbplayer", "format", "output"):
+        assert removed not in labels, f"{removed!r} should have been removed"
+
+
+def test_wizard_apply_smart_defaults_fills_missing_answers():
+    """_wizard_apply_smart_defaults populates display order, master,
+    cleanup preset, output format, and output folder when the user
+    didn't answer them, and returns a human-readable note dict."""
+    s = MODULE["_WizardState"](
+        source="https://www.themoviedb.org/movie/8392",
+        source_kind="url",
+        languages=["ja", "en"],
+        reading_aids=["ja:hiragana"],
+        is_movie=True,
+    )
+    notes = MODULE["_wizard_apply_smart_defaults"](s)
+    assert s.order == ["ja", "en"]
+    assert s.master == ""  # blank = first wins downstream
+    assert s.asbplayer is True
+    assert s.format == "vtt"  # reading aid -> ruby-capable format
+    assert s.output == "~/Movies/Subtitles"
+    # All five notes appear in the banner-friendly summary.
+    assert "Display order" in notes
+    assert "Timing master" in notes
+    assert "Cleanup preset" in notes
+    assert "Output format" in notes
+    assert "Output folder" in notes
+
+
+def test_wizard_smart_defaults_pick_srt_without_reading_aids():
+    """No reading aid → SRT (most compatible) is the auto-format."""
+    s = MODULE["_WizardState"](
+        source="https://www.themoviedb.org/movie/8392",
+        source_kind="url",
+        languages=["ja", "en"],
+        reading_aids=[],
+    )
+    MODULE["_wizard_apply_smart_defaults"](s)
+    assert s.format == "srt"
+
+
+def test_wizard_smart_defaults_local_path_output_lands_beside_source():
+    """Local-path sources output beside the source folder/file
+    instead of the default ~/Movies/Subtitles destination."""
+    import tempfile
+    from pathlib import Path
+    with tempfile.TemporaryDirectory() as d:
+        s = MODULE["_WizardState"](
+            source=d,
+            source_kind="path",
+            languages=["ja", "en"],
+            reading_aids=[],
+        )
+        MODULE["_wizard_apply_smart_defaults"](s)
+        assert s.output == d
+
+
+def test_wizard_q11_banner_surfaces_smart_defaults():
+    """The Q-banner prints the smart-defaults block so users see what
+    was auto-decided and can revise via the Edit action."""
+    import io, contextlib
+    s = MODULE["_WizardState"](
+        source="https://www.themoviedb.org/movie/8392",
+        source_kind="url",
+        languages=["ja", "en"],
+        reading_aids=["ja:hiragana"],
+        is_movie=True,
+    )
+    s._smart_defaults_notes = MODULE["_wizard_apply_smart_defaults"](s)
+    fn_g = MODULE["_wizard_q11_action"].__globals__
+    saved = fn_g.get("input")
+    try:
+        fn_g["input"] = lambda *a, **k: "e"  # pick quit
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            MODULE["_wizard_q11_action"](s)
+    finally:
+        if saved is not None:
+            fn_g["input"] = saved
+    out = buf.getvalue()
+    assert "Smart defaults filled in for you" in out
+    assert "Display order" in out
+    assert "Cleanup preset" in out
+    assert "Output format" in out
 
 
 def test_wizard_default_full_pipeline_still_emits_fetch_modify_merge():

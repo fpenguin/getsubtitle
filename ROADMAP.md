@@ -27,6 +27,18 @@ After v1.9, use smaller release steps for incremental improvements:
   as PGS are reported and skipped.
 - **Cantonese Jyutping reading aids.** `--reading yue:numbers` now ships
   via the optional `romanization-yue` extra (`pycantonese`).
+- **Interactive wizard streamlined to ≤7 questions.** Five answers are
+  now auto-filled by `_wizard_apply_smart_defaults` and surfaced in a
+  "Smart defaults" block in the banner so the user sees what was
+  picked:
+    - Display order — derived from Q4 (typed language order).
+    - Master timing — first language wins (CLI override: `--master`).
+    - Cleanup preset — always on (single-line cues + strip broadcast
+      noise; works in every player).
+    - Output format — VTT when reading aids are picked, SRT otherwise.
+    - Output folder — `~/Movies/Subtitles` for URL/title sources;
+      beside the source folder/file for local paths.
+  A typical movie-with-furigana run goes from 12 → 5 questions.
 
 ## v1.9 — what's new
 
@@ -301,7 +313,7 @@ After v1.9, use smaller release steps for incremental improvements:
 
 ### Tests
 
-- 499 automated tests covering URL parsing, provider response shapes, TMDB / AniList resolution, SAMI parsing, VTT/ASS input parsing, MT helpers + auto_load/auto_unload, merge with format hints, pipeline orchestration, `--config` CLI overrides, config validation, source smoke diagnostics, help system, and dispatch routing.
+- 505 automated tests covering URL parsing, provider response shapes, TMDB / AniList resolution, SAMI parsing, VTT/ASS input parsing, MT helpers + auto_load/auto_unload, merge with format hints, pipeline orchestration, `--config` CLI overrides, config validation, source smoke diagnostics, help system, and dispatch routing.
 
 ## Planned (post-v1.0)
 

@@ -127,9 +127,13 @@ player settings, and optional dependencies with rough setup time.
 `getsubtitle doctor` checks API keys, reading-aid packages, ffmpeg/ffprobe,
 and Ollama before you get stuck mid-run.
 
-`getsubtitle -i` is the guided workflow builder. It asks a handful of
-questions, shows the command and reusable TOML workflow, then lets you Run,
-Save, Edit, Restart, or Quit.
+`getsubtitle -i` is the guided workflow builder. It asks 4-7 questions
+(which steps, source, languages, optional reading aids) and fills the
+rest in with smart defaults — display order from the language list you
+typed, cleanup preset on, VTT format when reading aids are picked, and
+so on. The banner before the action menu surfaces all five auto-
+decisions so you can revise via "Edit a single answer". Then choose
+Run, Save, Edit, Restart, or Quit.
 
 ## Install
 
