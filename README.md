@@ -6,7 +6,8 @@ learning.
 GetSubtitle helps you watch with the subtitle setup streaming apps rarely
 offer: the language you are learning, a pronunciation guide, your native
 language, and an optional bridge language, all synced into one study-friendly
-file for players like VLC, mpv, IINA, asbplayer, Plex, and Jellyfin.
+file. ASS has been the most stable format in VLC for local playback; Japanese
+VTT ruby works best in asbplayer/browser study workflows.
 
 
 ## Why Learners Use It
@@ -29,7 +30,7 @@ Good fits:
 | Learn Japanese from anime or dramas | download `ja`, add furigana, merge with your native language |
 | Use Korean as your support language | fetch or translate `ko`, then stack `ja,ko` |
 | Learn English or Spanish from sitcoms | collect `en,es`, or translate missing tracks from another language |
-| Use asbplayer for sentence mining | output single-line WebVTT with ruby reading aids |
+| Use asbplayer for sentence mining | output single-line WebVTT for Japanese ruby furigana |
 | Clean up a Plex/Jellyfin library | scan folders, convert `.smi`, fill gaps, and merge per episode |
 
 
@@ -59,7 +60,7 @@ getsubtitle --interactive
 getsubtitle "https://www.themoviedb.org/movie/8392" -l ja,en
 
 # Medium: series, IMDb link — Midnight Diner, Japanese + Korean
-# with Japanese pronunciation guides for asbplayer
+# with Japanese pronunciation guides for asbplayer/browser ruby
 getsubtitle "https://www.imdb.com/title/tt6150576/" \
     -s 1 -e all -l ja,ko --reading ja:hiragana --format vtt
 
@@ -84,19 +85,30 @@ suggestions and can open likely sources in your browser. Disable that with
 
 ## Reading Aids
 
-Reading aids are phonetic guides inlined into the original-script line, in
-either ruby (VTT) or parenthetical (SRT/SMI/ASS) form.
+Reading aids are phonetic guides for the original script. Format choice matters:
+
+| Use case | Recommended format | Notes |
+|---|---|---|
+| Japanese furigana in asbplayer/browser study | `vtt` | Enable asbplayer `Subtitle HTML = Render` for ruby. |
+| Korean romanization | `ass` | Most reliable for romanization above Hangul. |
+| Mandarin pinyin / Cantonese jyutping | `ass` | Most reliable for readings above Chinese characters. |
+| Maximum player compatibility | `srt` | Parenthetical readings inline; no true ruby/stacking. |
+
+VTT ruby is valid, but player support is uneven. Use asbplayer/browser rendering
+for Japanese VTT ruby. For local playback, VLC has been most stable with ASS
+study stacks; IINA may flatten ruby or stack readings less predictably depending
+on the file and settings.
 
 | Language       | Modes                                | Status                                                       |
 |----------------|--------------------------------------|--------------------------------------------------------------|
 | Japanese (`ja`)  | `hiragana`, `katakana`, `romaji`   | Ships today (`pip install -e ".[furigana]"`)                |
 | Korean (`ko`)    | `revised`, `yale`                  | Ships today (`pip install -e ".[romanization-ko]"`)         |
 | Mandarin (`zh`)  | `marks`, `numbers`, `letters`      | Ships today (`pip install -e ".[romanization-zh]"`)         |
-| Cantonese (`yue`)| `numbers` (jyutping)               | Wired through; backend lands per ROADMAP                    |
+| Cantonese (`yue`)| `numbers` (jyutping)               | Ships today (`pip install -e ".[romanization-yue]"`)        |
 | Thai / Arabic / Hindi / Russian | Royal Thai / ALA-LC / IAST / ISO-9 | Wired through; backends land per ROADMAP        |
 
-`reading = "ja:hiragana,ko:revised,zh:marks"` in TOML; `--reading
-ja:hiragana,ko:revised,zh:marks` on the CLI.
+`reading = "ja:hiragana,ko:revised,zh:marks,yue:numbers"` in TOML;
+`--reading ja:hiragana,ko:revised,zh:marks,yue:numbers` on the CLI.
 
 ## Start Here
 
@@ -104,12 +116,16 @@ After installing, run:
 
 ```sh
 getsubtitle setup
+getsubtitle doctor
 getsubtitle -i
 ```
 
 `getsubtitle setup` asks what languages you know, what you are learning, what
 you watch, and where you watch it. Then it recommends providers, API keys,
 player settings, and optional dependencies with rough setup time.
+
+`getsubtitle doctor` checks API keys, reading-aid packages, ffmpeg/ffprobe,
+and Ollama before you get stuck mid-run.
 
 `getsubtitle -i` is the guided workflow builder. It asks a handful of
 questions, shows the command and reusable TOML workflow, then lets you Run,
@@ -217,8 +233,15 @@ If Keychain isn't available, set `JIMAKU_API_KEY`, `WYZIE_API_KEY`,
 `SUBDL_API_KEY`, `DEEPL_API_KEY`, `TMDB_API_KEY` in your shell instead.
 
 **asbplayer ruby furigana** — open asbplayer settings, then `Misc >
-Subtitles > Subtitle HTML = Render`, and use `--format vtt`. Most
-other players render VTT ruby out of the box.
+Subtitles > Subtitle HTML = Render`, and use `--format vtt`. This is mainly
+recommended for Japanese furigana. For Korean, Mandarin, and Cantonese reading
+aids, prefer `--format ass` / `--reading-format ass` so romanization appears
+above the original script more consistently.
+
+**Local player choice** — VLC has been the most stable player in testing for
+ASS study stacks. For Japanese VTT ruby, asbplayer/browser rendering is the
+better-tested path. IINA can play both formats, but ruby/stacked reading aids
+may render differently.
 
 ## Common commands
 
@@ -226,9 +249,10 @@ Each verb has its own focused `--help`:
 
 ```sh
 getsubtitle --help               # quick overview
+getsubtitle --help doctor        # install/key/dependency health check
 getsubtitle --help fetch         # URL or PATH download
 getsubtitle --help translate     # AI translation
-getsubtitle --help modify        # cleanup, SAMI→SRT, reading aids
+getsubtitle --help modify        # cleanup, SAMI→SRT, MKV extraction, reading aids
 getsubtitle --help merge         # stack languages into one file
 getsubtitle --help reading       # reading-aid spec (ja/ko/zh/…)
 getsubtitle --help interactive   # the -i wizard
@@ -315,11 +339,12 @@ getsubtitle merge FOLDER -l ja,ja-hiragana,en          # kanji + hiragana + Engl
 getsubtitle merge FOLDER -l ja,ja-hiragana,ja-romaji,en  # + romaji
 getsubtitle merge FOLDER -l ko,ko-revised,en           # 한글 + Revised + English
 getsubtitle merge FOLDER -l zh,zh-marks,en             # 漢字 + nǐ hǎo + English
+getsubtitle merge FOLDER -l yue,yue-numbers,en         # 廣東話 + jyutping + English
 ```
 
 Recognised pseudo-lang codes: `ja-hiragana`, `ja-katakana`,
 `ja-romaji`, `ko-revised`, `ko-yale`, `zh-marks`, `zh-numbers`,
-`zh-letters`. Each resolves to the matching
+`zh-letters`, `yue-numbers`. Each resolves to the matching
 `.{base}.{infix}-{mode}.{srt|vtt|ass}` reading-aid side file produced
 by `modify --reading {lang}:{mode}`. Output filenames collapse
 adjacent same-base tokens
@@ -331,6 +356,10 @@ To generate the variants and stack them in one call:
 ```sh
 getsubtitle "URL" --modify --reading ja:hiragana,ja:romaji \
     --merge -l ja,ja-hiragana,ja-romaji,en
+
+# Korean/Chinese/Cantonese: prefer ASS for readings above the original script
+getsubtitle modify FOLDER --reading ko:revised --reading-format ass
+getsubtitle merge FOLDER -l ko,ko-revised,en --format ass
 ```
 
 ### Supported URLs

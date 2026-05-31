@@ -1297,7 +1297,32 @@ def test_parse_episode_marker_recognises_formats():
     assert pem("Show.S1E7.en.srt") == (1, 7)
     assert pem("Show 1x07 en.srt") == (1, 7)
     assert pem("Show.S12E150.en.srt") == (12, 150)
+    assert pem("무빙.E01.230809.1080p.WEB-DL.ko.hi.srt") == (1, 1)
+    assert pem("Drama_E20_1080p.en.srt") == (1, 20)
     assert pem("no markers here.srt") is None
+
+
+def test_save_subtitle_season_all_uses_parseable_episode_marker():
+    import tempfile
+    from pathlib import Path
+    scope = MODULE["save_subtitle"].__globals__
+    saved_dl = scope["download_bytes"]
+    try:
+        scope["download_bytes"] = lambda url, headers=None: b"1\n00:00:01,000 --> 00:00:02,000\nhi\n"
+
+        class FakeSub:
+            name = "ep1.srt"
+            language = "ja"
+            url = "mock://"
+            download_headers = None
+
+        with tempfile.TemporaryDirectory() as d:
+            media = MODULE["MediaInfo"](source_url="x", provider="anilist", title="Show")
+            saved = MODULE["save_subtitle"](FakeSub(), Path(d), media, "all", "1")
+        assert saved[0].name == "Show - S01E01.ja.srt"
+        assert MODULE["parse_episode_marker"](saved[0].name) == (1, 1)
+    finally:
+        scope["download_bytes"] = saved_dl
 
 
 def test_is_combined_output_name_detects_hyphenated_lang():
@@ -1374,6 +1399,19 @@ def test_scan_srt_files_ignores_combined_and_furigana_outputs():
         "Show.S01E07.ko.mt.srt",
         "Show.S01E07.ko.srt",
     ]
+
+
+def test_scan_srt_files_ignores_macos_appledouble_sidecars_and_parses_bare_e():
+    import tempfile
+    from pathlib import Path
+    with tempfile.TemporaryDirectory() as d:
+        root = Path(d)
+        good = root / "무빙.E01.230809.1080p.WEB-DL.AAC2.0.H264-ApeachX.ko.hi.srt"
+        sidecar = root / ("._" + good.name)
+        good.write_text("1\n00:00:01,000 --> 00:00:02,000\n안녕\n", encoding="utf-8")
+        sidecar.write_bytes(b"\x00\x05\x16\x07Mac OS X metadata")
+        scanned = MODULE["scan_srt_files"]([root])
+    assert scanned == [(good, 1, 1, "ko", False)]
 
 
 def test_group_srts_prefers_non_mt_when_both_exist():
@@ -1616,6 +1654,9 @@ def test_combined_output_name_basic_and_furigana():
     assert n(Path("/x/MF Ghost - S01E07.ja.srt"), ["ja", "ko"], furigana=True) == "MF Ghost - S01E07.ja-furigana-ko.srt"
     # MT source stem still strips cleanly.
     assert n(Path("/x/Show.S01E07.ko.mt.srt"), ["ko", "ja"]) == "Show.S01E07.ko-ja.srt"
+    # Sonarr HI/CC tags should also be stripped, not doubled into
+    # Show.S01E07.ko.ko-en.srt.
+    assert n(Path("/x/Show.S01E07.ko.hi.srt"), ["ko", "en"]) == "Show.S01E07.ko-en.srt"
     p = MODULE["combined_output_path"]
     assert p(Path("/x/MF Ghost - S01E07.ja.srt"), ["ja", "ko"], furigana=True, fmt="vtt") == "MF Ghost - S01E07.ja-furigana-ko.vtt"
 
@@ -1647,15 +1688,18 @@ def test_variant_filename_pattern_matches_modify_outputs():
     # Japanese hiragana variant.
     ja_pat = pat("ja-hiragana")
     assert ja_pat.search("MF Ghost - S01E07.ja.furigana-hiragana.srt")
-    assert ja_pat.search("Show.S01E01.ja.furigana-hiragana.vtt")
+    assert ja_pat.search("Show.S01E01.ja.furigana-hiragana.ruby.vtt")
+    assert ja_pat.search("Show.S01E01.ja.furigana-hiragana.lines.ass")
     assert ja_pat.search("Show.S01E01.ja.furigana-hiragana.single-line.srt")
+    assert ja_pat.search("Show.S01E01.ja.furigana-hiragana.single-line.ruby.vtt")
     assert not ja_pat.search("Show.S01E01.ja.srt")
     assert not ja_pat.search("Show.S01E01.ja.furigana-romaji.srt")
     assert not ja_pat.search("Show.S01E01.ko.romanization-revised.srt")
     # Korean Revised Romanization.
     ko_pat = pat("ko-revised")
     assert ko_pat.search("Show.S01E01.ko.romanization-revised.srt")
-    assert ko_pat.search("Show.S01E01.ko.romanization-revised.vtt")
+    assert ko_pat.search("Show.S01E01.ko.hi.romanization-revised.single-line.ruby.vtt")
+    assert ko_pat.search("Show.S01E01.ko.romanization-revised.ruby.vtt")
     assert not ko_pat.search("Show.S01E01.ko.romanization-yale.srt")
     # Chinese pinyin (tone marks).
     zh_pat = pat("zh-marks")
@@ -1741,10 +1785,54 @@ def test_multi_variant_merge_end_to_end():
         out = root / "Show.S01E01.ja-hiragana-en.srt"
         assert out.exists(), f"expected merged file, got: {list(root.iterdir())}"
         content = out.read_text(encoding="utf-8")
-        # All three lines should appear in the merged cue.
+        # All three rows should appear in the merged cue; pseudo-lang rows
+        # are reading-only, not parenthetical duplicates of the original.
         assert "漢字を勉強します。" in content
-        assert "漢字（かんじ）を勉強します。" in content
+        assert "かんじ" in content
+        assert "漢字（かんじ）" not in content
         assert "I will study kanji." in content
+
+
+def test_multi_variant_merge_derives_clean_korean_reading_rows():
+    import tempfile
+    from pathlib import Path
+    with tempfile.TemporaryDirectory() as d:
+        root = Path(d)
+        (root / "Show.S01E01.ko.srt").write_text(
+            "1\n00:00:01,000 --> 00:00:03,000\n야 선생님한테\n",
+            encoding="utf-8",
+        )
+        (root / "Show.S01E01.en.srt").write_text(
+            "1\n00:00:01,000 --> 00:00:03,000\nHey, to your teacher?\n",
+            encoding="utf-8",
+        )
+        rc = MODULE["combine_main"]([
+            str(root), "-l", "ko-yale,ko,en",
+            "--format", "ass", "--sync", "loose", "--force", "--no-open-folder-prompt",
+        ])
+        assert rc == 0
+        out = root / "Show.S01E01.ko-yale-ko-en.ass"
+        assert out.exists()
+        body = out.read_text(encoding="utf-8")
+    assert "ya sensayngnimhanthey" in body
+    assert "야 선생님한테" in body
+    assert "Hey, to your teacher?" in body
+    assert "야（" not in body
+    assert "선생님한테（" not in body
+
+
+def test_serialize_ass_scales_font_for_four_line_study_stack():
+    cues = [
+        MODULE["SrtCue"](
+            index="1",
+            time_line="00:00:01,000 --> 00:00:03,000",
+            text_lines=["revised", "yale", "한국어", "English"],
+        )
+    ]
+    body = MODULE["serialize_ass"](cues)
+    assert "PlayResX: 1920" in body
+    assert "PlayResY: 1080" in body
+    assert "Style: Default,Arial,30," in body
 
 
 def test_multi_variant_master_default_prefers_base_over_pseudo():
@@ -3844,6 +3932,32 @@ def test_modify_main_combines_strip_and_flatten():
     assert "《こんな所を　フルスロットルで…。" in body
 
 
+def test_modify_main_episode_filter_processes_only_requested_episode():
+    import tempfile
+    from pathlib import Path
+    with _isolated_config(None):
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            ep1 = root / "Show.S01E01.ja.srt"
+            ep2 = root / "Show.S01E02.ja.srt"
+            ep1.write_text(
+                "1\n00:00:01,000 --> 00:00:02,000\nこんにちは➡\n",
+                encoding="utf-8",
+            )
+            ep2.write_text(
+                "1\n00:00:01,000 --> 00:00:02,000\nこんばんは➡\n",
+                encoding="utf-8",
+            )
+            rc = MODULE["modify_main"]([
+                str(root), "-s", "1", "-e", "1", "--strip-cc-noise",
+            ])
+            assert rc == 0
+            ep1_body = ep1.read_text(encoding="utf-8")
+            ep2_body = ep2.read_text(encoding="utf-8")
+    assert "➡" not in ep1_body
+    assert "➡" in ep2_body
+
+
 def test_modify_main_dry_run_writes_nothing():
     import tempfile
     from pathlib import Path
@@ -4514,6 +4628,62 @@ def test_pipeline_dispatch_runs_fetch_then_merge_in_canonical_order():
         scope["combine_main"] = saved_combine
 
 
+def test_pipeline_url_fetch_passes_shared_output_and_resolves_anilist_folder():
+    import io, contextlib
+    captured: dict[str, list[str]] = {}
+    scope = MODULE["pipeline_main"].__globals__
+    saved_fetch = scope["fetch_main"]
+    saved_modify = scope["modify_main"]
+    saved_combine = scope["combine_main"]
+    saved_info = scope["fetch_anilist_info"]
+
+    def fake_fetch(argv):
+        captured["fetch"] = list(argv)
+        return 0
+
+    def fake_modify(argv):
+        captured["modify"] = list(argv)
+        return 0
+
+    def fake_combine(argv):
+        captured["merge"] = list(argv)
+        return 0
+
+    class Info:
+        title = "MF Ghost 2nd Season"
+        title_aliases = []
+        episodes = 12
+        format = "TV"
+        def is_movie(self):
+            return False
+
+    scope["fetch_main"] = fake_fetch
+    scope["modify_main"] = fake_modify
+    scope["combine_main"] = fake_combine
+    scope["fetch_anilist_info"] = lambda _id: Info()
+    try:
+        with _isolated_config(None), contextlib.redirect_stdout(io.StringIO()):
+            rc = MODULE["main"]([
+                "--fetch", "https://anilist.co/anime/171642/",
+                "--season", "all", "--episode", "all",
+                "--modify", "--strip-cc-noise",
+                "--merge", "--languages", "ja,en", "--format", "vtt",
+                "--output", "~/Downloads/GetSubtitle",
+            ])
+        assert rc == 0
+    finally:
+        scope["fetch_main"] = saved_fetch
+        scope["modify_main"] = saved_modify
+        scope["combine_main"] = saved_combine
+        scope["fetch_anilist_info"] = saved_info
+
+    assert "--output" in captured["fetch"]
+    assert captured["fetch"][captured["fetch"].index("--output") + 1] == "~/Downloads/GetSubtitle"
+    expected = "/Users/mba/Downloads/GetSubtitle/MF Ghost 2nd Season/All Seasons"
+    assert captured["modify"][0] == expected
+    assert captured["merge"][0] == expected
+
+
 def test_pipeline_translate_rewrites_engine_to_canonical_flags():
     # `--translate ollama:qwen3:8b` should reach translate_main as
     # `--engine ollama --model qwen3:8b`.
@@ -4863,22 +5033,22 @@ def test_modify_main_routes_ja_romanization_through_furigana_path():
 
 
 def test_modify_main_rejects_still_deferred_romanization_with_clear_error():
-    """Languages whose backend hasn't shipped yet (Cantonese, Thai, Arabic,
-    Hindi, Russian) must raise a CliError pointing at the roadmap.
-    Japanese, Korean, and Chinese (Mandarin) all ship and must NOT raise."""
+    """Languages whose backend hasn't shipped yet (Thai, Arabic, Hindi,
+    Russian) must raise a CliError pointing at the roadmap. Japanese,
+    Korean, Mandarin, and Cantonese all ship and must NOT raise."""
     import io, contextlib, tempfile
     CliError = MODULE["CliError"]
     with tempfile.TemporaryDirectory() as tmp:
-        # yue:numbers is still deferred — should raise.
+        # th:royal-thai is still deferred — should raise.
         with _isolated_config(None), contextlib.redirect_stdout(io.StringIO()):
             try:
-                MODULE["modify_main"]([tmp, "--reading", "yue:numbers"])
+                MODULE["modify_main"]([tmp, "--reading", "th:royal-thai"])
             except CliError as e:
                 msg = str(e).lower()
                 assert "not yet implemented" in msg
-                assert "yue" in msg
+                assert "th" in msg
             else:
-                raise AssertionError("expected CliError for yue:numbers")
+                raise AssertionError("expected CliError for th:royal-thai")
 
 
 def test_toml_modify_convert_none_omits_flag():
@@ -6846,6 +7016,23 @@ def test_wizard_reading_aid_emits_canonical_reading_flag():
     assert "romanization =" not in toml
 
 
+def test_wizard_multiple_japanese_readings_expand_merge_variants():
+    state = _wizard_state(
+        source_title="MF Ghost 2nd Season",
+        languages=["ja", "en"],
+        order=["ja", "en"],
+        reading_aids=["ja:hiragana", "ja:katakana", "ja:romaji"],
+    )
+    cli = MODULE["_wizard_emit_cli"](state)
+    assert "--title" in cli
+    assert cli[cli.index("--title") + 1] == "MF Ghost 2nd Season"
+    merge_idx = cli.index("--merge")
+    merge_langs = cli[merge_idx:][cli[merge_idx:].index("--languages") + 1]
+    assert merge_langs == "ja-hiragana,ja-katakana,ja-romaji,ja,en"
+    toml = MODULE["_wizard_emit_toml"](state)
+    assert 'languages = "ja-hiragana,ja-katakana,ja-romaji,ja,en"' in toml
+
+
 def test_wizard_asbplayer_preset_emits_single_line_strip_cc_vtt():
     """Q8 'yes' implies single_line + strip_cc_noise; Q9 with ruby aids
     defaults to vtt. Both should appear in CLI + TOML."""
@@ -6942,10 +7129,10 @@ def test_wizard_single_language_omits_merge_block():
 
 
 def test_wizard_dependency_probe_flags_deferred_backends_as_warn():
-    """Languages whose backend still isn't shipped (Cantonese, Thai,
-    Arabic, Hindi, Russian) surface in the probe as warn-level so the
-    wizard still saves a workflow the user can re-run later. ja/ko/zh
-    each get their own backend-specific block or pass — not 'deferred'."""
+    """Languages whose backend still isn't shipped (Thai, Arabic, Hindi,
+    Russian) surface in the probe as warn-level so the wizard still saves
+    a workflow the user can re-run later. ja/ko/zh/yue each get their own
+    backend-specific block or pass — not 'deferred'."""
     state = _wizard_state(
         languages=["yue", "th", "en"],
         order=["yue", "th", "en"],
@@ -6953,9 +7140,11 @@ def test_wizard_dependency_probe_flags_deferred_backends_as_warn():
         mt_engine="",  # avoid ollama/deepl side checks
     )
     gaps = MODULE["_wizard_probe_dependencies"](state)
-    deferred = [g for g in gaps if "yue:numbers" in g[1] or "th:royal-thai" in g[1]]
+    deferred = [g for g in gaps if "th:royal-thai" in g[1]]
     assert deferred, "deferred backends should surface in the probe"
     assert all(g[0] == "warn" for g in deferred)
+    yue_deferred = [g for g in gaps if "yue:numbers" in g[1] and g[0] == "warn"]
+    assert not yue_deferred, "yue:numbers should be a dependency block/pass, not deferred"
 
 
 def test_wizard_dependency_probe_flags_deepl_missing_key_as_block():
@@ -7183,6 +7372,47 @@ def test_wizard_q0_steps_accepts_numbers_and_all_alias():
             fn_g["input"] = saved
 
 
+def test_wizard_languages_offer_modify_for_korean_reading_aids():
+    """Fetch-only + Korean should offer to add Modify so reading aids are
+    not silently skipped."""
+    import contextlib
+    import io
+    s = MODULE["_WizardState"](steps={"fetch"})
+    fn_g = MODULE["_wizard_q2_languages"].__globals__
+    saved_prompt = fn_g["_wizard_prompt"]
+    saved_yesno = fn_g["_wizard_yesno"]
+    try:
+        fn_g["_wizard_prompt"] = lambda _q, _d=None: "ko,en"
+        fn_g["_wizard_yesno"] = lambda _q, default=True: True
+        with contextlib.redirect_stdout(io.StringIO()) as buf:
+            MODULE["_wizard_q2_languages"](s)
+        assert s.languages == ["ko", "en"]
+        assert "modify" in s.steps
+        assert "Korean romanization" in buf.getvalue()
+    finally:
+        fn_g["_wizard_prompt"] = saved_prompt
+        fn_g["_wizard_yesno"] = saved_yesno
+
+
+def test_wizard_languages_can_decline_modify_reading_aids():
+    import contextlib
+    import io
+    s = MODULE["_WizardState"](steps={"fetch"})
+    fn_g = MODULE["_wizard_q2_languages"].__globals__
+    saved_prompt = fn_g["_wizard_prompt"]
+    saved_yesno = fn_g["_wizard_yesno"]
+    try:
+        fn_g["_wizard_prompt"] = lambda _q, _d=None: "ja,en"
+        fn_g["_wizard_yesno"] = lambda _q, default=True: False
+        with contextlib.redirect_stdout(io.StringIO()):
+            MODULE["_wizard_q2_languages"](s)
+        assert s.languages == ["ja", "en"]
+        assert s.steps == {"fetch"}
+    finally:
+        fn_g["_wizard_prompt"] = saved_prompt
+        fn_g["_wizard_yesno"] = saved_yesno
+
+
 def test_wizard_emit_cli_merge_only_drops_fetch_and_translate():
     """Scenario: user dropped a folder of .ja.srt/.en.srt and just wants
     to merge them into one VTT. The emitted CLI is a PATH-form merge
@@ -7200,9 +7430,9 @@ def test_wizard_emit_cli_merge_only_drops_fetch_and_translate():
     assert "--fetch" not in cli
     assert "--translate" not in cli
     assert "--modify" not in cli
-    assert "--merge" in cli
+    assert "getsubtitle merge" in cli
     assert "--format vtt" in cli
-    assert cli.startswith("getsubtitle /Users/mba/Downloads/Show")
+    assert cli.startswith("getsubtitle merge /Users/mba/Downloads/Show")
 
 
 def test_wizard_emit_toml_merge_only_omits_translate_and_modify_sections():
@@ -7215,7 +7445,9 @@ def test_wizard_emit_toml_merge_only_omits_translate_and_modify_sections():
         steps={"merge"},
     )
     toml_text = MODULE["_wizard_emit_toml"](s)
-    assert "[fetch]" in toml_text   # carries source = "PATH"
+    assert "[fetch]" not in toml_text
+    assert "[output]" in toml_text   # carries local-only source target
+    assert 'target = "/tmp/Show"' in toml_text
     assert "[translate]" not in toml_text
     assert "[modify]" not in toml_text
     assert "[merge]" in toml_text
@@ -7237,9 +7469,84 @@ def test_wizard_emit_cli_modify_only_on_single_file():
     assert "--fetch" not in cli
     assert "--merge" not in cli
     assert "--translate" not in cli
-    assert "--modify" in cli
+    assert "getsubtitle modify" in cli
     assert "--reading ja:hiragana" in cli
-    assert cli.startswith("getsubtitle /tmp/ep01.ja.srt")
+    assert cli.startswith("getsubtitle modify /tmp/ep01.ja.srt")
+
+
+def test_wizard_emit_cli_modify_merge_uses_source_pipeline_flag():
+    s = MODULE["_WizardState"](
+        source="/tmp/Show",
+        source_kind="path",
+        languages=["ko", "en"],
+        order=["ko", "en"],
+        master="ko",
+        reading_aids=["ko:yale"],
+        asbplayer=True,
+        format="vtt",
+        steps={"modify", "merge"},
+    )
+    cli = MODULE["_wizard_emit_cli_string"](s)
+    assert cli.startswith("getsubtitle --source /tmp/Show")
+    assert "--modify" in cli
+    assert "--merge" in cli
+    assert "/tmp/Show --languages" not in cli
+
+
+def test_wizard_local_video_file_becomes_parent_folder_with_episode_filter():
+    import contextlib
+    import io
+    import tempfile
+    from pathlib import Path
+    with tempfile.TemporaryDirectory() as d:
+        root = Path(d)
+        video = root / "Moving.E01.1080p.WEB-DL.mp4"
+        video.write_bytes(b"")
+        (root / "Moving.E01.ko.srt").write_text(
+            "1\n00:00:01,000 --> 00:00:02,000\n안녕\n", encoding="utf-8"
+        )
+        (root / "Moving.E01.en.srt").write_text(
+            "1\n00:00:01,000 --> 00:00:02,000\nhi\n", encoding="utf-8"
+        )
+        s = MODULE["_WizardState"](steps={"modify", "merge"})
+        fn_g = MODULE["_wizard_q1_source"].__globals__
+        saved_prompt = fn_g["_wizard_prompt"]
+        try:
+            fn_g["_wizard_prompt"] = lambda _q, default=None: str(video)
+            with contextlib.redirect_stdout(io.StringIO()) as buf:
+                MODULE["_wizard_q1_source"](s)
+            assert s.source == str(root)
+            assert s.season == "1"
+            assert s.episode == "1"
+            assert "Selected episode: S01E01" in buf.getvalue()
+        finally:
+            fn_g["_wizard_prompt"] = saved_prompt
+
+
+def test_wizard_emit_cli_modify_merge_includes_local_episode_filter():
+    s = MODULE["_WizardState"](
+        source="/tmp/Moving/Season 01",
+        source_kind="path",
+        languages=["ko", "en"],
+        order=["ko", "en"],
+        season="1",
+        episode="1",
+        reading_aids=["ko:yale"],
+        asbplayer=True,
+        format="vtt",
+        steps={"modify", "merge"},
+    )
+    cli = MODULE["_wizard_emit_cli"](s)
+    modify_idx = cli.index("--modify")
+    merge_idx = cli.index("--merge")
+    assert cli[modify_idx:merge_idx].count("--season") == 1
+    assert cli[modify_idx:merge_idx].count("--episode") == 1
+    assert cli[modify_idx:merge_idx][cli[modify_idx:merge_idx].index("--episode") + 1] == "1"
+    assert "--season" in cli[merge_idx:]
+    assert "--episode" in cli[merge_idx:]
+    toml = MODULE["_wizard_emit_toml"](s)
+    assert toml.count('season = "1"') == 2
+    assert toml.count('episode = "1"') == 2
 
 
 def test_wizard_emit_cli_translate_only_path_form():
@@ -7255,7 +7562,8 @@ def test_wizard_emit_cli_translate_only_path_form():
     assert "--fetch" not in cli
     assert "--merge" not in cli
     assert "--modify" not in cli
-    assert "--translate deepl" in cli
+    assert cli.startswith("getsubtitle translate /tmp/Show")
+    assert "--engine deepl" in cli
 
 
 def test_parse_episode_marker_treats_movie_filenames_as_zero_zero():
@@ -7411,16 +7719,16 @@ def test_anilist_candidate_movie_detection():
 
 
 def test_wizard_deferred_reading_aids_dropped_at_run():
-    """Run-action strips yue/th/ar/hi/ru reading-aid entries so modify
+    """Run-action strips th/ar/hi/ru reading-aid entries so modify
     doesn't crash; SAVE flow preserves them in the emitted TOML."""
     state = MODULE["_WizardState"](
         reading_aids=["ja:hiragana", "yue:numbers", "th:royal-thai"]
     )
-    shipped = {"ja", "ko", "zh"}
+    shipped = {"ja", "ko", "zh", "yue"}
     kept = [s for s in state.reading_aids if s.split(":", 1)[0] in shipped]
     dropped = [s for s in state.reading_aids if s.split(":", 1)[0] not in shipped]
-    assert kept == ["ja:hiragana"]
-    assert dropped == ["yue:numbers", "th:royal-thai"]
+    assert kept == ["ja:hiragana", "yue:numbers"]
+    assert dropped == ["th:royal-thai"]
     text = MODULE["_wizard_emit_toml"](state)
     assert "yue:numbers" in text
     assert "th:royal-thai" in text
@@ -7507,9 +7815,9 @@ def test_wizard_q8_preset_description_is_short():
     assert len(body) <= 3, f"Q9 body too long: {body!r}"
 
 
-def test_wizard_q9_format_vtt_mentions_vlc():
-    """Q10 b) VTT description must mention VLC explicitly — it's the
-    most common player among non-developer users."""
+def test_wizard_q9_format_describes_vtt_and_ass_player_fit():
+    """Q11 should steer VTT toward asbplayer/browser ruby and ASS toward
+    local stacked reading-aid playback."""
     import io, contextlib
     fn_g = MODULE["_wizard_q9_format"].__globals__
     saved_input = fn_g.get("input")
@@ -7523,7 +7831,10 @@ def test_wizard_q9_format_vtt_mentions_vlc():
         if saved_input is not None:
             fn_g["input"] = saved_input
     out = buf.getvalue()
-    assert "VLC" in out, "Q10 VTT description should mention VLC"
+    assert "asbplayer/browser" in out
+    assert "local-player ruby support is uneven" in out
+    assert "ASS" in out
+    assert "Korean/Chinese" in out
 
 
 def test_wizard_reading_aid_labels_format_agnostic():
@@ -7724,6 +8035,117 @@ def test_hanzi_reading_pair_lines_returns_aligned_rows():
         restore()
 
 
+def _install_fake_pycantonese():
+    """Patch the Cantonese backend with a tiny deterministic fake."""
+    import types
+    fn = MODULE["_pycantonese_module"]
+    g = fn.__globals__
+    saved = g.get("_PYCANTONESE_MODULE")
+    table = {
+        "廣": "gwong2",
+        "東": "dung1",
+        "話": "waa2",
+        "你": "nei5",
+        "好": "hou2",
+    }
+    fake = types.SimpleNamespace(
+        characters_to_jyutping=lambda text: [table.get(ch, "") for ch in text]
+    )
+    g["_PYCANTONESE_MODULE"] = fake
+    def restore():
+        g["_PYCANTONESE_MODULE"] = saved
+    return restore
+
+
+def test_romanize_cantonese_numbers_with_mock_backend():
+    restore = _install_fake_pycantonese()
+    try:
+        fn = MODULE["romanize_cantonese"]
+        assert fn("廣東話", "numbers") == "gwong2 dung1 waa2"
+        assert fn("Hi 你好", "numbers") == "Hi nei5 hou2"
+        assert fn("Hello", "numbers") == "Hello"
+    finally:
+        restore()
+
+
+def test_text_with_cantonese_readings_and_ruby():
+    restore = _install_fake_pycantonese()
+    try:
+        assert MODULE["text_with_cantonese_readings"]("廣東話", "numbers") == "廣東話（gwong2 dung1 waa2）"
+        ruby = MODULE["text_with_cantonese_ruby"]("你好", "numbers")
+        assert ruby == "<ruby>你好<rt>nei5 hou2</rt></ruby>"
+    finally:
+        restore()
+
+
+def test_generate_cantonese_romanization_walks_only_yue_srt():
+    import tempfile
+    from pathlib import Path
+    restore = _install_fake_pycantonese()
+    fn = MODULE["generate_cantonese_romanization"]
+    try:
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            yue_path = root / "Show.S01E01.yue.srt"
+            yue_path.write_text(
+                "1\n00:00:01,000 --> 00:00:03,000\n廣東話\n",
+                encoding="utf-8",
+            )
+            zh_path = root / "Show.S01E01.zh.srt"
+            zh_path.write_text(
+                "1\n00:00:01,000 --> 00:00:03,000\n普通話\n",
+                encoding="utf-8",
+            )
+            out = fn([yue_path, zh_path], "numbers", formats={"srt", "vtt"})
+            names = sorted(p.name for p in out)
+            assert names == [
+                "Show.S01E01.yue.romanization-numbers.asb.srt",
+                "Show.S01E01.yue.romanization-numbers.ruby.vtt",
+            ]
+            assert "廣東話（gwong2 dung1 waa2）" in out[0].read_text(encoding="utf-8")
+    finally:
+        restore()
+
+
+def test_plan_mkv_subtitle_extraction_skips_image_streams_and_names_text_outputs():
+    import tempfile
+    from pathlib import Path
+    fn = MODULE["plan_mkv_subtitle_extraction"]
+    g = fn.__globals__
+    saved_probe = g["_ffprobe_subtitle_streams"]
+    try:
+        def fake_probe(_path):
+            return [
+                {"index": 2, "codec_name": "subrip", "tags": {"language": "kor"}},
+                {"index": 3, "codec_name": "ass", "tags": {"language": "jpn"}},
+                {"index": 4, "codec_name": "hdmv_pgs_subtitle", "tags": {"language": "eng"}},
+            ]
+        g["_ffprobe_subtitle_streams"] = fake_probe
+        with tempfile.TemporaryDirectory() as td:
+            video = Path(td) / "Episode.mkv"
+            video.write_bytes(b"")
+            plan, notes = fn([video])
+            assert [(p[1], p[2], p[3], p[4].name) for p in plan] == [
+                (2, "ko", "subrip", "Episode.ko.srt"),
+                (3, "ja", "ass", "Episode.ja.ass"),
+            ]
+            assert any("image subtitle" in note for note in notes)
+    finally:
+        g["_ffprobe_subtitle_streams"] = saved_probe
+
+
+def test_doctor_main_runs_without_network_or_provider_calls():
+    import contextlib
+    import io
+    with contextlib.redirect_stdout(io.StringIO()) as buf:
+        rc = MODULE["doctor_main"]([])
+    assert rc in (0, 1)
+    out = buf.getvalue()
+    assert "getsubtitle doctor" in out
+    assert "Python" in out
+    assert "ffmpeg" in out
+
+
 def test_generate_chinese_romanization_walks_only_zh_srt():
     """Orchestrator only touches .zh.srt files; emits one side file per
     requested format. Non-.zh and non-.srt paths skipped."""
@@ -7775,8 +8197,18 @@ def test_apply_reading_to_args_routes_ja_ko_zh():
     )
     fn(args)
     assert args.ja_reading == "hiragana"
+    assert args.ja_readings == ["hiragana"]
     assert args.ko_reading == "revised"
+    assert args.ko_readings == ["revised"]
     assert args.zh_reading == "marks"
+    args_multi = argparse.Namespace(reading="ja:hiragana,ja:katakana,ja:romaji")
+    fn(args_multi)
+    assert args_multi.ja_reading == "hiragana"
+    assert args_multi.ja_readings == ["hiragana", "katakana", "romaji"]
+    args_multi_ko = argparse.Namespace(reading="ko:revised,ko:yale")
+    fn(args_multi_ko)
+    assert args_multi_ko.ko_reading == "revised"
+    assert args_multi_ko.ko_readings == ["revised", "yale"]
     # Verify zh:numbers and zh:letters round-trip too.
     args2 = argparse.Namespace(
         reading="zh:numbers",
@@ -7793,20 +8225,20 @@ def test_apply_reading_to_args_routes_ja_ko_zh():
 
 
 def test_apply_reading_to_args_still_rejects_deferred_languages():
-    """Languages whose backend still isn't shipped (yue, th, ar, hi, ru)
+    """Languages whose backend still isn't shipped (th, ar, hi, ru)
     must continue to raise CliError."""
     import argparse
     fn = MODULE["_apply_reading_to_args"]
     args = argparse.Namespace(
-        reading="yue:numbers",
+        reading="th:royal-thai",
         ja_reading=None, ko_reading=None, zh_reading=None,
     )
     try:
         fn(args)
     except MODULE["CliError"] as e:
-        assert "yue:numbers" in str(e)
+        assert "th:royal-thai" in str(e)
     else:
-        raise AssertionError("expected CliError for yue (still deferred)")
+        raise AssertionError("expected CliError for th (still deferred)")
 
 
 def test_setup_recommendations_zh_learner_is_selected_by_default():
@@ -8037,10 +8469,29 @@ def test_generate_korean_romanization_walks_only_ko_srt():
             assert p.exists()
 
 
+def test_korean_stacked_ass_writes_text_before_reading_for_player_stacking():
+    import tempfile
+    from pathlib import Path
+    fn = MODULE["srt_to_korean_pair_lines_ass"]
+    with tempfile.TemporaryDirectory() as td:
+        src = Path(td) / "Show.S01E01.ko.srt"
+        src.write_text(
+            "1\n00:00:01,000 --> 00:00:03,000\n야 선생님한테\n",
+            encoding="utf-8",
+        )
+        out = fn(src, "yale", single_line=True)
+        dialogue_lines = [
+            line for line in out.read_text(encoding="utf-8").splitlines()
+            if line.startswith("Dialogue:")
+        ]
+    assert ",Text," in dialogue_lines[0]
+    assert ",Reading," in dialogue_lines[1]
+
+
 def test_apply_reading_to_args_routes_ja_and_ko():
     """The arg-routing helper sets args.ja_reading (for ja),
-    args.ko_reading (for ko), and args.zh_reading
-    (for zh). All three ship today; only yue/th/ar/hi/ru still raise."""
+    args.ko_reading (for ko), args.zh_reading (for zh), and
+    args.yue_reading (for yue)."""
     import argparse
     fn = MODULE["_apply_reading_to_args"]
     # ja+ko+zh spec — all three populate their own attributes.
@@ -8059,15 +8510,22 @@ def test_apply_reading_to_args_routes_ja_and_ko():
     )
     fn(args)
     assert args.ko_reading == "yale"
-    # Still-deferred language raises.
+    # yue:numbers → numbers.
     args = argparse.Namespace(
         reading="yue:numbers",
+        ja_reading=None, ko_reading=None, zh_reading=None,
+    )
+    fn(args)
+    assert args.yue_reading == "numbers"
+    # Still-deferred language raises.
+    args = argparse.Namespace(
+        reading="th:royal-thai",
         ja_reading=None, ko_reading=None, zh_reading=None,
     )
     try:
         fn(args)
     except MODULE["CliError"] as e:
-        assert "yue:numbers" in str(e)
+        assert "th:royal-thai" in str(e)
     else:
         raise AssertionError("expected CliError for still-deferred language")
 
@@ -8590,6 +9048,44 @@ def test_provider_debug_record_counts_sources_flags_and_formats():
     assert record.ai_count == 1
     assert record.hi_count == 1
     assert record.dubbed_count == 1
+
+
+def test_download_planned_subtitles_continues_after_partial_failure():
+    import contextlib
+    import io
+    import tempfile
+    from pathlib import Path
+
+    fn = MODULE["download_planned_subtitles"]
+    SubtitleFile = MODULE["SubtitleFile"]
+    MediaInfo = MODULE["MediaInfo"]
+    CliError = MODULE["CliError"]
+    g = fn.__globals__
+    saved_save_subtitle = g["save_subtitle"]
+
+    def fake_save_subtitle(sub, dest_dir, _media, _season, _episode):
+        if sub.language == "en":
+            raise CliError("HTTP 502 downloading https://example.test/en.srt")
+        dest_dir.mkdir(parents=True, exist_ok=True)
+        out = dest_dir / f"saved.{sub.language}.srt"
+        out.write_text("1\n00:00:01,000 --> 00:00:02,000\nhi\n", encoding="utf-8")
+        return [out]
+
+    try:
+        g["save_subtitle"] = fake_save_subtitle
+        planned = [
+            ("ja", "1", SubtitleFile(provider="jimaku", language="ja", name="ja.srt", url="https://example.test/ja.srt")),
+            ("en", "1", SubtitleFile(provider="wyzie", language="en", name="en.srt", url="https://example.test/en.srt")),
+        ]
+        media = MediaInfo(source_url="https://example.test/show", provider="anilist", title="Show", season="1")
+        with tempfile.TemporaryDirectory() as td, contextlib.redirect_stdout(io.StringIO()):
+            saved, failures = fn(planned, base=Path(td), media=media, season="1", layout="archive")
+        assert [p.name for p in saved] == ["saved.ja.srt"]
+        assert len(failures) == 1
+        assert "en ep1: download failed from wyzie" in failures[0]
+        assert "HTTP 502" in failures[0]
+    finally:
+        g["save_subtitle"] = saved_save_subtitle
 
 
 def test_source_smoke_scripts_support_json_output():

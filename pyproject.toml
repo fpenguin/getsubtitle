@@ -7,7 +7,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "getsubtitle"
-version = "1.4.0"
+version = "1.9.1"
 description = "Download and prepare subtitles for streaming and local media language learning workflows."
 readme = "README.md"
 requires-python = ">=3.10"
@@ -44,6 +44,10 @@ romanization-ko = ["korean-romanizer>=0.25", "g2pk>=0.9.4"]
 # lookup, polyphones, and built-in tone sandhi. Three modes share one
 # library: `zh:marks` (nǐ hǎo), `zh:numbers` (ni3 hao3), `zh:letters` (ni hao).
 romanization-zh = ["pypinyin>=0.51"]
+# Cantonese Jyutping. PyCantonese provides a lexicon-backed
+# characters_to_jyutping() helper; without it, getsubtitle reports a
+# friendly install hint instead of guessing pronunciations.
+romanization-yue = ["pycantonese>=4.3"]
 dev = ["pytest>=8", "build>=1", "twine>=5"]
 
 [project.scripts]

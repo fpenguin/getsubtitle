@@ -1,7 +1,32 @@
-# Roadmap  · v1.9
+# Roadmap  · v1.9.x -> v2.0
 
 What ships in v1.0, what's new in v1.1 / v1.2 / v1.3 / v1.4 / v1.5 /
 v1.6 / v1.7 / v1.8 / v1.9, what's experimental, and what's on the horizon.
+
+## Versioning direction
+
+After v1.9, use smaller release steps for incremental improvements:
+
+- **v1.9.1**: small feature, docs, source, and UX batches that do not
+  change the core workflow.
+- **v1.9.1.1**: very small follow-ups, help text, tests, and bug fixes.
+- **v2.0**: the next larger behavior milestone, aimed at an AI-based
+  subtitle sync engine.
+
+## v1.9.1 — what's new
+
+- **`getsubtitle doctor`.** A quick install-health check for Python,
+  config paths, optional reading-aid packages, ffmpeg/ffprobe, Ollama,
+  and provider API keys.
+- **Better missing-subtitle guidance.** Fetch now prints a gap report with
+  next steps: manual community search, where to place downloaded files,
+  machine-translation fallback, and the merge command to run afterwards.
+- **Embedded subtitle extraction.** `getsubtitle modify PATH
+  --extract-mkv-subs` uses local `ffprobe` + `ffmpeg` to extract embedded
+  text subtitle streams from MKV/video files. Image subtitle streams such
+  as PGS are reported and skipped.
+- **Cantonese Jyutping reading aids.** `--reading yue:numbers` now ships
+  via the optional `romanization-yue` extra (`pycantonese`).
 
 ## v1.9 — what's new
 
@@ -276,15 +301,15 @@ v1.6 / v1.7 / v1.8 / v1.9, what's experimental, and what's on the horizon.
 
 ### Tests
 
-- 475 automated tests covering URL parsing, provider response shapes, TMDB / AniList resolution, SAMI parsing, VTT/ASS input parsing, MT helpers + auto_load/auto_unload, merge with format hints, pipeline orchestration, `--config` CLI overrides, config validation, source smoke diagnostics, help system, and dispatch routing.
+- 499 automated tests covering URL parsing, provider response shapes, TMDB / AniList resolution, SAMI parsing, VTT/ASS input parsing, MT helpers + auto_load/auto_unload, merge with format hints, pipeline orchestration, `--config` CLI overrides, config validation, source smoke diagnostics, help system, and dispatch routing.
 
 ## Planned (post-v1.0)
 
 - **Reading-aid expansion (international)**: the v1.1 `[modify].reading`
   schema grows per language. Shipped: Japanese (furigana, v1.0), Korean
   (Revised + G2P + Yale, v1.2), Mandarin (pinyin marks / numbers /
-  letters, v1.3). Still to come: Cantonese jyutping (`yue:numbers`),
-  Thai (`th:royal-thai`), Arabic (`ar:ala-lc`), Hindi/Sanskrit
+  letters, v1.3), Cantonese Jyutping (`yue:numbers`, v1.9.1). Still to
+  come: Thai (`th:royal-thai`), Arabic (`ar:ala-lc`), Hindi/Sanskrit
   (`hi:iast`), Russian (`ru:iso-9`), and Greek/Persian/Hebrew. Each
   language ships as a separate optional pip extra (`romanization-yue`,
   `romanization-th`, …) so users only install the backends they need.
@@ -292,11 +317,30 @@ v1.6 / v1.7 / v1.8 / v1.9, what's experimental, and what's on the horizon.
   `.furigana-{mode}` for back-compat).
 - **`--pipeline run NAME`** registry: name a pipeline TOML and run it by short name without typing the path.
 
-## Planned: merge improvements (post-v2.0)
+## Planned: v1.9.x smaller steps
 
-- Semantic alignment fallback when time-overlap matching is weak (`--sync smart --semantic-engine ollama`).
 - Optional subtitle labels and ordering for combined files.
 - Integration tests using temporary SRT/VTT/SMI folders for end-to-end merge output.
+
+## v2.0 target: AI-based subtitle sync engine
+
+Aim: make multi-language subtitle stacks line up better when subtitle
+files come from different releases, cuts, intros, ad breaks, fansub
+timings, or streaming sources.
+
+- Add an AI-assisted sync mode such as `--sync ai` or expanded
+  `--sync smart`.
+- Keep the deterministic matcher as the default until AI sync is proven.
+- Start with a deterministic pre-pass: normalize text, split or merge
+  cues where needed, find anchor windows, and detect simple offsets or
+  drift.
+- Use AI or semantic matching only for low-confidence windows instead
+  of blindly rewriting the whole file.
+- Prefer a local-first engine path such as Ollama, with any cloud engine
+  requiring explicit opt-in.
+- Print a confidence report per episode, including skipped sections and
+  before/after timing diagnostics.
+- Never overwrite source subtitle files; write new synced outputs only.
 
 ## Intentionally out of scope
 

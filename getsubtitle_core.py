@@ -3712,13 +3712,35 @@ def save_subtitle(sub: SubtitleFile, dest_dir: Path, media: MediaInfo, season: s
         # convention would otherwise emit.
         filename = f"{show}.{sub.language}{ext}"
     else:
-        ep = "all" if episode == "all" else "00" if episode == "auto" else f"{int(episode):02d}"
-        ss = "all" if season == "all" else "00" if season == "auto" else f"{int(season):02d}"
+        ep = "00" if episode in {"all", "auto"} else f"{int(episode):02d}"
+        ss = "01" if season == "all" else "00" if season == "auto" else f"{int(season):02d}"
         filename = f"{show} - S{ss}E{ep}.{sub.language}{ext}"
     out = dest_dir / filename
     out.write_bytes(raw)
     saved.append(out)
     return saved
+
+
+def download_planned_subtitles(
+    planned: list[tuple[str, str, SubtitleFile]],
+    *,
+    base: Path,
+    media: MediaInfo,
+    season: str,
+    layout: str,
+) -> tuple[list[Path], list[str]]:
+    saved: list[Path] = []
+    failures: list[str] = []
+    print("\nDownloading subtitles:")
+    for idx, (_lang, ep, sub) in enumerate(planned, start=1):
+        progress_bar(idx, len(planned), "downloading", f"episode {ep} {sub.language}", transient=True)
+        dest = output_dir(base, media, season, layout)
+        try:
+            saved.extend(save_subtitle(sub, dest, media, season, ep))
+        except CliError as e:
+            provider = sub.provider or sub.source_provider or "provider"
+            failures.append(f"{sub.language} ep{ep}: download failed from {provider} — {e}")
+    return saved, failures
 
 
 def ass_escape(text: str) -> str:
@@ -4185,19 +4207,33 @@ def _escape_ass_text(text: str) -> str:
     return text.replace("{", r"\{").replace("}", r"\}")
 
 
+def ass_font_size_for_stack(cues: list[SrtCue]) -> int:
+    max_lines = max((len([line for line in cue.text_lines if line.strip()]) for cue in cues), default=1)
+    if max_lines >= 5:
+        return 26
+    if max_lines == 4:
+        return 30
+    if max_lines == 3:
+        return 36
+    return 42
+
+
 def serialize_ass(cues: list[SrtCue]) -> str:
+    font_size = ass_font_size_for_stack(cues)
     header = (
         "[Script Info]\n"
         "ScriptType: v4.00+\n"
         "WrapStyle: 0\n"
         "ScaledBorderAndShadow: yes\n"
+        "PlayResX: 1920\n"
+        "PlayResY: 1080\n"
         "\n"
         "[V4+ Styles]\n"
         "Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, "
         "OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, "
         "ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, "
         "Alignment, MarginL, MarginR, MarginV, Encoding\n"
-        "Style: Default,Arial,42,&H00FFFFFF,&H000000FF,&H00000000,&H64000000,"
+        f"Style: Default,Arial,{font_size},&H00FFFFFF,&H000000FF,&H00000000,&H64000000,"
         "0,0,0,0,100,100,0,0,1,2,0,2,30,30,30,1\n"
         "\n"
         "[Events]\n"
@@ -5295,8 +5331,8 @@ Format: Layer, Start, End, Style, Text
                 events.append(f"Dialogue: 0,{start},{end},Text,{line}")
                 continue
             reading_row, text_row = pair
-            events.append(f"Dialogue: 0,{start},{end},Reading,{reading_row}")
             events.append(f"Dialogue: 0,{start},{end},Text,{text_row}")
+            events.append(f"Dialogue: 0,{start},{end},Reading,{reading_row}")
 
     out = src.with_suffix("").with_name(
         src.with_suffix("").name + romanization_suffix("ko", mode, "stacked.ass", single_line)
@@ -5627,8 +5663,8 @@ Format: Layer, Start, End, Style, Text
                 events.append(f"Dialogue: 0,{start},{end},Text,{line}")
                 continue
             reading_row, text_row = pair
-            events.append(f"Dialogue: 0,{start},{end},Reading,{reading_row}")
             events.append(f"Dialogue: 0,{start},{end},Text,{text_row}")
+            events.append(f"Dialogue: 0,{start},{end},Reading,{reading_row}")
 
     out = src.with_suffix("").with_name(
         src.with_suffix("").name + romanization_suffix("zh", mode, "stacked.ass", single_line)
@@ -5668,6 +5704,280 @@ def apply_chinese_ruby(cues, mode: str) -> None:
     cues in place, for the merge subcommand's VTT output."""
     for cue in cues:
         cue.text_lines = [text_with_chinese_ruby(line, mode) for line in cue.text_lines]
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# Cantonese romanization — Jyutping
+# ═══════════════════════════════════════════════════════════════════════
+
+_PYCANTONESE_MODULE: object | None = None
+
+
+def _pycantonese_module() -> object:
+    """Return cached PyCantonese, or raise a user-facing install hint."""
+    global _PYCANTONESE_MODULE
+    if _PYCANTONESE_MODULE is not None:
+        return _PYCANTONESE_MODULE
+    try:
+        import pycantonese  # type: ignore
+    except Exception as e:
+        raise CliError(
+            "Cantonese Jyutping needs the pycantonese package.\n"
+            "  Quick install: python3 -m pip install pycantonese\n"
+            "  Or reinstall with the extra: pip install -e \".[romanization-yue]\"\n"
+            "  See: getsubtitle --help reading"
+        ) from e
+    _PYCANTONESE_MODULE = pycantonese
+    return _PYCANTONESE_MODULE
+
+
+def _coerce_jyutping_items(raw) -> list[str]:
+    """Normalise PyCantonese return shapes across versions.
+
+    PyCantonese has returned simple strings in some examples and tuple-ish
+    records in others. Prefer the last non-empty string in a record because
+    that is where jyutping usually lives; keep this tolerant so tests can
+    fake the backend without pinning one exact third-party shape.
+    """
+    out: list[str] = []
+    for item in raw or []:
+        if isinstance(item, str):
+            out.append(item)
+            continue
+        if isinstance(item, (list, tuple)):
+            strings = [str(part) for part in item if isinstance(part, str) and part]
+            out.append(strings[-1] if strings else "")
+            continue
+        out.append(str(item) if item is not None else "")
+    return out
+
+
+def romanize_cantonese(text: str, mode: str) -> str:
+    """Return Jyutping for a hanzi run. Modes:
+        numbers — jyutping with tone numbers (default)
+        marks   — accepted as an alias for numbers until a tone-mark
+                  Cantonese backend is worth adding.
+    """
+    if mode not in ("numbers", "marks"):
+        raise CliError(
+            f"Unknown Cantonese romanization mode {mode!r}. "
+            "Allowed: numbers, marks."
+        )
+    if not has_hanzi(text):
+        return text
+    yue = _pycantonese_module()
+    try:
+        raw = yue.characters_to_jyutping(text)
+    except Exception as e:
+        raise CliError(f"Cantonese Jyutping failed: {e}") from e
+    pieces = _coerce_jyutping_items(raw)
+    out: list[str] = []
+    chars = list(text)
+    for i, ch in enumerate(chars):
+        is_hanzi = bool(_HANZI_RE.match(ch))
+        prev_is_hanzi = i > 0 and bool(_HANZI_RE.match(chars[i - 1]))
+        if is_hanzi and prev_is_hanzi:
+            out.append(" ")
+        piece = pieces[i] if i < len(pieces) else ""
+        out.append(piece or ch)
+    return "".join(out)
+
+
+def _cantonese_pair_chunks(text: str, mode: str) -> list[tuple[str, str]]:
+    chunks: list[tuple[str, str]] = []
+    text = strip_subtitle_markup(text)
+    buf: list[str] = []
+    is_hanzi_run: bool | None = None
+    for ch in text:
+        ch_is_hanzi = bool(_HANZI_RE.match(ch))
+        if is_hanzi_run is None:
+            is_hanzi_run = ch_is_hanzi
+            buf.append(ch)
+            continue
+        if ch_is_hanzi == is_hanzi_run:
+            buf.append(ch)
+        else:
+            run = "".join(buf)
+            chunks.append((run, romanize_cantonese(run, mode) if is_hanzi_run else run))
+            buf = [ch]
+            is_hanzi_run = ch_is_hanzi
+    if buf:
+        run = "".join(buf)
+        chunks.append((run, romanize_cantonese(run, mode) if is_hanzi_run else run))
+    return chunks
+
+
+def text_with_cantonese_readings(text: str, mode: str) -> str:
+    chunks = _cantonese_pair_chunks(text, mode)
+    out: list[str] = []
+    for hanzi, jyutping in chunks:
+        if has_hanzi(hanzi) and jyutping and jyutping != hanzi:
+            out.append(f"{hanzi}（{jyutping}）")
+        else:
+            out.append(hanzi)
+    return "".join(out)
+
+
+def text_with_cantonese_ruby(text: str, mode: str) -> str:
+    chunks = _cantonese_pair_chunks(text, mode)
+    out: list[str] = []
+    for hanzi, jyutping in chunks:
+        if has_hanzi(hanzi) and jyutping and jyutping != hanzi:
+            out.append(ruby_tag(hanzi, jyutping))
+        elif hanzi.isspace():
+            out.append(hanzi)
+        else:
+            out.append(html_escape(hanzi))
+    return "".join(out)
+
+
+def cantonese_reading_pair_lines(text: str, mode: str) -> tuple[str, str] | None:
+    chunks = _cantonese_pair_chunks(text, mode)
+    if not any(has_hanzi(h) for h, _ in chunks):
+        return None
+    reading_chunks: list[str] = []
+    text_chunks: list[str] = []
+    has_reading = False
+    for hanzi, jyutping in chunks:
+        if has_hanzi(hanzi) and jyutping and jyutping != hanzi:
+            cells = max(display_cells(hanzi), display_cells(jyutping))
+            reading_chunks.append(center_in_cells(jyutping, cells))
+            text_chunks.append(center_in_cells(hanzi, cells))
+            has_reading = True
+        else:
+            cells = display_cells(hanzi)
+            reading_chunks.append(visual_blank_cells(cells))
+            text_chunks.append(hanzi)
+    return ("".join(reading_chunks), "".join(text_chunks)) if has_reading else None
+
+
+def srt_to_cantonese_readings(src: Path, mode: str, single_line: bool = False) -> Path:
+    text = src.read_text(encoding="utf-8-sig", errors="replace")
+    blocks = re.split(r"\n\s*\n", text.strip())
+    output_blocks = []
+    for block in blocks:
+        lines = block.splitlines()
+        if len(lines) < 2:
+            output_blocks.append(block)
+            continue
+        time_line = next((ln for ln in lines if "-->" in ln), "")
+        if not time_line:
+            output_blocks.append(block)
+            continue
+        idx = lines.index(time_line)
+        prefix = lines[: idx + 1]
+        subtitle_lines = lines[idx + 1 :]
+        if single_line:
+            subtitle_lines = flatten_subtitle_lines(subtitle_lines)
+        converted = [text_with_cantonese_readings(line, mode) for line in subtitle_lines]
+        output_blocks.append("\n".join(prefix + converted))
+
+    out = src.with_suffix("").with_name(
+        src.with_suffix("").name + romanization_suffix("yue", mode, "asb.srt", single_line)
+    )
+    out.write_text("\n\n".join(output_blocks) + "\n", encoding="utf-8")
+    return out
+
+
+def srt_to_cantonese_ruby_vtt(src: Path, mode: str, single_line: bool = False) -> Path:
+    text = src.read_text(encoding="utf-8-sig", errors="replace")
+    text = text.replace("\r\n", "\n").replace("\r", "\n")
+    blocks = re.split(r"\n\s*\n", text.strip())
+    output_blocks = ["WEBVTT"]
+    for block in blocks:
+        lines = block.splitlines()
+        if len(lines) < 2:
+            continue
+        if lines and lines[0].strip().isdigit():
+            lines = lines[1:]
+        if not lines or "-->" not in lines[0]:
+            continue
+        time_line = lines[0].replace(",", ".")
+        subtitle_lines = lines[1:]
+        if single_line:
+            subtitle_lines = flatten_subtitle_lines(subtitle_lines)
+        converted = [text_with_cantonese_ruby(line, mode) for line in subtitle_lines if line.strip()]
+        if converted:
+            output_blocks.append("\n".join([time_line] + converted))
+
+    out = src.with_suffix("").with_name(
+        src.with_suffix("").name + romanization_suffix("yue", mode, "ruby.vtt", single_line)
+    )
+    out.write_text("\n\n".join(output_blocks) + "\n", encoding="utf-8")
+    return out
+
+
+def srt_to_cantonese_pair_lines_ass(src: Path, mode: str, single_line: bool = False) -> Path:
+    text = src.read_text(encoding="utf-8-sig", errors="replace")
+    text = text.replace("\r\n", "\n").replace("\r", "\n")
+    blocks = re.split(r"\n\s*\n", text.strip())
+    time_re = re.compile(r"^(\d\d):(\d\d):(\d\d),(\d{3})\s+-->\s+(\d\d):(\d\d):(\d\d),(\d{3})")
+    header = """[Script Info]
+ScriptType: v4.00+
+PlayResX: 1920
+PlayResY: 1080
+
+[V4+ Styles]
+Format: Name, Fontname, Fontsize, PrimaryColour, BackColour, Bold, Italic, Outline, Alignment, MarginV
+Style: Reading, Arial, 36, &H00FFFFFF, &H00000000, 0, 0, 1, 2, 60
+Style: Text, Arial, 48, &H00FFFFFF, &H00000000, 0, 0, 1, 2, 20
+
+[Events]
+Format: Layer, Start, End, Style, Text
+"""
+    events: list[str] = []
+    for block in blocks:
+        lines = block.splitlines()
+        if len(lines) < 2:
+            continue
+        if lines and lines[0].strip().isdigit():
+            lines = lines[1:]
+        if not lines or "-->" not in lines[0]:
+            continue
+        m = time_re.match(lines[0])
+        if not m:
+            continue
+        start, end = ass_time_from_srt(m.groups())
+        subtitle_lines = lines[1:]
+        if single_line:
+            subtitle_lines = flatten_subtitle_lines(subtitle_lines)
+        for line in subtitle_lines:
+            pair = cantonese_reading_pair_lines(line, mode)
+            if pair is None:
+                events.append(f"Dialogue: 0,{start},{end},Text,{line}")
+                continue
+            reading_row, text_row = pair
+            events.append(f"Dialogue: 0,{start},{end},Text,{text_row}")
+            events.append(f"Dialogue: 0,{start},{end},Reading,{reading_row}")
+
+    out = src.with_suffix("").with_name(
+        src.with_suffix("").name + romanization_suffix("yue", mode, "stacked.ass", single_line)
+    )
+    out.write_text(header + "\n".join(events) + "\n", encoding="utf-8")
+    return out
+
+
+def generate_cantonese_romanization(
+    paths: Iterable[Path],
+    mode: str,
+    single_line: bool = False,
+    formats: set[str] | None = None,
+) -> list[Path]:
+    if formats is None:
+        formats = {"srt"}
+    generated: list[Path] = []
+    for path in paths:
+        if ".yue" not in path.name:
+            continue
+        if path.suffix.lower() != ".srt":
+            continue
+        if "srt" in formats:
+            generated.append(srt_to_cantonese_readings(path, mode, single_line))
+        if "vtt" in formats:
+            generated.append(srt_to_cantonese_ruby_vtt(path, mode, single_line))
+        if "ass" in formats:
+            generated.append(srt_to_cantonese_pair_lines_ass(path, mode, single_line))
+    return generated
 
 
 def generate_furigana(
@@ -5722,6 +6032,7 @@ _EPISODE_PATTERNS = (
     re.compile(r"[Ss](\d{1,2})[Ee](\d{1,3})\b", re.I),
     re.compile(r"\b(\d{1,2})x(\d{1,3})\b", re.I),
 )
+_BARE_EPISODE_PATTERN = re.compile(r"(?:^|[.\s_-])[Ee](\d{1,3})(?:\b|[.\s_-])", re.I)
 # Single-language token before .srt, with optional ".mt" suffix for
 # machine-translated files. Sonarr-style HI/CC/SDH/forced tags between the
 # language code and `.srt` are stripped so .ja.hi.srt parses as lang=ja, not
@@ -5777,8 +6088,8 @@ def _variant_filename_pattern(pseudo_lang: str) -> re.Pattern[str] | None:
         return None
     base, infix, mode = decoded
     return re.compile(
-        rf"\.({re.escape(base)})\.{re.escape(infix)}-{re.escape(mode)}"
-        rf"(?:\.single-line)?\.(?:srt|vtt|ass|ssa)$",
+        rf"\.({re.escape(base)})(?:\.(?:hi|sdh|cc))*\.{re.escape(infix)}-{re.escape(mode)}"
+        rf"(?:\.single-line)?(?:\.(?:asb|ruby|stacked|lines))?\.(?:srt|vtt|ass|ssa)$",
         re.I,
     )
 
@@ -5804,9 +6115,25 @@ def parse_episode_marker(name: str) -> tuple[int, int] | None:
         m = pattern.search(name)
         if m:
             return int(m.group(1)), int(m.group(2))
+    # Common Korean/Japanese release names often use bare E01/E02 inside a
+    # Season 01 folder. Treat those as S01Exx so library folders like
+    # "무빙.E01...ko.srt" do not collapse into the synthetic movie bucket.
+    m = _BARE_EPISODE_PATTERN.search(name)
+    if m:
+        return 1, int(m.group(1))
     if _is_movie_style_filename(name):
         return 0, 0
     return None
+
+
+def is_filesystem_metadata_name(name: str) -> bool:
+    """Skip macOS AppleDouble resource-fork sidecars and similar metadata.
+
+    On external drives Finder creates files named `._Episode.ko.srt`.
+    They end in `.srt` but contain binary "Mac OS X" metadata, so scanning
+    them makes merge pick an empty/corrupt master subtitle.
+    """
+    return name.startswith("._") or name in {".DS_Store", "Thumbs.db"}
 
 
 def _is_movie_style_filename(name: str) -> bool:
@@ -5861,10 +6188,13 @@ def scan_srt_files(
     output."""
     discovered: list[Path] = []
     for root in paths:
-        if root.is_file():
+        if root.is_file() and not is_filesystem_metadata_name(root.name):
             discovered.append(root)
         elif root.is_dir():
-            discovered.extend(sorted(root.rglob("*.srt")))
+            discovered.extend(
+                p for p in sorted(root.rglob("*.srt"))
+                if not is_filesystem_metadata_name(p.name)
+            )
     out: list[tuple[Path, int, int, str, bool]] = []
     for path in discovered:
         if not include_furigana and is_furigana_output_name(path.name):
@@ -5961,10 +6291,13 @@ def scan_subtitle_files_extended(
     # VTT.
     discovered_vtt: list[Path] = []
     for root in paths:
-        if root.is_file() and root.suffix.lower() == ".vtt":
+        if root.is_file() and root.suffix.lower() == ".vtt" and not is_filesystem_metadata_name(root.name):
             discovered_vtt.append(root)
         elif root.is_dir():
-            discovered_vtt.extend(sorted(root.rglob("*.vtt")))
+            discovered_vtt.extend(
+                p for p in sorted(root.rglob("*.vtt"))
+                if not is_filesystem_metadata_name(p.name)
+            )
     for path in discovered_vtt:
         if not include_furigana and is_furigana_output_name(path.name):
             continue
@@ -5976,11 +6309,17 @@ def scan_subtitle_files_extended(
     # ASS/SSA.
     discovered_ass: list[Path] = []
     for root in paths:
-        if root.is_file() and root.suffix.lower() in (".ass", ".ssa"):
+        if root.is_file() and root.suffix.lower() in (".ass", ".ssa") and not is_filesystem_metadata_name(root.name):
             discovered_ass.append(root)
         elif root.is_dir():
-            discovered_ass.extend(sorted(root.rglob("*.ass")))
-            discovered_ass.extend(sorted(root.rglob("*.ssa")))
+            discovered_ass.extend(
+                p for p in sorted(root.rglob("*.ass"))
+                if not is_filesystem_metadata_name(p.name)
+            )
+            discovered_ass.extend(
+                p for p in sorted(root.rglob("*.ssa"))
+                if not is_filesystem_metadata_name(p.name)
+            )
     for path in discovered_ass:
         if not include_furigana and is_furigana_output_name(path.name):
             continue
@@ -6019,11 +6358,14 @@ def scan_subtitle_files_extended(
             continue
         discovered_var: list[Path] = []
         for root in paths:
-            if root.is_file() and pattern.search(root.name):
+            if root.is_file() and pattern.search(root.name) and not is_filesystem_metadata_name(root.name):
                 discovered_var.append(root)
             elif root.is_dir():
                 for ext in ("srt", "vtt", "ass", "ssa"):
-                    discovered_var.extend(sorted(root.rglob(f"*.{ext}")))
+                    discovered_var.extend(
+                        p for p in sorted(root.rglob(f"*.{ext}"))
+                        if not is_filesystem_metadata_name(p.name)
+                    )
         for path in discovered_var:
             if not pattern.search(path.name):
                 continue
@@ -6337,6 +6679,49 @@ def combine_cues(
     return combined, {lang: count / total for lang, count in match_counts.items()}
 
 
+def _pseudo_lang_reading_lines(pseudo_lang: str, lines: list[str], preserve_lines: bool) -> list[str]:
+    decoded = _PSEUDO_LANG_VARIANTS.get(pseudo_lang.lower())
+    if decoded is None:
+        return []
+    base, _infix, mode = decoded
+    out: list[str] = []
+    for line in _format_cue_text_for_lang(lines, preserve_lines):
+        clean = strip_existing_readings(line).strip()
+        if not clean:
+            continue
+        if base == "ja":
+            reading = kanji_reading_line(clean, mode)
+            out.append(reading if reading and has_kanji(clean) else clean)
+        elif base == "ko":
+            pair = hangul_reading_pair_lines(clean, mode)
+            out.append(pair[0] if pair else clean)
+        elif base == "zh":
+            pair = hanzi_reading_pair_lines(clean, mode)
+            out.append(pair[0] if pair else clean)
+        elif base == "yue":
+            pair = cantonese_reading_pair_lines(clean, mode)
+            out.append(pair[0] if pair else clean)
+    return out
+
+
+def derive_pseudo_lang_cues(
+    source_cues: list[SrtCue],
+    pseudo_lang: str,
+    *,
+    preserve_lines: bool = False,
+) -> list[SrtCue]:
+    """Create a reading-only pseudo-language track from the base language.
+
+    Multi-variant merge should stack clean rows like `ko-revised`, not consume
+    side files that may contain both original text and readings.
+    """
+    out: list[SrtCue] = []
+    for cue in source_cues:
+        lines = _pseudo_lang_reading_lines(pseudo_lang, cue.text_lines, preserve_lines)
+        out.append(SrtCue(index=cue.index, time_line=cue.time_line, text_lines=lines or [""]))
+    return out
+
+
 def combined_output_name(master_path: Path, lang_order: list[str], *, furigana: bool = False) -> str:
     """Compute the combined-output filename, e.g.
     'MF Ghost - S01E07.ja.srt' + ['ja','ko'] -> 'MF Ghost - S01E07.ja-ko.srt'.
@@ -6350,7 +6735,7 @@ def combined_output_name(master_path: Path, lang_order: list[str], *, furigana: 
     'ja-hiragana', 'ja-romaji', 'en'] -> 'ja-hiragana-romaji-en' instead of
     the redundant 'ja-ja-hiragana-ja-romaji-en'."""
     name = master_path.name
-    stem = re.sub(r"\.[a-z]{2,3}(\.mt)?\.srt$", "", name, flags=re.I)
+    stem = _LANG_FILENAME_PATTERN.sub("", name)
     if stem == name:
         # No language token to strip; fall back to the bare stem.
         stem = master_path.with_suffix("").name
@@ -6646,8 +7031,26 @@ def combine_main(argv: list[str]) -> int:
                 continue
 
         target_cues: dict[str, list[SrtCue]] = {}
+        base_cue_cache: dict[str, list[SrtCue]] = {master_lang: master_cues}
         for lang in langs:
-            if lang == master_lang or lang not in files:
+            if lang == master_lang:
+                continue
+            if is_pseudo_lang(lang):
+                base_lang, _infix, _mode = _PSEUDO_LANG_VARIANTS[lang]
+                if base_lang not in base_cue_cache:
+                    if base_lang not in files:
+                        continue
+                    try:
+                        base_cue_cache[base_lang] = read_cues_from_file(files[base_lang], lang_hint=base_lang)
+                    except Exception:
+                        continue
+                target_cues[lang] = derive_pseudo_lang_cues(
+                    base_cue_cache[base_lang],
+                    lang,
+                    preserve_lines=args.preserve_lines,
+                )
+                continue
+            if lang not in files:
                 continue
             try:
                 cues = read_cues_from_file(files[lang], lang_hint=lang)
@@ -7116,7 +7519,9 @@ def build_modify_parser() -> argparse.ArgumentParser:
               getsubtitle modify FOLDER --reading ja:hiragana
               getsubtitle modify FOLDER --reading ja:romaji
               getsubtitle modify FOLDER --reading "ja:hiragana|romaji"
+              getsubtitle modify FOLDER -s 1 -e 3 --reading ko:revised
               getsubtitle modify FOLDER --convert smi-to-srt
+              getsubtitle modify FOLDER --extract-mkv-subs
               getsubtitle modify FOLDER --convert smi-to-srt --force
               getsubtitle modify FOLDER --strip-cc-noise --single-line --reading ja:hiragana --dry-run
             """
@@ -7127,15 +7532,129 @@ def build_modify_parser() -> argparse.ArgumentParser:
     p.add_argument("--single-line", "--single", action="store_true", help="Flatten each SRT cue to one text line in place. Useful for asbplayer.")
     # Hidden compat alias for the pre-v1.1 --furigana flag. Internally
     # equivalent to `--reading ja:MODE`.
-    p.add_argument("--reading", dest="reading", metavar="SPEC", help="Generate per-language reading aids. SPEC is a comma list of LANG:MODE pairs, e.g. 'ja:hiragana', 'ja:katakana', 'ja:romaji', 'ko:revised', 'ko:yale', 'zh:marks', 'zh:numbers', 'zh:letters'. Pipe shorthand 'ja:hiragana|romaji' generates both side files. MODE 'true' picks the language's sensible default. Japanese / Korean / Mandarin ship now; Cantonese / Thai / Arabic / Hindi / Russian land per the roadmap.")
+    p.add_argument("--reading", dest="reading", metavar="SPEC", help="Generate per-language reading aids. SPEC is a comma list of LANG:MODE pairs, e.g. 'ja:hiragana', 'ko:revised', 'zh:marks', 'yue:numbers'. Pipe shorthand 'ja:hiragana|romaji' generates both side files. MODE 'true' picks the language's sensible default. Japanese / Korean / Mandarin / Cantonese ship now; Thai / Arabic / Hindi / Russian land per the roadmap.")
     p.add_argument("--no-reading", dest="reading", action="store_const", const="", help="Disable reading-aid generation for this run, overriding [modify].reading from user_settings.toml.")
     p.add_argument("--reading-format", "--format", dest="reading_format", metavar="CODES", help="Reading-aid output format(s) — comma list of srt, ass, vtt, or 'all'. Default: srt. Overrides [modify].reading_format from user_settings.toml.")
     p.add_argument("--convert", metavar="SPEC", help="Convert subtitle file format. Supports smi-to-srt (all SAMI language streams) or LANG:smi-to-srt, e.g. ko:smi-to-srt, for one language.")
+    p.add_argument("--extract-mkv-subs", action="store_true", help="Extract embedded text subtitles from MKV/video files using ffprobe + ffmpeg when available. Image subtitles such as PGS are reported and skipped.")
+    p.add_argument("-s", "--season", default="all", help="Only process files matching this season/range when scanning a folder (default: all).")
+    p.add_argument("-e", "--episode", default="all", help="Only process files matching this episode/range when scanning a folder (default: all).")
     p.add_argument("--force", action="store_true", help="With --convert: overwrite existing sibling .srt files. Without --force, conversion skips targets that already exist.")
     p.add_argument("--subdirectory", action="store_true", help="Bulk mode: treat each immediate subdirectory of PATH as its own show and run modify once per subdir.")
     p.add_argument("--dry-run", action="store_true", help="Show what would be processed without writing anything.")
     _apply_modify_config_defaults(p)
     return p
+
+
+TEXT_SUBTITLE_CODECS_TO_EXT: dict[str, str] = {
+    "subrip": "srt",
+    "srt": "srt",
+    "ass": "ass",
+    "ssa": "ass",
+    "webvtt": "vtt",
+    "mov_text": "srt",
+    "text": "srt",
+}
+
+IMAGE_SUBTITLE_CODECS = {"hdmv_pgs_subtitle", "dvd_subtitle", "dvb_subtitle", "xsub"}
+
+
+def scan_video_files(paths: list[Path]) -> list[Path]:
+    out: list[Path] = []
+    for p in paths:
+        if p.is_file() and p.suffix.lower() in _BATCH_VIDEO_EXTS:
+            out.append(p)
+        elif p.is_dir():
+            out.extend(
+                f for f in p.rglob("*")
+                if f.is_file() and f.suffix.lower() in _BATCH_VIDEO_EXTS
+            )
+    return sorted(out)
+
+
+def _ffprobe_subtitle_streams(path: Path) -> list[dict]:
+    if not shutil.which("ffprobe"):
+        raise CliError("MKV subtitle extraction needs ffprobe on PATH. Install ffmpeg first.")
+    cmd = [
+        "ffprobe", "-v", "error",
+        "-select_streams", "s",
+        "-show_entries", "stream=index,codec_name:stream_tags=language,title",
+        "-of", "json",
+        str(path),
+    ]
+    proc = subprocess.run(cmd, text=True, capture_output=True)
+    if proc.returncode != 0:
+        msg = (proc.stderr or proc.stdout or "ffprobe failed").strip()
+        raise CliError(msg)
+    try:
+        data = json.loads(proc.stdout or "{}")
+    except json.JSONDecodeError as e:
+        raise CliError(f"ffprobe returned invalid JSON: {e}") from e
+    return list(data.get("streams") or [])
+
+
+def _stream_lang(stream: dict, fallback_index: int) -> str:
+    tags = stream.get("tags") or {}
+    raw = str(tags.get("language") or "").strip().lower()
+    if raw and raw not in {"und", "unknown"}:
+        return LANGUAGE_ALIASES.get(raw, raw)
+    return f"und{fallback_index}"
+
+
+def plan_mkv_subtitle_extraction(video_files: list[Path]) -> tuple[list[tuple[Path, int, str, str, Path]], list[str]]:
+    plan: list[tuple[Path, int, str, str, Path]] = []
+    notes: list[str] = []
+    for video in video_files:
+        try:
+            streams = _ffprobe_subtitle_streams(video)
+        except CliError as e:
+            notes.append(f"{video.name}: {e}")
+            continue
+        if not streams:
+            notes.append(f"{video.name}: no embedded subtitle streams")
+            continue
+        seen_langs: dict[str, int] = {}
+        for ordinal, stream in enumerate(streams, start=1):
+            codec = str(stream.get("codec_name") or "").lower()
+            if codec in IMAGE_SUBTITLE_CODECS:
+                notes.append(f"{video.name}: skipped image subtitle stream {stream.get('index')} ({codec})")
+                continue
+            ext = TEXT_SUBTITLE_CODECS_TO_EXT.get(codec)
+            if not ext:
+                notes.append(f"{video.name}: skipped unsupported subtitle codec {codec or 'unknown'}")
+                continue
+            lang = _stream_lang(stream, ordinal)
+            seen_langs[lang] = seen_langs.get(lang, 0) + 1
+            lang_token = lang if seen_langs[lang] == 1 else f"{lang}.{seen_langs[lang]}"
+            dest = video.with_suffix("").with_name(video.with_suffix("").name + f".{lang_token}.{ext}")
+            plan.append((video, int(stream.get("index")), lang_token, codec, dest))
+    return plan, notes
+
+
+def extract_mkv_subtitle_plan(
+    plan: list[tuple[Path, int, str, str, Path]],
+    *,
+    force: bool = False,
+) -> tuple[list[Path], list[Path], list[str]]:
+    if not shutil.which("ffmpeg"):
+        raise CliError("MKV subtitle extraction needs ffmpeg on PATH. Install ffmpeg first.")
+    written: list[Path] = []
+    skipped: list[Path] = []
+    errors: list[str] = []
+    for video, stream_index, _lang, _codec, dest in plan:
+        if dest.exists() and not force:
+            skipped.append(dest)
+            continue
+        cmd = ["ffmpeg", "-hide_banner", "-loglevel", "error"]
+        cmd.append("-y" if force else "-n")
+        cmd.extend(["-i", str(video), "-map", f"0:{stream_index}", str(dest)])
+        proc = subprocess.run(cmd, text=True, capture_output=True)
+        if proc.returncode == 0 and dest.exists():
+            written.append(dest)
+        else:
+            msg = (proc.stderr or proc.stdout or "ffmpeg failed").strip()
+            errors.append(f"{video.name} stream {stream_index}: {msg}")
+    return written, skipped, errors
 
 
 def modify_main(argv: list[str]) -> int:
@@ -7172,6 +7691,7 @@ def modify_main(argv: list[str]) -> int:
     _apply_reading_to_args(args)
     args.ko_reading = getattr(args, "ko_reading", None)
     args.zh_reading = getattr(args, "zh_reading", None)
+    args.yue_reading = getattr(args, "yue_reading", None)
     convert_op, convert_langs = parse_convert_spec(args.convert)
     ops_selected = [
         bool(args.strip_cc_noise),
@@ -7179,20 +7699,22 @@ def modify_main(argv: list[str]) -> int:
         bool(args.ja_reading),
         bool(args.ko_reading),
         bool(args.zh_reading),
+        bool(args.yue_reading),
         bool(convert_op),
+        bool(args.extract_mkv_subs),
     ]
     if not any(ops_selected):
         raise CliError(
             "modify needs at least one operation flag: "
             "--strip-cc-noise, --single-line, --reading SPEC, "
-            "and/or --convert smi-to-srt."
+            "--convert smi-to-srt, and/or --extract-mkv-subs."
         )
     # Validate --reading-format upfront so a bad value errors before the
     # plan is printed and any work happens. Cached so the inner loop reuses it.
     # The same setting drives ja furigana variants and ko romanization variants.
     reading_formats = (
         parse_furigana_formats(getattr(args, "reading_format", None))
-        if (args.ja_reading or args.ko_reading or args.zh_reading)
+        if (args.ja_reading or args.ko_reading or args.zh_reading or args.yue_reading)
         else None
     )
 
@@ -7210,6 +7732,7 @@ def modify_main(argv: list[str]) -> int:
         or args.ja_reading
         or args.ko_reading
         or args.zh_reading
+        or args.yue_reading
     )
     scanned: list[tuple[Path, int, int, str, bool]] = (
         scan_srt_files(paths) if inplace_ops else []
@@ -7217,19 +7740,47 @@ def modify_main(argv: list[str]) -> int:
     convert_files: list[Path] = (
         scan_smi_files(paths) if convert_op == "smi-to-srt" else []
     )
+    video_files: list[Path] = scan_video_files(paths) if args.extract_mkv_subs else []
+    selected_keys: set[tuple[int, int]] | None = None
+    if str(args.season).lower() not in {"all", "auto"} or str(args.episode).lower() not in {"all", "auto"}:
+        detected_keys = {(season, episode) for _path, season, episode, _lang, _is_mt in scanned}
+        detected_keys.update(
+            ep for ep in (parse_episode_marker(path.name) for path in convert_files + video_files)
+            if ep is not None
+        )
+        selected_keys = set(filter_episode_keys(detected_keys, season=args.season, episode=args.episode))
+        scanned = [row for row in scanned if (row[1], row[2]) in selected_keys]
+        convert_files = [
+            path for path in convert_files
+            if (parse_episode_marker(path.name) in selected_keys)
+        ]
+        video_files = [
+            path for path in video_files
+            if (parse_episode_marker(path.name) in selected_keys)
+        ]
+    extract_plan: list[tuple[Path, int, str, str, Path]] = []
+    extract_notes: list[str] = []
+    if args.extract_mkv_subs:
+        extract_plan, extract_notes = plan_mkv_subtitle_extraction(video_files)
 
     if inplace_ops:
         print(f"Scanned: {len(scanned)} SRT file(s) across {len(paths)} path(s)")
     if convert_op == "smi-to-srt":
         print(f"Scanned: {len(convert_files)} SMI file(s) across {len(paths)} path(s)")
+    if args.extract_mkv_subs:
+        print(f"Scanned: {len(video_files)} video file(s) across {len(paths)} path(s)")
 
-    if not scanned and not convert_files:
-        if args.convert and not inplace_ops:
+    if not scanned and not convert_files and not extract_plan:
+        if args.extract_mkv_subs and extract_notes:
+            print("No extractable text subtitle streams found.")
+            for note in extract_notes[:20]:
+                print(f"  {note}")
+        elif args.convert and not inplace_ops:
             print("No .smi files found. Nothing to convert.")
         elif inplace_ops and not args.convert:
             print("No single-language SRT files found. Nothing to process.")
         else:
-            print("No SRT or SMI files found. Nothing to process.")
+            print("No SRT, SMI, or extractable MKV subtitle streams found. Nothing to process.")
         return 1
 
     # Describe the plan up front so --dry-run is meaningful.
@@ -7239,6 +7790,8 @@ def modify_main(argv: list[str]) -> int:
             ops_desc.append(f"convert smi → srt ({','.join(sorted(convert_langs))} only)")
         else:
             ops_desc.append("convert smi → srt")
+    if args.extract_mkv_subs:
+        ops_desc.append("extract embedded text subtitles from video")
     if args.strip_cc_noise:
         ops_desc.append("strip CC noise")
     if args.single_line:
@@ -7249,6 +7802,8 @@ def modify_main(argv: list[str]) -> int:
         ops_desc.append(f"korean romanization ({args.ko_reading})")
     if args.zh_reading:
         ops_desc.append(f"chinese pinyin ({args.zh_reading})")
+    if args.yue_reading:
+        ops_desc.append(f"cantonese jyutping ({args.yue_reading})")
     print("Operations: " + ", ".join(ops_desc))
 
     if inplace_ops:
@@ -7257,12 +7812,15 @@ def modify_main(argv: list[str]) -> int:
         ja_paths = [t[0] for t in scanned if t[3] == "ja"]
         ko_paths = [t[0] for t in scanned if t[3] == "ko"]
         zh_paths = [t[0] for t in scanned if t[3] == "zh"]
+        yue_paths = [t[0] for t in scanned if t[3] == "yue"]
         if args.ja_reading and not ja_paths:
             print("(--reading ja:* requested but no .ja.srt files found; that step will be a no-op.)")
         if args.ko_reading and not ko_paths:
             print("(--reading ko:* requested but no .ko.srt files found; that step will be a no-op.)")
         if args.zh_reading and not zh_paths:
             print("(--reading zh:* requested but no .zh.srt files found; that step will be a no-op.)")
+        if args.yue_reading and not yue_paths:
+            print("(--reading yue:* requested but no .yue.srt files found; that step will be a no-op.)")
 
         print(f"\nPlanned in-place: {len(scanned)} file(s)")
         for path, _season, _episode, lang, _is_mt in scanned[:20]:
@@ -7272,6 +7830,8 @@ def modify_main(argv: list[str]) -> int:
                 suffix = "  [ko → romanization variants]"
             elif args.zh_reading and lang == "zh":
                 suffix = "  [zh → pinyin variants]"
+            elif args.yue_reading and lang == "yue":
+                suffix = "  [yue → jyutping variants]"
             else:
                 suffix = ""
             print(f"  {path.name}{suffix}")
@@ -7286,6 +7846,18 @@ def modify_main(argv: list[str]) -> int:
         if len(convert_files) > 20:
             print(f"  ... and {len(convert_files) - 20} more")
 
+    if args.extract_mkv_subs:
+        print(f"\nPlanned MKV/video subtitle extraction: {len(extract_plan)} stream(s)")
+        for video, stream_index, lang, codec, dest in extract_plan[:20]:
+            exists = "  [exists; use --force]" if dest.exists() and not args.force else ""
+            print(f"  {video.name} stream {stream_index} ({lang}, {codec}) -> {dest.name}{exists}")
+        if len(extract_plan) > 20:
+            print(f"  ... and {len(extract_plan) - 20} more")
+        if extract_notes:
+            print("  Notes:")
+            for note in extract_notes[:10]:
+                print(f"    - {note}")
+
     if args.dry_run:
         return 0
 
@@ -7293,6 +7865,7 @@ def modify_main(argv: list[str]) -> int:
     furigana_generated: list[Path] = []
     korean_generated: list[Path] = []
     chinese_generated: list[Path] = []
+    cantonese_generated: list[Path] = []
     grouped_errors: dict[str, list[str]] = {}
 
     if inplace_ops:
@@ -7310,23 +7883,32 @@ def modify_main(argv: list[str]) -> int:
                 if args.single_line:
                     flatten_srt_in_place(path, separator=flatten_separator_for(path))
                 if args.ja_reading and lang == "ja":
-                    furigana_generated.extend(
-                        generate_furigana(
-                            [path], args.ja_reading, bool(args.single_line),
-                            formats=reading_formats,
+                    for mode in (getattr(args, "ja_readings", None) or [args.ja_reading]):
+                        furigana_generated.extend(
+                            generate_furigana(
+                                [path], mode, bool(args.single_line),
+                                formats=reading_formats,
+                            )
                         )
-                    )
                 if args.ko_reading and lang == "ko":
-                    korean_generated.extend(
-                        generate_korean_romanization(
-                            [path], args.ko_reading, bool(args.single_line),
-                            formats=reading_formats,
+                    for mode in (getattr(args, "ko_readings", None) or [args.ko_reading]):
+                        korean_generated.extend(
+                            generate_korean_romanization(
+                                [path], mode, bool(args.single_line),
+                                formats=reading_formats,
+                            )
                         )
-                    )
                 if args.zh_reading and lang == "zh":
                     chinese_generated.extend(
                         generate_chinese_romanization(
                             [path], args.zh_reading, bool(args.single_line),
+                            formats=reading_formats,
+                        )
+                    )
+                if args.yue_reading and lang == "yue":
+                    cantonese_generated.extend(
+                        generate_cantonese_romanization(
+                            [path], args.yue_reading, bool(args.single_line),
                             formats=reading_formats,
                         )
                     )
@@ -7355,6 +7937,20 @@ def modify_main(argv: list[str]) -> int:
             convert_written.extend(written)
             convert_skipped.extend(skipped)
 
+    extract_written: list[Path] = []
+    extract_skipped: list[Path] = []
+    extract_errors: list[str] = []
+    if extract_plan:
+        print("\nExtracting embedded subtitles:")
+        try:
+            extract_written, extract_skipped, extract_errors = extract_mkv_subtitle_plan(
+                extract_plan, force=args.force
+            )
+        except CliError as e:
+            grouped_errors.setdefault(str(e), []).append("ffmpeg")
+        for msg in extract_errors:
+            grouped_errors.setdefault(msg, []).append("ffmpeg")
+
     if grouped_errors:
         print(f"\nErrors ({sum(len(v) for v in grouped_errors.values())}):")
         for msg, files in grouped_errors.items():
@@ -7374,12 +7970,20 @@ def modify_main(argv: list[str]) -> int:
         print(f"Korean romanization variants generated: {len(korean_generated)}")
     if args.zh_reading:
         print(f"Chinese pinyin variants generated: {len(chinese_generated)}")
+    if args.yue_reading:
+        print(f"Cantonese Jyutping variants generated: {len(cantonese_generated)}")
     if convert_op == "smi-to-srt":
         skipped_note = (
             f" ({len(convert_skipped)} skipped — output exists, pass --force to overwrite)"
             if convert_skipped else ""
         )
         print(f"SRT files written from SMI: {len(convert_written)}{skipped_note}")
+    if args.extract_mkv_subs:
+        skipped_note = (
+            f" ({len(extract_skipped)} skipped — output exists, pass --force to overwrite)"
+            if extract_skipped else ""
+        )
+        print(f"Subtitle files extracted from video: {len(extract_written)}{skipped_note}")
     return 0
 
 
@@ -7859,7 +8463,7 @@ def _is_pipeline_argv(argv: list[str]) -> bool:
 # Users tend to write them at the end of long commands (after the last
 # verb block), so we extract them out of whichever verb block they
 # accidentally land in and put them in "shared".
-_PIPELINE_GLOBAL_VALUED_FLAGS = {"--output"}     # take next token as value
+_PIPELINE_GLOBAL_VALUED_FLAGS = {"--output", "--source"}     # take next token as value
 _PIPELINE_GLOBAL_BOOL_FLAGS = {"--dry-run", "--force"}
 
 
@@ -8004,6 +8608,14 @@ def _pipeline_url_fetch_output_target(fetch_target: str, fetch_options: list[str
     title = _pipeline_option_value(fetch_options, "--title")
     if title:
         media.title = title
+    elif media.anilist_id and not media.title:
+        try:
+            info = fetch_anilist_info(media.anilist_id)
+            media.title = info.title or media.title
+            if info.is_movie():
+                media.is_movie = True
+        except CliError:
+            pass
     season = _pipeline_option_value(fetch_options, "--season", "-s")
     if season:
         media.season = season
@@ -8034,12 +8646,19 @@ def pipeline_main(argv: list[str]) -> int:
     shared = blocks.pop("shared", [])
 
     # Parse shared options out of `shared`.
+    shared_source: str | None = None
     shared_output: str | None = None
     shared_dry_run = False
     i = 0
     leftover_shared: list[str] = []
     while i < len(shared):
         tok = shared[i]
+        if tok == "--source":
+            if i + 1 >= len(shared):
+                raise CliError("--source needs a PATH argument.")
+            shared_source = shared[i + 1]
+            i += 2
+            continue
         if tok == "--output":
             if i + 1 >= len(shared):
                 raise CliError("--output needs a PATH argument.")
@@ -8074,11 +8693,12 @@ def pipeline_main(argv: list[str]) -> int:
     #   2. fetch's TARGET (when fetch is a PATH, not a URL)
     #   3. error otherwise (URL fetch with no --output means we don't know
     #      where the SRTs landed; user must specify)
-    downstream_target: str | None = shared_output
+    downstream_target: str | None = shared_source or shared_output
     if downstream_target is None and fetch_target is not None and not _looks_like_url(fetch_target):
         downstream_target = fetch_target
     if (
         downstream_target is not None
+        and shared_source is None
         and shared_output is not None
         and fetch_target is not None
         and _looks_like_url(fetch_target)
@@ -8112,6 +8732,8 @@ def pipeline_main(argv: list[str]) -> int:
         assert fetch_target is not None  # checked above
         _heading(f"fetch {fetch_target}")
         sub_argv = [fetch_target] + fetch_options
+        if shared_output and "--output" not in sub_argv and "-o" not in sub_argv:
+            sub_argv += ["--output", shared_output]
         # Propagate shared --dry-run by adding to fetch's args if not already
         # there. URL form respects --dry-run via the URL parser. PATH form
         # is already dry-run by default unless --run; --dry-run is harmless.
@@ -8152,6 +8774,8 @@ def pipeline_main(argv: list[str]) -> int:
             raise CliError("--merge needs --output PATH or a PATH --fetch target.")
         _heading(f"merge {downstream_target}")
         sub_argv = [downstream_target] + blocks["merge"]
+        if shared_source is not None and shared_output is not None and "--output" not in sub_argv:
+            sub_argv += ["--output", shared_output]
         if shared_dry_run and "--dry-run" not in sub_argv:
             sub_argv.append("--dry-run")
         # combine_main is the underlying impl for merge.
@@ -8314,8 +8938,9 @@ def _apply_reading_to_args(args) -> None:
     the per-language attributes the downstream code reads.
 
     Japanese mode lands on `args.ja_reading`. Korean mode lands on
-    `args.ko_reading`. Chinese mode lands on `args.zh_reading`. Other
-    languages still raise a clear "not yet implemented" error.
+    `args.ko_reading`. Mandarin mode lands on `args.zh_reading`.
+    Cantonese mode lands on `args.yue_reading`. Other languages still
+    raise a clear "not yet implemented" error.
 
     Always initialises the three per-language attrs to None so downstream
     callers can use `args.ja_reading` (etc.) without `getattr` guards. A
@@ -8329,43 +8954,53 @@ def _apply_reading_to_args(args) -> None:
     # ran or not.
     if not hasattr(args, "ja_reading"):
         args.ja_reading = None
+    if not hasattr(args, "ja_readings"):
+        args.ja_readings = []
     if not hasattr(args, "ko_reading"):
         args.ko_reading = None
+    if not hasattr(args, "ko_readings"):
+        args.ko_readings = []
     if not hasattr(args, "zh_reading"):
         args.zh_reading = None
+    if not hasattr(args, "yue_reading"):
+        args.yue_reading = None
     spec = getattr(args, "reading", None)
     if not spec:
         return
     if spec == "":
         # --no-reading → explicit disable for every language.
         args.ja_reading = None
+        args.ja_readings = []
         args.ko_reading = None
+        args.ko_readings = []
         args.zh_reading = None
+        args.yue_reading = None
         return
     pairs = _parse_reading_spec(spec)
     ja_modes = [m for l, m in pairs if l == "ja"]
     ko_modes = [m for l, m in pairs if l == "ko"]
     zh_modes = [m for l, m in pairs if l == "zh"]
-    unsupported = [(l, m) for l, m in pairs if l not in ("ja", "ko", "zh")]
+    yue_modes = [m for l, m in pairs if l == "yue"]
+    unsupported = [(l, m) for l, m in pairs if l not in ("ja", "ko", "zh", "yue")]
     if unsupported:
         langs = ", ".join(f"{l}:{m}" for l, m in unsupported)
         raise CliError(
             f"--reading for ({langs}) is not yet implemented. "
-            "Japanese, Korean, and Chinese (Mandarin) ship today; Cantonese / "
-            "Thai / Arabic / Hindi / Russian are on the roadmap (see ROADMAP.md)."
+            "Japanese, Korean, Mandarin, and Cantonese ship today; Thai / "
+            "Arabic / Hindi / Russian are on the roadmap (see ROADMAP.md)."
         )
     if ja_modes:
         # Mode names: hiragana (default), katakana, romaji.
-        mode = ja_modes[0]
-        if mode in ("hiragana", "katakana", "romaji"):
-            args.ja_reading = mode
-        else:
-            args.ja_reading = "hiragana"
+        args.ja_readings = [
+            mode if mode in ("hiragana", "katakana", "romaji") else "hiragana"
+            for mode in ja_modes
+        ]
+        args.ja_reading = args.ja_readings[0]
     if ko_modes:
         # Korean mode lives on a fresh attribute. Accept the bare-default
         # case (`ko:true` → revised) the same way the spec parser does.
-        mode = ko_modes[0]
-        args.ko_reading = "yale" if mode == "yale" else "revised"
+        args.ko_readings = ["yale" if mode == "yale" else "revised" for mode in ko_modes]
+        args.ko_reading = args.ko_readings[0]
     if zh_modes:
         # Chinese mode → its own attribute. Default mode is `marks` (tone
         # diacritics — the form most learners recognise).
@@ -8374,6 +9009,9 @@ def _apply_reading_to_args(args) -> None:
             args.zh_reading = mode
         else:
             args.zh_reading = "marks"
+    if yue_modes:
+        mode = yue_modes[0]
+        args.yue_reading = "numbers" if mode in ("true", "marks") else mode
 
 
 def _resolve_modify_reading(value) -> list[str]:
@@ -8776,6 +9414,10 @@ def _merge_overrides_into_toml(data: dict, overrides: dict, verb_blocks: dict) -
             "--force": ("force", True),
         },
         "modify": {
+            "--season": ("season", None),
+            "-s": ("season", None),
+            "--episode": ("episode", None),
+            "-e": ("episode", None),
             "--strip-cc-noise": ("strip_cc_noise", True),
             "--single-line": ("single_line", True),
             "--reading": ("reading", None),
@@ -8784,6 +9426,10 @@ def _merge_overrides_into_toml(data: dict, overrides: dict, verb_blocks: dict) -
             "--force": ("force", True),
         },
         "merge": {
+            "--season": ("season", None),
+            "-s": ("season", None),
+            "--episode": ("episode", None),
+            "-e": ("episode", None),
             "-l": ("languages", None),
             "--langs": ("languages", None),
             "--languages": ("languages", None),
@@ -9003,7 +9649,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     learning = p.add_argument_group("Learning Helpers")
     learning.add_argument("--reading-format", "--format", dest="reading_format", metavar="CODES", help="Reading-aid output format(s) — comma list of srt, ass, vtt, or 'all'. Default: srt. Overrides [modify].reading_format from user_settings.toml.")
-    learning.add_argument("--reading", dest="reading", metavar="SPEC", help="Generate per-language reading aids from downloaded SRTs. SPEC is a comma list of LANG:MODE pairs, e.g. 'ja:hiragana', 'ja:katakana', 'ja:romaji', 'ko:revised', 'zh:marks'. Pipe shorthand 'ja:hiragana|romaji' generates both side files. Japanese / Korean / Mandarin ship now; Cantonese / Thai / Arabic / Hindi / Russian land per the roadmap.")
+    learning.add_argument("--reading", dest="reading", metavar="SPEC", help="Generate per-language reading aids from downloaded SRTs. SPEC is a comma list of LANG:MODE pairs, e.g. 'ja:hiragana', 'ko:revised', 'zh:marks', 'yue:numbers'. Pipe shorthand 'ja:hiragana|romaji' generates both side files. Japanese / Korean / Mandarin / Cantonese ship now; Thai / Arabic / Hindi / Russian land per the roadmap.")
     learning.add_argument("--no-reading", dest="reading", action="store_const", const="", help="Disable reading-aid side-file generation for this run.")
     learning.add_argument("--single-line", "--single", action="store_true", default=False, help="Flatten SRT cues to one text line for cleaner asbplayer display. On by default; this flag is kept as an explicit readability marker.")
     learning.add_argument("--no-single-line", "--preserve-lines", dest="single_line", action="store_false", help="Keep each downloaded SRT's original line breaks (disables the default single-line flattening).")
@@ -9350,6 +9996,47 @@ def maybe_print_manual_search_suggestions(
                 open_in_browser(suggestion.url)
             except CliError as e:
                 print(f"  (could not open {suggestion.label}: {e})")
+
+
+def print_missing_subtitle_next_steps(
+    requested_langs: list[str],
+    episodes: list[str],
+    results: list[SearchResult],
+    *,
+    media: MediaInfo,
+    expected_output_dir: Path | None = None,
+) -> None:
+    missing_by_lang: dict[str, list[str]] = {}
+    for lang in requested_langs:
+        found = {r.episode for r in results if r.language == lang and r.status == "found"}
+        missing = [ep for ep in episodes if ep not in found]
+        if missing:
+            missing_by_lang[lang] = missing
+    if not missing_by_lang:
+        return
+
+    print("\nMissing subtitle next steps:")
+    for lang, eps in missing_by_lang.items():
+        shown = ", ".join(eps[:8])
+        more = f" (+{len(eps) - 8} more)" if len(eps) > 8 else ""
+        print(f"  - {lang}: missing {len(eps)}/{len(episodes)} episode(s): {shown}{more}")
+    print("  Try:")
+    if any(lang in {"ko", "zh", "yue"} for lang in missing_by_lang):
+        print("  1. Open community search suggestions with `--manual-search-open always`.")
+    else:
+        print("  1. Re-run with `--debug-providers` to inspect provider language/source tags.")
+    if expected_output_dir is not None:
+        print(f"  2. Put manually downloaded subtitles in: {expected_output_dir}")
+    else:
+        print("  2. Put manually downloaded subtitles beside the matching media/subtitle files.")
+    source_candidates = [lang for lang in requested_langs if lang not in missing_by_lang]
+    if source_candidates:
+        source = source_candidates[0]
+        targets = ",".join(missing_by_lang)
+        print(f"  3. Or machine-translate missing tracks: `getsubtitle translate FOLDER -l {targets} --mt-source {source}`")
+    elif media.title:
+        print("  3. Try a metadata URL with stronger IDs (IMDb/TMDB/AniList) or add `--title`.")
+    print("  4. Merge after filling gaps: `getsubtitle merge FOLDER -l " + ",".join(requested_langs) + "`")
 
 
 # ===========================================================================
@@ -10157,7 +10844,7 @@ _SETUP_READING_AID_BY_LANG: dict[str, tuple[str, str, str]] = {
     "zh": ("zh:marks", "Mandarin pinyin (with tone marks) above hanzi",
            "Ships now via pypinyin."),
     "yue": ("yue:numbers", "Cantonese jyutping above characters",
-            "Wired through; backend lands per ROADMAP."),
+            "Ships now via pycantonese."),
     "th": ("th:royal-thai", "Thai Royal-Thai transliteration",
            "Wired through; backend lands per ROADMAP."),
     "ar": ("ar:ala-lc", "Arabic ALA-LC romanization",
@@ -10202,8 +10889,8 @@ _SETUP_READING_AID_PROSE: dict[str, tuple[str, str, str]] = {
     "yue": (
         "Jyutping with numbered tones above each character. Cantonese-specific; "
         "pinyin tones don't transfer.",
-        "Free (when backend ships).",
-        "0 minutes — saves into config; activates when backend ships.",
+        "Free; pycantonese includes a Cantonese lexicon (~20 MB).",
+        "~30 seconds (pip install).",
     ),
     "th": (
         "Royal Thai transliteration above each cluster. Useful for learners "
@@ -10297,7 +10984,7 @@ def _setup_recommendations(choice: _SetupChoice) -> list[_SetupRecommendation]:
 
     Reading aids cover every language in _SETUP_READING_AID_BY_LANG, not
     just Japanese — Korean, Chinese, Cantonese, Thai, etc. are accepted
-    too (with a "backend coming" note for the deferred ones)."""
+    too (with a "backend coming" note only for deferred languages)."""
     learning = set(choice.learning)
     content = choice.content
     mt = choice.mt
@@ -10359,7 +11046,7 @@ def _setup_recommendations(choice: _SetupChoice) -> list[_SetupRecommendation]:
         if not meta:
             continue
         spec, label, status = meta
-        shipped = lang in ("ja", "ko", "zh")   # backends actually live today
+        shipped = lang in ("ja", "ko", "zh", "yue")   # backends actually live today
         prose = _SETUP_READING_AID_PROSE.get(lang)
         if prose is not None:
             reason, cost, setup_time = prose
@@ -10603,6 +11290,7 @@ _SETUP_INSTALL_HINTS: dict[str, tuple[str, str]] = {
     "furigana":        ("~3 MB",  "~10 seconds"),
     "romanization-ko": ("~80 MB", "30-60 seconds (nltk corpus on first run)"),
     "romanization-zh": ("~5 MB",  "~10 seconds"),
+    "romanization-yue": ("~20 MB", "~30 seconds"),
 }
 # Same shape but keyed by bare package name for when an extra isn't used.
 _SETUP_INSTALL_HINTS_BY_PACKAGE: dict[str, tuple[str, str]] = {
@@ -10610,6 +11298,7 @@ _SETUP_INSTALL_HINTS_BY_PACKAGE: dict[str, tuple[str, str]] = {
     "korean-romanizer":  ("~5 MB",  "~10 seconds"),
     "g2pk":              ("~70 MB", "30-60 seconds (nltk corpus on first run)"),
     "pypinyin":          ("~5 MB",  "~10 seconds"),
+    "pycantonese":       ("~20 MB", "~30 seconds"),
     "argostranslate":    ("~50 MB", "30-60 seconds"),
 }
 
@@ -10965,6 +11654,11 @@ def _setup_run_recommendation(rec: _SetupRecommendation, choice: _SetupChoice) -
                 print("  pypinyin already installed.")
                 return True
             return _setup_offer_pip_install("pypinyin", extra="romanization-zh")
+        if lang == "yue":
+            if _setup_module_exists("pycantonese"):
+                print("  pycantonese already installed.")
+                return True
+            return _setup_offer_pip_install("pycantonese", extra="romanization-yue")
         # Other languages: backend not shipped. The spec lands in the
         # config file (via _setup_config_text); this confirms the user
         # opted in even though the backend isn't live yet.
@@ -11114,6 +11808,7 @@ getsubtitle — Find and prepare subtitles for language learning.
 
 Quick start:
   getsubtitle setup                              # first-time setup helper
+  getsubtitle doctor                             # check install health
   getsubtitle -i                                  # interactive wizard (recommended for first run)
   getsubtitle URL                                 # download from a URL
   getsubtitle merge PATH -l ja,en                 # stack downloaded SRTs
@@ -11121,10 +11816,11 @@ Quick start:
 
 Subcommands (each has its own --help):
   setup         First-time onboarding: keys, config, recommendations.
+  doctor        Check install, keys, dependencies, ffmpeg, and Ollama.
   interactive   Guided wizard — picks the steps, asks the needed Qs, runs/saves.
   fetch         Download from URL, or scan a folder. (Bare URL works too.)
   translate     Fill missing-language SRTs via MT (argos / ollama / deepl).
-  modify        Cleanup, romanization (furigana / pinyin / jyutping / hangul / …), SAMI→SRT conversion.
+  modify        Cleanup, reading aids, SAMI→SRT, and MKV subtitle extraction.
   merge         Stack 2+ language SRTs into one study file.
   config        Manage user_settings.toml defaults.
   sources       Check provider/source access for your configured API keys.
@@ -11311,13 +12007,22 @@ Examples:
   getsubtitle merge PATH -l zh,en --reading zh:numbers
 
 ──────────────────────────────────────────────────────────────────────
-Cantonese / Thai / Arabic / Hindi / Russian — coming soon
+Cantonese — Jyutping
+──────────────────────────────────────────────────────────────────────
+  yue:numbers    Default. Cantonese jyutping with numbered tones:
+                   廣東話  →  gwong2 dung1 waa2
+
+Requires PyCantonese:
+  python3 -m pip install pycantonese
+  pip install -e ".[romanization-yue]"
+
+──────────────────────────────────────────────────────────────────────
+Thai / Arabic / Hindi / Russian — coming soon
 ──────────────────────────────────────────────────────────────────────
 Wired through to CLI and TOML; backends land per the ROADMAP. The
 wizard and setup script accept these so you can save a workflow now
 and re-run when the backend lands.
 
-  yue:numbers    Cantonese jyutping with numbered tones
   th:royal-thai  Thai Royal-Thai transliteration
   ar:ala-lc      Arabic ALA-LC romanization
   hi:iast        Hindi IAST transliteration
@@ -11457,9 +12162,11 @@ Examples:
   getsubtitle modify FOLDER --reading ja:hiragana          # Japanese furigana
   getsubtitle modify FOLDER --reading ja:romaji            # Japanese romaji
   getsubtitle modify FOLDER --reading "ja:hiragana|romaji" # both side files
+  getsubtitle modify FOLDER -s 1 -e 3 --reading ko:revised # one episode only
   getsubtitle modify FOLDER --convert smi-to-srt
   getsubtitle modify FOLDER --convert ko:smi-to-srt        # Korean only
   getsubtitle modify FOLDER --convert ko,en:smi-to-srt     # Korean + English
+  getsubtitle modify FOLDER --extract-mkv-subs             # embedded text subs
   getsubtitle modify FOLDER --convert smi-to-srt --force
   getsubtitle modify FOLDER --strip-cc-noise --single-line --reading ja:hiragana --dry-run
 
@@ -11472,6 +12179,9 @@ Operations (run in this order; pick at least one):
                              Encoding is auto-detected (UTF-8/UTF-16/CP949).
   --strip-cc-noise         Remove broadcast CC noise (➡ continuation arrows)
                            in place. Idempotent.
+  --extract-mkv-subs       Extract embedded text subtitles from MKV/video
+                           files with local ffprobe + ffmpeg. Image subtitle
+                           streams such as PGS are reported and skipped.
   --single-line, --single  Flatten each cue to one text line in place.
                            Idempotent. Useful for asbplayer.
   --reading SPEC      Generate per-language reading aids. SPEC is a
@@ -11479,11 +12189,11 @@ Operations (run in this order; pick at least one):
                              ja:hiragana, ja:katakana, ja:romaji   (Japanese — ships)
                              ko:true | ko:revised | ko:yale        (Korean — ships)
                              zh:true | zh:marks | zh:numbers       (pinyin — ships)
+                             yue:true | yue:numbers                (jyutping — ships)
                              ja:hiragana|romaji                    (both side files)
-                             yue:true | yue:numbers                (jyutping — coming soon)
                            "true" picks the language's sensible default.
-                           Japanese, Korean, and Mandarin Chinese ship now;
-                           other languages land per-language as backends
+                           Japanese, Korean, Mandarin Chinese, and
+                           Cantonese ship now; other languages land as backends
                            arrive (see ROADMAP).
   --no-romanization        Disable reading-aid generation for this run.
   --format CODES           Which reading-aid side files to generate. Comma
@@ -11491,6 +12201,10 @@ Operations (run in this order; pick at least one):
                            (Also accepts --reading-format.)
 
 Other:
+  -s, --season RANGE       When PATH is a folder, only process matching
+                           season(s), e.g. -s 1 or -s 1-2.
+  -e, --episode RANGE      When PATH is a folder, only process matching
+                           episode(s), e.g. -e 3 or -e 3-5.
   --force                  With --convert: overwrite existing sibling .srt files.
                            Without --force, conversion skips targets that
                            already exist (protects human-quality .ko.srt etc.).
@@ -11557,6 +12271,27 @@ Notes:
   - Direct SubDL fallback is separate: getsubtitle --set-key subdl
   - Does not download subtitles.
   - Source names and statuses are reported as Wyzie returns them.
+""",
+    "doctor": """\
+Check install health.
+
+Usage:
+  getsubtitle doctor
+  getsubtitle doctor --verbose
+
+Checks:
+  - Python version and executable
+  - Config and default output locations
+  - Optional reading-aid dependencies:
+      pykakasi, korean-romanizer, g2pk, pypinyin, pycantonese
+  - Optional local tools:
+      ffmpeg / ffprobe for MKV embedded subtitle extraction
+      Ollama daemon for offline LLM translation
+  - Provider API keys:
+      Jimaku, Wyzie, SubDL, DeepL, TMDB
+
+It does not download subtitles or contact subtitle providers. Use
+`getsubtitle sources --check` for provider-source diagnostics.
 """,
     "fetch": """\
 Fetch subtitles for a URL or for folder(s) on disk.
@@ -11935,7 +12670,7 @@ What it asks:
            ja:hiragana / ja:katakana / ja:romaji           (★ ships now)
            ko:revised / ko:yale                            (★ ships now)
            zh:marks / zh:numbers / zh:letters              (★ ships now)
-           yue:numbers (jyutping)                          (☆ backend coming)
+           yue:numbers (jyutping)                          (★ ships now)
            th:royal-thai / ar:ala-lc / etc.                (☆ backend coming)
          The header example adapts to the user's primary script
          (漢字（かんじ） for ja, 한글 (hangeul) for ko, 漢字 (pīnyīn) for zh).
@@ -11964,10 +12699,11 @@ something else, a one-line warning surfaces here.
 
 When you pick **Run**, the wizard probes your environment for missing
 pieces — the pykakasi package for Japanese furigana, korean-romanizer +
-g2pk for Korean, pypinyin for Mandarin, the Ollama daemon if you picked
+g2pk for Korean, pypinyin for Mandarin, pycantonese for Cantonese,
+the Ollama daemon if you picked
 ollama, the DeepL key if you picked DeepL, missing Jimaku/Wyzie/TMDB
 keys — and walks you through fixing each gap before dispatching. Deferred
-reading aids (yue/th/ar/hi/ru) are stripped before Run so the modify
+reading aids (th/ar/hi/ru) are stripped before Run so the modify
 step doesn't crash; Save keeps them so the workflow re-runs once the
 backend ships. **Save** skips the probe entirely so you can build
 workflow files on one machine for use on another.
@@ -11975,7 +12711,7 @@ workflow files on one machine for use on another.
 Limitations:
   - Requires an attached terminal (fails cleanly otherwise).
   - One language alone skips display order / master and the merge step.
-  - Cantonese / Thai / Arabic / Hindi / Russian reading-aid backends
+  - Thai / Arabic / Hindi / Russian reading-aid backends
     are not yet shipped; the wizard accepts and saves them so you can
     re-run once the backend lands.
 
@@ -12039,7 +12775,7 @@ def _is_topic_help_request(argv: list[str]) -> bool:
             return True
         if len(argv) == 1:
             return True
-    if argv[0] in ("merge", "fetch", "sources", "setup"):
+    if argv[0] in ("merge", "fetch", "sources", "setup", "doctor"):
         if any(a in ("-h", "--help") for a in argv[1:]):
             return True
         if len(argv) == 1:
@@ -12078,6 +12814,9 @@ def _show_topic_help(argv: list[str]) -> int:
     if argv and argv[0] == "setup":
         sys.stdout.write(HELP_TOPICS["setup"])
         return 0
+    if argv and argv[0] == "doctor":
+        sys.stdout.write(HELP_TOPICS["doctor"])
+        return 0
     # `--help TOPIC` form: topic is the next non-flag arg.
     topic: str | None = None
     if len(argv) > 1 and not argv[1].startswith("-"):
@@ -12096,6 +12835,89 @@ def _show_topic_help(argv: list[str]) -> int:
 
 
 # ═══════════════════════════════════════════════════════════════════════
+# Doctor
+# ═══════════════════════════════════════════════════════════════════════
+
+def _doctor_row(label: str, ok: bool | None, detail: str) -> str:
+    mark = "OK" if ok is True else "WARN" if ok is None else "MISS"
+    return f"  {mark:4} {label}: {detail}"
+
+
+def doctor_main(argv: list[str]) -> int:
+    parser = argparse.ArgumentParser(
+        prog="getsubtitle doctor",
+        description="Check install health, optional dependencies, API keys, and local tools.",
+    )
+    parser.add_argument("--verbose", action="store_true", help="Show extra paths and environment details.")
+    args = parser.parse_args(argv)
+
+    rows: list[str] = []
+    py_ok = sys.version_info >= (3, 10)
+    rows.append(_doctor_row("Python", py_ok, platform.python_version()))
+    rows.append(_doctor_row("Executable", True, sys.executable))
+    rows.append(_doctor_row("Config", True, str(config_path())))
+    rows.append(_doctor_row("Output folder", True, str(DEFAULT_OUTPUT)))
+
+    optional_modules = [
+        ("pykakasi", "Japanese furigana", 'pip install -e ".[furigana]"'),
+        ("korean_romanizer", "Korean Revised Romanization", 'pip install -e ".[romanization-ko]"'),
+        ("g2pk", "Korean G2P quality boost", 'pip install -e ".[romanization-ko]"'),
+        ("pypinyin", "Mandarin pinyin", 'pip install -e ".[romanization-zh]"'),
+        ("pycantonese", "Cantonese Jyutping", 'pip install -e ".[romanization-yue]"'),
+        ("argostranslate", "Argos offline translation", "pip install argostranslate"),
+    ]
+    for module_name, label, install_hint in optional_modules:
+        ok = _setup_module_exists(module_name)
+        detail = "installed" if ok else f"not installed; {install_hint}"
+        rows.append(_doctor_row(label, ok, detail))
+
+    ffmpeg = shutil.which("ffmpeg")
+    ffprobe = shutil.which("ffprobe")
+    rows.append(_doctor_row("ffmpeg", bool(ffmpeg), ffmpeg or "not found; needed for MKV subtitle extraction"))
+    rows.append(_doctor_row("ffprobe", bool(ffprobe), ffprobe or "not found; needed for MKV subtitle detection"))
+    ollama_bin = shutil.which("ollama")
+    ollama_ok = bool(ollama_bin and _wizard_ollama_reachable())
+    if ollama_ok:
+        ollama_detail = f"daemon reachable ({ollama_bin})"
+    elif ollama_bin:
+        ollama_detail = f"installed but daemon not reachable ({ollama_bin})"
+    else:
+        ollama_detail = "not found; only needed for --engine ollama"
+    rows.append(_doctor_row("Ollama", True if ollama_ok else None, ollama_detail))
+
+    for provider, meta in KEY_PROVIDERS.items():
+        key = get_provider_api_key(provider, prompt_if_missing=False)
+        env = meta["env"]
+        if key:
+            detail = f"configured ({env} or keychain)"
+            ok = True
+        else:
+            detail = f"missing; run getsubtitle --set-key {provider}"
+            ok = None
+        rows.append(_doctor_row(meta["label"] + " key", ok, detail))
+
+    print("getsubtitle doctor")
+    print()
+    for row in rows:
+        print(row)
+    print()
+    print("Suggested next steps:")
+    missing_keys = [p for p in KEY_PROVIDERS if not get_provider_api_key(p, prompt_if_missing=False)]
+    if missing_keys:
+        print("  - Add useful provider keys with `getsubtitle --set-key PROVIDER`.")
+    if not ffmpeg or not ffprobe:
+        print("  - Install ffmpeg to enable `getsubtitle modify PATH --extract-mkv-subs`.")
+    if not _setup_module_exists("pycantonese"):
+        print('  - Install Cantonese support with `pip install -e ".[romanization-yue]"`.')
+    if args.verbose:
+        print()
+        print("Environment:")
+        print(f"  Platform: {platform.platform()}")
+        print(f"  PATH: {os.environ.get('PATH', '')}")
+    return 0 if py_ok else 1
+
+
+# ═══════════════════════════════════════════════════════════════════════
 # Interactive wizard
 # ═══════════════════════════════════════════════════════════════════════
 # `getsubtitle --interactive` (or `getsubtitle interactive`, or `-i`) walks
@@ -12105,8 +12927,8 @@ def _show_topic_help(argv: list[str]) -> int:
 # on the CLI; mt_source / reading_format in TOML).
 #
 # Romanization options exposed by the wizard cover every language in
-# _READING_DEFAULTS — Japanese ships now, Korean / Chinese /
-# Cantonese / Thai / Arabic / Hindi / Russian land per ROADMAP. The
+# _READING_DEFAULTS — Japanese / Korean / Chinese / Cantonese ship now;
+# Thai / Arabic / Hindi / Russian land per ROADMAP. The
 # wizard accepts those choices and emits the same `--reading`
 # spec the CLI/TOML already validate; the parser raises a clear
 # "not yet implemented" error at run time for the deferred languages.
@@ -12128,7 +12950,7 @@ _WIZARD_READING_AID_MENU: list[tuple[str, str, str, bool]] = [
     ("ko", "ko:yale",           "Korean — Yale Romanization",               True),
     ("zh", "zh:marks",          "Mandarin — pinyin with tone marks",        True),
     ("zh", "zh:numbers",        "Mandarin — pinyin with numbered tones",    True),
-    ("yue", "yue:numbers",      "Cantonese — jyutping with numbered tones", False),
+    ("yue", "yue:numbers",      "Cantonese — jyutping with numbered tones", True),
     ("th", "th:royal-thai",     "Thai — Royal Thai transliteration",        False),
     ("ar", "ar:ala-lc",         "Arabic — ALA-LC romanization",             False),
     ("hi", "hi:iast",           "Hindi — IAST transliteration",             False),
@@ -12221,6 +13043,7 @@ class _WizardState:
     """Bag of answers for the interactive wizard. Each field maps to a
     question and a single emitter rule, so the emitters stay declarative."""
     source: str = ""                       # Q1: URL or path
+    source_title: str = ""                 # optional title resolved by Q1 picker
     source_kind: str = ""                  # "url" | "path" | "title"
     languages: list[str] = field(default_factory=list)        # Q2
     order: list[str] = field(default_factory=list)            # Q3
@@ -12405,6 +13228,14 @@ def _wizard_title_candidates(title: str) -> list[dict]:
     return rows
 
 
+def _wizard_title_from_candidate_label(label: str) -> str:
+    text = re.sub(r"^(?:AniList|TMDB TV|TMDB Movie):\s*", "", label).strip()
+    text = re.sub(r"^\d+:\s*", "", text)
+    text = text.split("/", 1)[0]
+    text = re.sub(r"\s*\(\d{4}.*$", "", text)
+    return text.strip()
+
+
 def _wizard_pick_title_candidate(title: str) -> tuple[str, str, str, bool] | None | str:
     """Pick a title hit. Return shape:
       - (url, provider, label, is_movie) — user picked a candidate
@@ -12514,6 +13345,23 @@ def _wizard_q1_source(state: _WizardState) -> None:
             except CliError as exc:
                 print(f"    {exc}")
                 continue
+            file_episode = parse_episode_marker(path.name) if path.is_file() else None
+            if file_episode:
+                state.season = str(file_episode[0])
+                state.episode = str(file_episode[1])
+                print(f"    Selected episode: {_episode_label_se(file_episode[0], file_episode[1])}")
+            if path.is_file() and state.steps & {"merge"}:
+                print("    File selected; using its folder so matching sidecar subtitles can be found.")
+                path = path.parent
+                _videos, subtitles, _season_dirs, truncated = _wizard_media_counts(path)
+                suffix = " (scan limited)" if truncated else ""
+                description = f"local folder beside selected file: {subtitles} subtitle file(s){suffix}"
+            elif path.is_file() and path.suffix.lower() in _BATCH_VIDEO_EXTS and state.steps & {"modify"}:
+                print("    Video file selected; using its folder so sidecar subtitle files can be found.")
+                path = path.parent
+                _videos, subtitles, _season_dirs, truncated = _wizard_media_counts(path)
+                suffix = " (scan limited)" if truncated else ""
+                description = f"local folder beside video: {subtitles} subtitle file(s){suffix}"
             state.source = str(path)
             print(f"    Identified as: {description}")
             return
@@ -12571,6 +13419,7 @@ def _wizard_q1_source(state: _WizardState) -> None:
             else:
                 picked_url, provider, label, picked_is_movie = picked
                 state.source = picked_url
+                state.source_title = _wizard_title_from_candidate_label(label)
                 state.source_kind = "url"
                 # Trust the picker's own movie tag — TMDB /movie/ and
                 # AniList format=MOVIE both flow through here. URL-shape
@@ -12610,6 +13459,23 @@ def _wizard_q2_languages(state: _WizardState) -> None:
     # de-dupe preserving order
     seen: set[str] = set()
     state.languages = [c for c in norm if not (c in seen or seen.add(c))]
+    reading_capable = [lang for lang in state.languages if lang in {"ja", "ko", "zh", "yue"}]
+    if reading_capable and "modify" not in state.steps:
+        names = {
+            "ja": "Japanese furigana",
+            "ko": "Korean romanization",
+            "zh": "Mandarin pinyin",
+            "yue": "Cantonese Jyutping",
+        }
+        label = ", ".join(names[lang] for lang in reading_capable)
+        print()
+        print(f"    {label} reading aids are available, but Modify is not selected.")
+        print("    Add the Modify step so I can ask which reading aids you want?")
+        if _wizard_yesno("Add Modify step for reading aids?", default=True):
+            state.steps.add("modify")
+            print("    Selected: fetch + modify.")
+        else:
+            print("    Reading aids skipped for this workflow.")
 
 
 def _wizard_q3_order(state: _WizardState) -> None:
@@ -12819,11 +13685,11 @@ def _wizard_q9_format(state: _WizardState) -> None:
     print()
     print("Q11. Final output format.")
     print("    a) SRT  — most compatible (default if no ruby reading aid)")
-    print("    b) VTT  — renders ruby reading aids above the script.")
-    print("             Supported by VLC, mpv/IINA, browsers, web players,")
-    print("             and asbplayer.")
+    print("    b) VTT  — best for Japanese ruby in asbplayer/browser study")
+    print("             workflows; local-player ruby support is uneven.")
     print("    c) SMI")
-    print("    d) ASS")
+    print("    d) ASS  — best local-player choice for stacked Korean/Chinese")
+    print("             readings above the original script.")
     print("    e) TXT - without timestamp")
     pick = _wizard_prompt("Choose a/b/c/d/e", {"vtt": "b", "srt": "a"}.get(default, "a")).lower()
     state.format = {"a": "srt", "b": "vtt", "c": "smi", "d": "ass", "e": "txt"}.get(pick[:1], default)
@@ -13009,24 +13875,91 @@ def _wizard_emit_cli(state: _WizardState) -> list[str]:
     --reading (NOT --furigana). Honors state.steps so modify-only /
     merge-only / translate-only paths emit a focused command without
     --fetch noise or unwanted verbs."""
-    argv: list[str] = ["getsubtitle"]
     steps = state.steps or {"fetch", "modify", "merge"}
+    local_steps = steps - {"fetch"}
+    local_episode_filter = "fetch" not in steps and bool(state.season or state.episode)
+
+    def add_local_episode_filter(argv: list[str]) -> None:
+        if not local_episode_filter:
+            return
+        if state.season:
+            argv += ["--season", state.season]
+        if state.episode:
+            argv += ["--episode", state.episode]
+
+    def merge_order() -> list[str]:
+        order = list(state.order)
+        for lang in list(state.order):
+            modes = [
+                spec.split(":", 1)[1]
+                for spec in state.reading_aids
+                if spec.startswith(f"{lang}:")
+            ]
+            if len(modes) <= 1 or lang not in order:
+                continue
+            variants = [f"{lang}-{mode}" for mode in modes if is_pseudo_lang(f"{lang}-{mode}")]
+            if variants:
+                idx = order.index(lang)
+                order[idx:idx] = variants
+        return order
+
+    # Local-only, single-verb workflows should use the ordinary subcommands
+    # instead of the pipeline flags. `getsubtitle PATH --merge` is parsed as
+    # a pipeline and rejects the positional PATH before any verb; the
+    # subcommand form is what users expect and what argparse supports.
+    if "fetch" not in steps and local_steps == {"modify"}:
+        argv: list[str] = ["getsubtitle", "modify", state.source]
+        add_local_episode_filter(argv)
+        if state.asbplayer:
+            argv += ["--strip-cc-noise", "--single-line"]
+        if state.reading_aids:
+            argv += ["--reading", ",".join(state.reading_aids)]
+            if state.format == "vtt":
+                argv += ["--reading-format", "vtt"]
+        return argv
+
+    if "fetch" not in steps and local_steps == {"merge"}:
+        argv = ["getsubtitle", "merge", state.source]
+        add_local_episode_filter(argv)
+        order = merge_order()
+        if len(order) >= 2:
+            argv += ["--languages", ",".join(order)]
+        if state.master:
+            argv += ["--master", state.master]
+        if state.format:
+            argv += ["--format", state.format]
+        if state.output:
+            argv += ["--output", state.output]
+        return argv
+
+    if "fetch" not in steps and local_steps == {"translate"}:
+        argv = ["getsubtitle", "translate", state.source]
+        if state.languages:
+            argv += ["--languages", ",".join(state.languages)]
+        if state.mt_engine:
+            argv += ["--engine", state.mt_engine]
+        if state.output:
+            argv += ["--output", state.output]
+        return argv
+
+    argv = ["getsubtitle"]
     # Source. With fetch in steps, emit --fetch and (for URL/title) the
     # season/episode slicing. Without fetch, the source path is the
-    # input for modify/merge/translate and goes at the head of argv.
+    # input for modify/merge/translate and is carried by --source.
     if "fetch" in steps:
         if state.source_kind == "title":
             argv += ["--fetch", "--title", state.source]
         else:
             argv += ["--fetch", state.source]
+            if state.source_title:
+                argv += ["--title", state.source_title]
         if state.source_kind in ("url", "title") and state.season:
             argv += ["--season", state.season]
         if state.source_kind in ("url", "title") and state.episode:
             argv += ["--episode", state.episode]
     else:
-        # Path-form for local-only flows. The source is positional.
-        argv.append(state.source)
-    if state.languages:
+        argv += ["--source", state.source]
+    if state.languages and "fetch" in steps:
         argv += ["--languages", ",".join(state.languages)]
     # Translate verb. --translate ENGINE is the canonical form when MT
     # is requested; --no-engine is the explicit opt-out when fetch is
@@ -13038,6 +13971,7 @@ def _wizard_emit_cli(state: _WizardState) -> list[str]:
     # Modify block.
     if "modify" in steps and (state.reading_aids or state.asbplayer):
         argv.append("--modify")
+        add_local_episode_filter(argv)
         if state.asbplayer:
             argv += ["--strip-cc-noise", "--single-line"]
         if state.reading_aids:
@@ -13046,7 +13980,8 @@ def _wizard_emit_cli(state: _WizardState) -> list[str]:
                 argv += ["--reading-format", "vtt"]
     # Merge block — only when 2+ languages.
     if "merge" in steps and len(state.order) >= 2:
-        argv += ["--merge", "--languages", ",".join(state.order)]
+        argv += ["--merge", "--languages", ",".join(merge_order())]
+        add_local_episode_filter(argv)
         if state.master:
             argv += ["--master", state.master]
         if state.format:
@@ -13063,6 +13998,23 @@ def _wizard_emit_cli_string(state: _WizardState) -> str:
     return " ".join(shlex.quote(p) if (" " in p or any(c in p for c in "$&|'\"")) else p for p in parts)
 
 
+def _wizard_merge_order(state: _WizardState) -> list[str]:
+    order = list(state.order)
+    for lang in list(state.order):
+        modes = [
+            spec.split(":", 1)[1]
+            for spec in state.reading_aids
+            if spec.startswith(f"{lang}:")
+        ]
+        if len(modes) <= 1 or lang not in order:
+            continue
+        variants = [f"{lang}-{mode}" for mode in modes if is_pseudo_lang(f"{lang}-{mode}")]
+        if variants:
+            idx = order.index(lang)
+            order[idx:idx] = variants
+    return order
+
+
 def _wizard_emit_toml(state: _WizardState) -> str:
     """Build a workflow TOML matching --config FILE.toml schema. Sections
     are only emitted for the verbs the user actually picked at Q1, so a
@@ -13070,24 +14022,25 @@ def _wizard_emit_toml(state: _WizardState) -> str:
     boilerplate."""
     lines: list[str] = []
     steps = state.steps or {"fetch", "modify", "merge"}
-    # [fetch] — present even on local-only paths because that's where the
-    # source = "PATH" key lives. The downstream config loader treats
-    # [fetch] without --fetch as the input source for modify/merge.
-    lines.append("[fetch]")
-    if "fetch" in steps and state.source_kind == "title":
-        lines.append(f'title = "{state.source}"')
-    else:
-        lines.append(f'source = "{state.source}"')
-    if "fetch" in steps and state.source_kind in ("url", "title"):
-        if state.season:
-            lines.append(f'season = "{state.season}"')
-        if state.episode:
-            lines.append(f'episode = "{state.episode}"')
-    if state.languages:
-        lines.append(f'languages = "{",".join(state.languages)}"')
-    if "fetch" in steps and not state.mt_engine and state.source_kind in ("url", "title"):
-        lines.append("no_engine = true")
-    lines.append("")
+    local_episode_filter = "fetch" not in steps and bool(state.season or state.episode)
+    if "fetch" in steps:
+        lines.append("[fetch]")
+        if state.source_kind == "title":
+            lines.append(f'title = "{state.source}"')
+        else:
+            lines.append(f'source = "{state.source}"')
+            if state.source_title:
+                lines.append(f'title = "{state.source_title}"')
+        if state.source_kind in ("url", "title"):
+            if state.season:
+                lines.append(f'season = "{state.season}"')
+            if state.episode:
+                lines.append(f'episode = "{state.episode}"')
+        if state.languages:
+            lines.append(f'languages = "{",".join(state.languages)}"')
+        if not state.mt_engine and state.source_kind in ("url", "title"):
+            lines.append("no_engine = true")
+        lines.append("")
     # [translate]
     if "translate" in steps and state.mt_engine:
         lines.append("[translate]")
@@ -13098,6 +14051,11 @@ def _wizard_emit_toml(state: _WizardState) -> str:
     has_modify = "modify" in steps and bool(state.reading_aids or state.asbplayer)
     if has_modify:
         lines.append("[modify]")
+        if local_episode_filter:
+            if state.season:
+                lines.append(f'season = "{state.season}"')
+            if state.episode:
+                lines.append(f'episode = "{state.episode}"')
         if state.asbplayer:
             lines.append("single_line = true")
             lines.append("strip_cc_noise = true")
@@ -13109,17 +14067,26 @@ def _wizard_emit_toml(state: _WizardState) -> str:
     # [merge]
     if "merge" in steps and len(state.order) >= 2:
         lines.append("[merge]")
-        lines.append(f'languages = "{",".join(state.order)}"')
+        lines.append(f'languages = "{",".join(_wizard_merge_order(state))}"')
+        if local_episode_filter:
+            if state.season:
+                lines.append(f'season = "{state.season}"')
+            if state.episode:
+                lines.append(f'episode = "{state.episode}"')
         if state.master:
             lines.append(f'priority = ["{state.master}"]')
         lines.append('sync = "auto"')
         if state.format:
             lines.append(f'format = "{state.format}"')
         lines.append("")
-    # [output]
-    if state.output:
+    # [output]. For local-only workflows, target carries the input folder
+    # used by modify/merge/translate. This mirrors `--source PATH` in the
+    # CLI form and avoids adding a misleading [fetch] section.
+    local_only = "fetch" not in steps
+    output_target = state.output or (state.source if local_only else "")
+    if output_target:
         lines.append("[output]")
-        lines.append(f'target = "{state.output}"')
+        lines.append(f'target = "{output_target}"')
         lines.append('layout = "archive"')
         lines.append("")
     return "\n".join(lines).rstrip() + "\n"
@@ -13168,12 +14135,21 @@ def _wizard_probe_dependencies(state: _WizardState) -> list[tuple[str, str, str]
         except ImportError:
             out.append(("block", "pypinyin (Mandarin pinyin)",
                         'pip install -e ".[romanization-zh]"  # or: pip install pypinyin'))
+    # Cantonese Jyutping needs PyCantonese.
+    needs_yue = any(s.startswith("yue:") for s in state.reading_aids)
+    if needs_yue:
+        try:
+            import pycantonese  # noqa: F401
+        except ImportError:
+            out.append(("block", "pycantonese (Cantonese Jyutping)",
+                        'pip install -e ".[romanization-yue]"  # or: pip install pycantonese'))
     # Other reading-aid backends — still not shipped.
     deferred = [
         s for s in state.reading_aids
         if not s.startswith("ja:")
         and not s.startswith("ko:")
         and not s.startswith("zh:")
+        and not s.startswith("yue:")
     ]
     if deferred:
         out.append(("warn",
@@ -13381,7 +14357,7 @@ def interactive_main(argv: list[str] | None = None) -> int:
             # so the rest of the pipeline (fetch + merge + ja/ko/zh
             # readings) still succeeds. Save flow keeps them so the
             # generated TOML works once the backend ships.
-            shipped = {"ja", "ko", "zh"}
+            shipped = {"ja", "ko", "zh", "yue"}
             deferred = [s for s in state.reading_aids
                         if s.split(":", 1)[0] not in shipped]
             run_state = state
@@ -13432,6 +14408,8 @@ def main(argv: list[str] | None = None) -> int:
         return interactive_main(raw_argv[1:])
     if raw_argv[0] == "setup":
         return setup_main(raw_argv[1:])
+    if raw_argv[0] == "doctor":
+        return doctor_main(raw_argv[1:])
     # Topic-help dispatch — handled before argparse so we own the help UX.
     if _is_topic_help_request(raw_argv):
         return _show_topic_help(raw_argv)
@@ -13824,6 +14802,14 @@ def main(argv: list[str] | None = None) -> int:
 
     print_search_results(search_results)
     print_warnings(warnings)
+    expected_dir = output_dir(Path(args.output).expanduser(), media, media.season, args.layout)
+    print_missing_subtitle_next_steps(
+        langs,
+        episodes,
+        search_results,
+        media=media,
+        expected_output_dir=expected_dir,
+    )
     maybe_print_manual_search_suggestions(
         media,
         langs,
@@ -13831,7 +14817,7 @@ def main(argv: list[str] | None = None) -> int:
         search_results,
         mode=args.manual_search,
         open_mode=args.manual_search_open,
-        expected_output_dir=output_dir(Path(args.output).expanduser(), media, media.season, args.layout),
+        expected_output_dir=expected_dir,
     )
 
     if not planned:
@@ -13845,12 +14831,20 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     base = Path(args.output).expanduser()
-    saved: list[Path] = []
-    print("\nDownloading subtitles:")
-    for idx, (_lang, ep, sub) in enumerate(planned, start=1):
-        progress_bar(idx, len(planned), "downloading", f"episode {ep} {sub.language}", transient=True)
-        dest = output_dir(base, media, media.season, args.layout)
-        saved.extend(save_subtitle(sub, dest, media, media.season, ep))
+    saved, download_failures = download_planned_subtitles(
+        planned,
+        base=base,
+        media=media,
+        season=media.season,
+        layout=args.layout,
+    )
+
+    if download_failures:
+        warnings.extend(download_failures)
+        print_warnings(download_failures)
+    if not saved:
+        print("\nNo subtitles were downloaded successfully.")
+        return 1
 
     if args.strip_cc_noise:
         # Strip first so the flatten step below doesn't have to deal with
@@ -14003,33 +14997,42 @@ def main(argv: list[str] | None = None) -> int:
     generated: list[Path] = []
     ko_generated: list[Path] = []
     zh_generated: list[Path] = []
+    yue_generated: list[Path] = []
     _reading_formats = parse_furigana_formats(getattr(args, "reading_format", None))
     if args.ja_reading:
         furigana_sources = [path for path in saved if ".ja" in path.name and path.suffix.lower() == ".srt"]
         if furigana_sources:
             print("\nGenerating furigana:")
-            for idx, path in enumerate(furigana_sources, start=1):
-                progress_bar(idx, len(furigana_sources), "furigana", path.name, transient=True)
-                generated.extend(
-                    generate_furigana(
-                        [path], args.ja_reading, args.single_line,
-                        formats=_reading_formats,
+            total = len(furigana_sources) * len(getattr(args, "ja_readings", None) or [args.ja_reading])
+            done = 0
+            for path in furigana_sources:
+                for mode in (getattr(args, "ja_readings", None) or [args.ja_reading]):
+                    done += 1
+                    progress_bar(done, total, "furigana", f"{path.name} ({mode})", transient=True)
+                    generated.extend(
+                        generate_furigana(
+                            [path], mode, args.single_line,
+                            formats=_reading_formats,
+                        )
                     )
-                )
         else:
             generated = []
     if getattr(args, "ko_reading", None):
         ko_sources = [path for path in saved if ".ko" in path.name and path.suffix.lower() == ".srt"]
         if ko_sources:
             print("\nGenerating Korean romanization:")
-            for idx, path in enumerate(ko_sources, start=1):
-                progress_bar(idx, len(ko_sources), "romanization", path.name, transient=True)
-                ko_generated.extend(
-                    generate_korean_romanization(
-                        [path], args.ko_reading, args.single_line,
-                        formats=_reading_formats,
+            total = len(ko_sources) * len(getattr(args, "ko_readings", None) or [args.ko_reading])
+            done = 0
+            for path in ko_sources:
+                for mode in (getattr(args, "ko_readings", None) or [args.ko_reading]):
+                    done += 1
+                    progress_bar(done, total, "romanization", f"{path.name} ({mode})", transient=True)
+                    ko_generated.extend(
+                        generate_korean_romanization(
+                            [path], mode, args.single_line,
+                            formats=_reading_formats,
+                        )
                     )
-                )
     if getattr(args, "zh_reading", None):
         zh_sources = [path for path in saved if ".zh" in path.name and path.suffix.lower() == ".srt"]
         if zh_sources:
@@ -14039,6 +15042,18 @@ def main(argv: list[str] | None = None) -> int:
                 zh_generated.extend(
                     generate_chinese_romanization(
                         [path], args.zh_reading, args.single_line,
+                        formats=_reading_formats,
+                    )
+                )
+    if getattr(args, "yue_reading", None):
+        yue_sources = [path for path in saved if ".yue" in path.name and path.suffix.lower() == ".srt"]
+        if yue_sources:
+            print("\nGenerating Cantonese Jyutping:")
+            for idx, path in enumerate(yue_sources, start=1):
+                progress_bar(idx, len(yue_sources), "jyutping", path.name, transient=True)
+                yue_generated.extend(
+                    generate_cantonese_romanization(
+                        [path], args.yue_reading, args.single_line,
                         formats=_reading_formats,
                     )
                 )
@@ -14071,6 +15086,13 @@ def main(argv: list[str] | None = None) -> int:
                 print(f"  {path}")
         else:
             print("\nChinese pinyin: no .zh.srt files were generated; pinyin is created from Chinese SRT.")
+    if getattr(args, "yue_reading", None):
+        if yue_generated:
+            print("\nGenerated Cantonese Jyutping:")
+            for path in yue_generated:
+                print(f"  {path}")
+        else:
+            print("\nCantonese Jyutping: no .yue.srt files were generated; Jyutping is created from Cantonese SRT.")
     # If MT contributed late-stage warnings (e.g., no source available, engine
     # not configured), surface them after the saved-files block so they aren't
     # lost beneath download output.
