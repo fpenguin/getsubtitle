@@ -70,9 +70,14 @@ The wizard runs all three by default; the CLI lets you pick any subset
 ## Run the wizard (recommended for first-timers)
 
 ```sh
-getsubtitle setup     # pick providers + API keys for what you watch
+getsubtitle setup     # one-time onboarding (optional)
 getsubtitle -i        # guided workflow: 4-7 questions, then Run
 ```
+
+`setup` is an optional one-time onboarding: it asks what you watch and
+what you're learning, recommends the right providers and reading-aid
+extras, and saves a profile that pre-fills the wizard. You can skip it
+and go straight to `-i`.
 
 `-i` asks what you want to do (fetch / translate / modify / merge),
 which source, which languages, and whether you want reading aids.
@@ -136,7 +141,7 @@ in asbplayer), ASS (above-the-line for VLC/mpv).*
 | Japanese (`ja`)   | `hiragana`, `katakana`, `romaji` | `pip install -e ".[furigana]"`                 |
 | Korean (`ko`)     | `revised`, `yale`              | `pip install -e ".[romanization-ko]"`            |
 | Mandarin (`zh`)   | `marks`, `numbers`, `letters`  | `pip install -e ".[romanization-zh]"`            |
-| Cantonese (`yue`) | `numbers` (jyutping)           | `pip install -e ".[romanization-yue]"`           |
+| Cantonese (`yue`) | `numbers` (jyutping), `marks`  | `pip install -e ".[romanization-yue]"`           |
 | Thai / Arabic / Hindi / Russian | Royal Thai / ALA-LC / IAST / ISO-9 | Wired through; backends land per ROADMAP |
 
 **Format recommendations:**
@@ -243,7 +248,7 @@ getsubtitle config --show     # show the effective merged config
 Layered priority (low → high):
 **built-in defaults** < **user_settings.toml** < **--config FILE.toml** < **CLI flags**
 
-## Setup
+## API keys & health
 
 **API keys** — set once, stored in macOS Keychain or env vars:
 
