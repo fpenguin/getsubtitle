@@ -1,19 +1,26 @@
-# Roadmap  · v1.9.x -> v2.0
+# Roadmap  · v0.9.x -> v1.0
 
-What ships in v1.0, what's new in v1.1 / v1.2 / v1.3 / v1.4 / v1.5 /
-v1.6 / v1.7 / v1.8 / v1.9, what's experimental, and what's on the horizon.
+What is shipping before v1.0, what's experimental, and what's on the
+horizon. Marketing-ready v1.0 is still ahead.
 
 ## Versioning direction
 
-After v1.9, use smaller release steps for incremental improvements:
+Until the app is marketing-ready for v1.0, use pre-1.0 release steps:
 
-- **v1.9.1+**: small feature, docs, source, and UX batches that do not
+- **v0.9.1+**: small feature, docs, source, and UX batches that do not
   change the core workflow.
-- **v1.9.1.1**: very small follow-ups, help text, tests, and bug fixes.
-- **v2.0**: the next larger behavior milestone, aimed at an AI-based
+- **v0.9.4.1**: very small follow-ups, help text, tests, and bug fixes.
+- **v1.0**: the marketing-ready milestone.
+- **v2.0**: a later larger behavior milestone, aimed at an AI-based
   subtitle sync engine.
 
-## v1.9.3 — what's new
+## v0.9.4 — what's new
+
+- **Interactive wizard is easier to follow.** Menus now use numeric
+  choices consistently, questions are numbered contiguously, and the
+  wizard scenario harness pins 26 beginner/persona transcripts.
+
+## v0.9.3 — what's new
 
 - **Japanese romaji is now full-sentence learner text.** `ja:romaji`
   romanizes kana-only and mixed Japanese lines, emits normal subtitle-size
@@ -26,7 +33,7 @@ After v1.9, use smaller release steps for incremental improvements:
   and end by default. Use `--no-watermark` or `[merge] watermark = false`
   to omit it.
 
-## v1.9.2 — what's new
+## v0.9.2 — what's new
 
 - **Saved TOML workflows are easier to reuse.** After saving from
   interactive mode, getsubtitle now shows how to rerun the TOML and how
@@ -42,7 +49,7 @@ After v1.9, use smaller release steps for incremental improvements:
   When `--single-line` is active, broadcast wrapper marks such as
   `《》〈〉` are stripped while speaker labels and normal quotes remain.
 
-## v1.9.1 — what's new
+## v0.9.1 — what's new
 
 - **`getsubtitle doctor`.** A quick install-health check for Python,
   config paths, optional reading-aid packages, ffmpeg/ffprobe, Ollama,
@@ -69,7 +76,7 @@ After v1.9, use smaller release steps for incremental improvements:
       beside the source folder/file for local paths.
   A typical movie-with-furigana run goes from 12 → 5 questions.
 
-## v1.9 — what's new
+## v0.9.0 — what's new
 
 - **Manual community search fallback for Korean and Chinese.** Fetch still
   tries automatic providers first. If `ko` or `zh` is missing, it prints
@@ -89,7 +96,7 @@ After v1.9, use smaller release steps for incremental improvements:
   ASSRT/Shooter API with `ASSRT_API_KEY`, so Chinese direct-provider
   viability can be checked before adding it to the main downloader.
 
-## v1.8 — what's new
+## v0.8 — what's new
 
 - **List-fallback `mt_source`.** TOML can now express source-language
   preference lists, and the translator picks the first source actually
@@ -114,7 +121,7 @@ After v1.9, use smaller release steps for incremental improvements:
   `--mt-engine`, `--mt-model`, `--mt-source-lang`, and old reading names
   remain compatibility aliases where supported.
 
-## v1.7 — what's new
+## v0.7 — what's new
 
 - **Interactive step picker.** New Q1 asks which pipeline verbs to run
   (fetch / translate / modify / merge) up front, with
@@ -131,7 +138,7 @@ After v1.9, use smaller release steps for incremental improvements:
 - **Q6 (timing master) lists all languages directly** — no first/custom
   dichotomy. Q9 (reading aids) has "No reading aid (skip)" as option 1
   and the default value so beginners press Enter to skip.
-- **Movie filename scan fix.** v1.6's movie filename layout
+- **Movie filename scan fix.** v0.6's movie filename layout
   (`Title.<lang>.srt` with no `SxxExx`) broke the scanner so modify and
   merge couldn't see the file. `parse_episode_marker` now treats
   `Title.<lang>.<ext>` shapes as the synthetic `(0, 0)` key (rendered
@@ -139,7 +146,7 @@ After v1.9, use smaller release steps for incremental improvements:
   groups them correctly. Combined outputs and reading-aid variants
   still return `None` so the scanner doesn't re-pick its own outputs.
 
-## v1.6 — what's new
+## v0.6 — what's new
 
 - **Interactive wizard polish.** Six rounds of UX touch-ups:
   - Q5 (episode scope) is skipped automatically for movies (TMDB
@@ -163,9 +170,9 @@ After v1.9, use smaller release steps for incremental improvements:
     at finding native Japanese subs.
   - Movie filenames flatten to `Title/<Title>.<lang>.srt` instead of
     `Title/Season Unknown/<Title> - S00E00.<lang>.srt`. (Note: the
-    accompanying scanner fix landed in v1.7.)
+    accompanying scanner fix landed in v0.7.)
 
-## v1.5 — what's new
+## v0.5 — what's new
 
 - **Multi-variant merge.** Stack the original language plus its
   reading-aid variants in a single file. Pass pseudo-lang codes to `-l`:
@@ -188,7 +195,7 @@ After v1.9, use smaller release steps for incremental improvements:
   `getsubtitle URL --modify --reading ja:hiragana --merge -l ja,ja-hiragana,en`
   generates the variants and stacks them in one call.
 
-## v1.4 — what's new
+## v0.4 — what's new
 
 - **`--reading` rename + ja:katakana mode.** `--reading` replaces
   `--romanization` / `--furigana` as the canonical CLI flag. Legacy
@@ -211,7 +218,7 @@ After v1.9, use smaller release steps for incremental improvements:
   warns when a hiragana/furigana reading aid is paired with a non-VTT
   format. Better restart separator + intro re-print on loop.
 
-## v1.3 — what's new
+## v0.3 — what's new
 
 - **Chinese (Mandarin) pinyin backend.** `--reading zh:marks`,
   `--reading zh:numbers`, and `--reading zh:letters` now
@@ -224,7 +231,7 @@ After v1.9, use smaller release steps for incremental improvements:
   language. Filenames carry the `.romanization-{marks|numbers|letters}`
   infix.
 
-## v1.2 — what's new
+## v0.2 — what's new
 
 - **Korean romanization backend.** `--reading ko:revised` and
   `--reading ko:yale` now produce real side files. Revised uses
@@ -237,7 +244,7 @@ After v1.9, use smaller release steps for incremental improvements:
   new `.romanization-{revised|yale}` infix (the ja-specific
   `.furigana-{mode}` infix is preserved for back-compat).
 
-## v1.1 — what's new
+## v0.1 — what's new
 
 - **Interactive workflow builder.** `getsubtitle -i` /
   `getsubtitle --interactive` / `getsubtitle interactive` walks 11
@@ -269,7 +276,7 @@ After v1.9, use smaller release steps for incremental improvements:
   `--debug-providers` now prints a compact table of provider/source counts,
   language tags, formats, and quality flags.
 
-## v1.0 — capabilities
+## Initial capabilities
 
 ### CLI surface
 
@@ -344,12 +351,12 @@ After v1.9, use smaller release steps for incremental improvements:
 
 - 514 automated tests covering URL parsing, provider response shapes, TMDB / AniList resolution, SAMI parsing, VTT/ASS input parsing, MT helpers + auto_load/auto_unload, merge with format hints, pipeline orchestration, `--config` CLI overrides, config validation, source smoke diagnostics, help system, and dispatch routing.
 
-## Planned (post-v1.0)
+## Planned (post-v0.9.x)
 
-- **Reading-aid expansion (international)**: the v1.1 `[modify].reading`
-  schema grows per language. Shipped: Japanese (furigana, v1.0), Korean
-  (Revised + G2P + Yale, v1.2), Mandarin (pinyin marks / numbers /
-  letters, v1.3), Cantonese Jyutping (`yue:numbers`, v1.9.1). Still to
+- **Reading-aid expansion (international)**: the pre-1.0 `[modify].reading`
+  schema grows per language. Shipped: Japanese (furigana, initial), Korean
+  (Revised + G2P + Yale, v0.2), Mandarin (pinyin marks / numbers /
+  letters, v0.3), Cantonese Jyutping (`yue:numbers`, v0.9.1). Still to
   come: Thai (`th:royal-thai`), Arabic (`ar:ala-lc`), Hindi/Sanskrit
   (`hi:iast`), Russian (`ru:iso-9`), and Greek/Persian/Hebrew. Each
   language ships as a separate optional pip extra (`romanization-yue`,
@@ -358,7 +365,7 @@ After v1.9, use smaller release steps for incremental improvements:
   `.furigana-{mode}` for back-compat).
 - **`--pipeline run NAME`** registry: name a pipeline TOML and run it by short name without typing the path.
 
-## Planned: v1.9.x smaller steps
+## Planned: v0.9.x smaller steps
 
 - Optional subtitle labels and ordering for combined files.
 - Integration tests using temporary SRT/VTT/SMI folders for end-to-end merge output.

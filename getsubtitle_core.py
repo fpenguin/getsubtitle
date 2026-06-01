@@ -6973,7 +6973,7 @@ def build_combine_parser() -> argparse.ArgumentParser:
     p.add_argument("--master", metavar="LANG", help="Override the timing master language (default: first language in -l).")
     p.add_argument("--single-line", "--single", dest="preserve_lines", action="store_false", default=argparse.SUPPRESS, help="Flatten each language to one line per cue. This is the default; kept as an explicit readability flag.")
     p.add_argument("--preserve-lines", action="store_true", default=argparse.SUPPRESS, help="Keep each source language's original line breaks. Default: flatten each language to a single line.")
-    # Hidden compat aliases for the pre-v1.1 --furigana flag; kept so old
+    # Hidden compat aliases for the pre-reading --furigana flag; kept so old
     # scripts and the [merge].furigana TOML key still work. New code should
     # use --reading (added below), which generalises to non-Japanese
     # languages and routes Japanese entries through the same code path.
@@ -7065,7 +7065,7 @@ def combine_main(argv: list[str]) -> int:
                 rc_total = rc or rc_total
         return rc_total
     args = build_combine_parser().parse_args(argv)
-    # --reading (the v1.1 generalised flag) routes through the legacy
+    # --reading (the generalised reading flag) routes through the legacy
     # --furigana attribute for Japanese; non-Japanese languages raise a
     # clear "not yet implemented" CliError until per-language backends ship.
     _apply_reading_to_args(args)
@@ -7718,7 +7718,7 @@ def build_modify_parser() -> argparse.ArgumentParser:
     p.add_argument("paths", nargs="+", metavar="PATH", help="One or more subtitle files or directories to scan (recursive).")
     p.add_argument("--strip-cc-noise", action="store_true", help="Remove broadcast closed-caption noise (currently: Japanese ➡ continuation arrows) in place.")
     p.add_argument("--single-line", "--single", action="store_true", help="Flatten each SRT cue to one text line in place. Useful for asbplayer.")
-    # Hidden compat alias for the pre-v1.1 --furigana flag. Internally
+    # Hidden compat alias for the pre-reading --furigana flag. Internally
     # equivalent to `--reading ja:MODE`.
     p.add_argument("--reading", dest="reading", metavar="SPEC", help="Generate per-language reading aids. SPEC is a comma list of LANG:MODE pairs, e.g. 'ja:hiragana', 'ko:revised', 'zh:marks', 'yue:numbers'. Pipe shorthand 'ja:hiragana|romaji' generates both side files. MODE 'true' picks the language's sensible default. Japanese / Korean / Mandarin / Cantonese ship now; Thai / Arabic / Hindi / Russian land per the roadmap.")
     p.add_argument("--no-reading", dest="reading", action="store_const", const="", help="Disable reading-aid generation for this run, overriding [modify].reading from user_settings.toml.")
@@ -7872,7 +7872,7 @@ def modify_main(argv: list[str]) -> int:
                 rc_total = rc or rc_total
         return rc_total
     args = build_modify_parser().parse_args(argv)
-    # --reading is the v1.1 multi-language umbrella. Route ja entries
+    # --reading is the multi-language umbrella. Route ja entries
     # to the legacy --furigana attribute and ko entries to a fresh
     # args.ko_reading attribute. Languages we haven't shipped a
     # backend for raise "not yet implemented" inside _apply_reading_to_args.
@@ -9238,7 +9238,7 @@ def _parse_reading_spec(value) -> list[tuple[str, str]]:
 
 
 def _apply_reading_to_args(args) -> None:
-    """Translate `args.reading` (the v1.4 SPEC string from --reading) onto
+    """Translate `args.reading` (the reading SPEC string from --reading) onto
     the per-language attributes the downstream code reads.
 
     Japanese mode lands on `args.ja_reading`. Korean mode lands on
@@ -9566,7 +9566,7 @@ def _toml_to_pipeline_argv(toml_data: dict) -> tuple[list[str], dict]:
     if "modify" in toml_data:
         mb = dict(toml_data["modify"])
         argv.append("--modify")
-        # v1.4 canonical: [modify].reading = "ja:hiragana,ko:revised,zh:marks"
+        # canonical: [modify].reading = "ja:hiragana,ko:revised,zh:marks"
         if "reading" in mb:
             argv += _resolve_modify_reading(mb.pop("reading"))
         out_fmt = mb.pop("reading_format", None)
@@ -10543,7 +10543,7 @@ BUILTIN_CONFIG_DEFAULTS: dict[str, dict[str, object]] = {
         # On by default: Japanese broadcast SRTs are full of ➡ continuation
         # arrows that have no value for language learning.
         "strip_cc_noise": True,
-        # Reading-aid SPEC (the v1.4 umbrella covering ja/ko/zh and beyond).
+        # Reading-aid SPEC (the umbrella covering ja/ko/zh and beyond).
         # No default value — the user opts in via wizard / setup / their TOML.
         # Format for output side files when reading is set: srt by default.
         "reading_format": "srt",
@@ -10680,7 +10680,7 @@ _VALID_CONFIG_SECTIONS = ("fetch", "translate", "modify", "merge", "output", "ex
 
 
 def _reject_unknown_sections(raw: dict) -> None:
-    """Reject any top-level section that isn't part of the v1.1 schema.
+    """Reject any top-level section that isn't part of the config schema.
     Point the user at the example template and `config --show`."""
     unknown = [
         s for s in raw
@@ -10788,7 +10788,7 @@ def validate_user_config(raw: dict) -> dict:
     for bk in ("single_line", "strip_cc_noise"):
         if bk in m:
             m_out[bk] = _validate_bool(m[bk], f"modify.{bk}")
-    # `reading` is the v1.4 SPEC string (e.g. "ja:hiragana,ko:revised").
+    # `reading` is the reading SPEC string (e.g. "ja:hiragana,ko:revised").
     # Accepts string or `true` (=> every supported language's default).
     if "reading" in m:
         val = m["reading"]
@@ -11487,7 +11487,7 @@ def _setup_print_recommendations(recs: list[_SetupRecommendation]) -> None:
 
 
 def _setup_config_text(choice: _SetupChoice) -> str:
-    """Emit a user_settings.toml using v1.1 canonical key names.
+    """Emit a user_settings.toml using canonical key names.
     Reading aids land under `[modify].reading` (NOT the legacy
     `[modify].furigana = "hiragana"` form). Engine picks Ollama when
     the daemon is reachable and the user wanted offline MT."""
@@ -11533,7 +11533,7 @@ def _setup_config_text(choice: _SetupChoice) -> str:
         "strip_cc_noise = true",
     ]
     if has_reading_aids:
-        # `reading` is the v1.4 canonical key (covers ja/ko/zh/…).
+        # `reading` is the canonical key (covers ja/ko/zh/…).
         lines.append(f'reading = "{",".join(rom_specs)}"')
         lines.append(f'reading_format = "{fmt}"')
     lines += [
@@ -12298,7 +12298,7 @@ MT-source notes:
   third-party or hand-edited Japanese sources.
 
 ──────────────────────────────────────────────────────────────────────
-Korean (ko) — ships today (v1.2)
+Korean (ko) — ships today
 ──────────────────────────────────────────────────────────────────────
 Install: `pip install -e ".[romanization-ko]"`
   (pulls korean-romanizer + g2pk. Yale mode is in-tree; no install needed.)
@@ -12323,7 +12323,7 @@ Examples:
   getsubtitle merge PATH -l ja,ko --reading ja:hiragana,ko:revised
 
 ──────────────────────────────────────────────────────────────────────
-Mandarin Chinese (zh) — ships today (v1.3)
+Mandarin Chinese (zh) — ships today
 ──────────────────────────────────────────────────────────────────────
 Install: `pip install -e ".[romanization-zh]"` (or just `pip install pypinyin`)
 
@@ -12960,7 +12960,7 @@ Naming conventions:
     TOML uses snake_case (mt_source, reading_format, strip_cc_noise).
     Either spelling works in TOML — hyphens normalize to underscores so
     `dry-run` and `dry_run` are interchangeable.
-  - Canonical TOML keys (v1.8):
+  - Canonical TOML keys (pre-1.0):
       [translate]  mt_source           (was: mt_source_lang)
       [modify]     reading_format      (was: furigana_output_format)
       [output]     target              (was: root)
@@ -13073,7 +13073,7 @@ Tips:
     ~/.cache/getsubtitle/wizard-draft.toml so you can resume later.
   - Movie filenames are flattened to <Title>/<Title>.<lang>.srt
     (no Season Unknown / S00E00 placeholders).
-  - The wizard generates the v1.4 canonical names everywhere
+  - The wizard generates the canonical names everywhere
     (--languages, --engine, --mt-source, --reading, --reading-format
     on the CLI; mt_source / reading / reading_format in TOML).
 """,
@@ -13275,7 +13275,7 @@ def doctor_main(argv: list[str]) -> int:
 # ═══════════════════════════════════════════════════════════════════════
 # `getsubtitle --interactive` (or `getsubtitle interactive`, or `-i`) walks
 # a new user through a workflow and produces a CLI command, a saved TOML,
-# or a live run. Generated artifacts use the v1.1 canonical names
+# or a live run. Generated artifacts use the canonical names
 # (--languages, --engine, --mt-source, --reading, --reading-format
 # on the CLI; mt_source / reading_format in TOML).
 #
@@ -14439,7 +14439,7 @@ def _run_wizard(state: _WizardState | None = None) -> tuple[_WizardState, str]:
 def _wizard_emit_cli(state: _WizardState) -> list[str]:
     """Build a canonical-form argv list for the wizard's answers.
 
-    Uses the v1.1 long names: --languages, --engine, --mt-source,
+    Uses the canonical long names: --languages, --engine, --mt-source,
     --reading (NOT --furigana). Honors state.steps so modify-only /
     merge-only / translate-only paths emit a focused command without
     --fetch noise or unwanted verbs."""
@@ -15190,7 +15190,7 @@ def main(argv: list[str] | None = None) -> int:
             rc_total = rc or rc_total
         return rc_total
     args = build_parser().parse_args(raw_argv)
-    # --reading (the v1.1 generalised flag) routes through the legacy
+    # --reading (the generalised reading flag) routes through the legacy
     # --furigana attribute for Japanese; non-Japanese languages raise a
     # clear "not yet implemented" error.
     _apply_reading_to_args(args)
