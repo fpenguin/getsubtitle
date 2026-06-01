@@ -68,22 +68,24 @@ function Choose-Extras {
     }
     Say ""
     Say "Install optional reading-aid backends?"
-    Say "  1) All CJK helpers: Japanese furigana + Korean romanization + Mandarin pinyin"
+    Say "  1) All CJK helpers: Japanese furigana + Korean romanization + Mandarin pinyin + Cantonese Jyutping"
     Say "  2) Japanese furigana only"
     Say "  3) Korean romanization only"
     Say "  4) Mandarin pinyin only"
-    Say "  5) Minimal install"
-    $choice = Ask "Choose 1/2/3/4/5" "1"
+    Say "  5) Cantonese Jyutping only"
+    Say "  6) Minimal install"
+    $choice = Ask "Choose 1/2/3/4/5/6" "1"
     switch ($choice) {
-        "1" { return "furigana,romanization-ko,romanization-zh" }
+        "1" { return "furigana,romanization-ko,romanization-zh,romanization-yue" }
         "2" { return "furigana" }
         "3" { return "romanization-ko" }
         "4" { return "romanization-zh" }
-        "5" { return "" }
+        "5" { return "romanization-yue" }
+        "6" { return "" }
         default {
             Say "Unknown choice: $choice"
             Say "Using all CJK helpers."
-            return "furigana,romanization-ko,romanization-zh"
+            return "furigana,romanization-ko,romanization-zh,romanization-yue"
         }
     }
 }

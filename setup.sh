@@ -57,22 +57,24 @@ choose_extras() {
   fi
   say ""
   say "Install optional reading-aid backends?"
-  say "  1) All CJK helpers: Japanese furigana + Korean romanization + Mandarin pinyin"
+  say "  1) All CJK helpers: Japanese furigana + Korean romanization + Mandarin pinyin + Cantonese Jyutping"
   say "  2) Japanese furigana only"
   say "  3) Korean romanization only"
   say "  4) Mandarin pinyin only"
-  say "  5) Minimal install"
-  choice="$(ask "Choose 1/2/3/4/5" "1")"
+  say "  5) Cantonese Jyutping only"
+  say "  6) Minimal install"
+  choice="$(ask "Choose 1/2/3/4/5/6" "1")"
   case "$choice" in
-    1|"") printf '%s\n' "furigana,romanization-ko,romanization-zh" ;;
+    1|"") printf '%s\n' "furigana,romanization-ko,romanization-zh,romanization-yue" ;;
     2) printf '%s\n' "furigana" ;;
     3) printf '%s\n' "romanization-ko" ;;
     4) printf '%s\n' "romanization-zh" ;;
-    5) printf '%s\n' "" ;;
+    5) printf '%s\n' "romanization-yue" ;;
+    6) printf '%s\n' "" ;;
     *)
       say "Unknown choice: $choice"
       say "Using all CJK helpers."
-      printf '%s\n' "furigana,romanization-ko,romanization-zh"
+      printf '%s\n' "furigana,romanization-ko,romanization-zh,romanization-yue"
       ;;
   esac
 }

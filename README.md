@@ -1,279 +1,222 @@
 # GetSubtitle
 
-Turn movies, anime, dramas, and sitcoms into subtitle stacks for language
-learning.
+Turn movies, anime, dramas, and sitcoms into multi-language subtitles for
+language learning: dual subtitles, triple subtitles, quadruple subtitles,
+reading aids, and translations in one synced file.
 
-GetSubtitle helps you watch with the subtitle setup streaming apps rarely
-offer: the language you are learning, a pronunciation guide, your native
-language, and an optional bridge language, all synced into one study-friendly
-file. ASS has been the most stable format in VLC for local playback; Japanese
-VTT ruby works best in asbplayer/browser study workflows.
+Built for anime, drama, and sitcom immersion learners. Output works in VLC, mpv, Plex, and asbplayer.
 
+![Multi-language subtitle with Japanese VTT ruby and English support lines](examples/capability-ja-vtt-ruby-quad-stack.png)
+*Japanese WebVTT in asbplayer: hiragana ruby above each kanji, with
+romaji and English support lines stacked below in one synced cue.*
 
 ## Why Learners Use It
 
-- **Watch with two, three, or four subtitles at once** instead of switching
-  tracks back and forth.
+- **Watch with two, three, or four subtitles at once** — dual subtitles,
+  triple subtitles, or a full multi-subtitle study file.
 - **Add reading aids**: Japanese furigana, Korean Revised Romanization, and
   Mandarin pinyin.
 - **Fill missing subtitles** with DeepL, Ollama, or Argos when the language
   you need is unavailable.
 - **Clean messy captions** by removing broadcast noise and flattening cues for
   easier reading and sentence mining.
-- **Prepare a media library** by scanning Plex/Jellyfin folders, converting
-  legacy `.smi`, and merging per episode.
+- **Prepare a media library** by scanning Plex/Jellyfin folders, converting legacy subtitles, downloading or translating missing tracks, and merging per episode.
+- **No CLI flags to memorize** — `getsubtitle -i` builds your command in 4-7 questions and saves it as a reusable workflow.
 
-Good fits:
+## What you can build
 
-| You want to... | GetSubtitle can... |
-|---|---|
-| Learn Japanese from anime or dramas | download `ja`, add furigana, merge with your native language |
-| Use Korean as your support language | fetch or translate `ko`, then stack `ja,ko` |
-| Learn English or Spanish from sitcoms | collect `en,es`, or translate missing tracks from another language |
-| Use asbplayer for sentence mining | output single-line WebVTT for Japanese ruby furigana |
-| Clean up a Plex/Jellyfin library | scan folders, convert `.smi`, fill gaps, and merge per episode |
+| If you want to…                        | GetSubtitle…                                                                | Example                                                                          |
+|----------------------------------------|-----------------------------------------------------------------------------|----------------------------------------------------------------------------------|
+| Learn **Japanese** from anime          | downloads `ja`, adds furigana ruby, combines it with your native language   | ![Japanese reading modes](examples/capability-ja-reading-modes-compare.png)      |
+| Learn **Korean** with romanization       | fetches `ko`, generates Revised + Yale romanization, combines with English | ![Korean Revised + Yale + English](examples/capability-ko-revised-yale-english-ass.png) |
+| Learn **Mandarin** with pinyin         | renders `nǐ hǎo` pinyin above hanzi in ASS                                  | ![Mandarin pinyin stack](examples/capability-zh-pinyin-ass-stack.png)            |
+| Learn **Cantonese** with jyutping      | renders jyutping numbered tones above traditional Chinese                   | ![Cantonese jyutping stack](examples/capability-yue-jyutping-ass-stack.png)      |
+| Fill **missing** language tracks       | translates with DeepL / Ollama / Argos, or opens community-search tabs      | ![Missing-track recovery flow](examples/capability-missing-tracks-fetch-merge.png) |
+| Clean a **Plex / Jellyfin** library    | converts `.smi`, strips broadcast noise, merges per episode                 | ![SMI → study stack](examples/capability-smi-to-study-stack.png)                 |
 
+## Install in 30 seconds
 
-## What You Can Make
-
-```text
-Multiple subtitles stacked together with reading support for specific language set(s).
-```
-![asbplayer rendering Japanese ruby furigana from WebVTT](examples/asbplayer-ruby-vtt-preview.png)
-
-
-## Try These Workflows
-
-### Easiest: `getsubtitle --interactive`
-
-Let the wizard ask what you watch, which languages you want, whether to add
-reading aids, and whether to run now or save a reusable workflow:
+**macOS / Linux:**
 
 ```sh
-getsubtitle --interactive
+curl -fsSL https://raw.githubusercontent.com/fpenguin/getsubtitle/main/setup.sh -o setup.sh
+sh setup.sh
 ```
 
-### CLI Examples
+**Windows PowerShell:**
+
+```powershell
+Invoke-WebRequest https://raw.githubusercontent.com/fpenguin/getsubtitle/main/setup.ps1 -OutFile setup.ps1
+.\setup.ps1
+```
+
+The installer creates an isolated Python environment, asks which
+reading-aid backends you need (Japanese / Korean / Mandarin /
+Cantonese / all), adds a `getsubtitle` shim to your `PATH`, and offers
+to run first-time setup. See [§ Install — other paths](#install--other-paths)
+for `pipx`, dev checkouts, and Windows execution-policy notes.
+
+## How it works (3 steps)
+
+1. **Fetch** — download subtitles from a streaming/catalog URL, scan a
+   local folder, or both.
+2. **Modify** — clean broadcast noise, add reading aids (furigana,
+   pinyin, Hangul romanization), convert legacy `.smi`.
+3. **Merge** — stack 2-4 language tracks into one synced study file.
+
+The wizard runs all three by default; the CLI lets you pick any subset
+(e.g. drop a folder of `.srt` files and just merge them).
+
+## Run the wizard (recommended for first-timers)
 
 ```sh
-# Easy: movie, TMDB link — Totoro, Japanese + English
+getsubtitle setup     # pick providers + API keys for what you watch
+getsubtitle -i        # guided workflow: 4-7 questions, then Run
+```
+
+`-i` asks what you want to do (fetch / translate / modify / merge),
+which source, which languages, and whether you want reading aids.
+Everything else (display order, cleanup, format, output folder) is
+smart-defaulted and surfaced in a "Smart defaults filled in for you"
+banner before the action menu so you can revise via "Edit a single
+answer". You get **Run**, **Save the workflow as TOML**, **Edit**,
+**Restart**, or **Quit**.
+
+The wizard probes your environment first (pykakasi, Ollama, API keys)
+so you don't get stuck mid-run, and offers to open the output folder
+when it's done.
+
+## CLI Examples
+
+Once you've run the wizard a few times, the CLI is faster:
+
+```sh
+# Easy: a movie, by URL — Totoro, Japanese + English
 getsubtitle "https://www.themoviedb.org/movie/8392" -l ja,en
 
-# Medium: series, IMDb link — Midnight Diner, Japanese + Korean
-# with Japanese pronunciation guides for asbplayer/browser ruby
+# Medium: a series with furigana for asbplayer/browser ruby
+# Season 1, every episode; Japanese + Korean stack; WebVTT for ruby rendering.
 getsubtitle "https://www.imdb.com/title/tt6150576/" \
-    -s 1 -e all -l ja,ko --reading ja:hiragana --format vtt
+    -s 1 -e all \
+    -l ja,ko \
+    --reading ja:hiragana \
+    --format vtt
 
-# Hard: Friends S4E3-5, fill missing Spanish from French, then merge
+# Hard: Friends S4E3-5, fill Spanish from French, then merge
 getsubtitle "https://www.themoviedb.org/tv/1668-friends" -s 4 -e 3-5 -l fr,en,es
 getsubtitle translate ~/Downloads/GetSubtitle/Friends -s 4 -e 3-5 -l es \
     --engine deepl --mt-source es:fr
 getsubtitle merge ~/Downloads/GetSubtitle/Friends -s 4 -e 3-5 -l fr,en,es
 ```
 
-For machine translation, `--mt-source "es:fr|en"` means “make Spanish from
-French first, or English if French is unavailable.” Ollama users can also
-override one language pair for a single run with
-`--mt-model-pair ja:ko=qwen3:4b`.
+For machine translation, `--mt-source "es:fr|en"` reads as "make
+Spanish from French first, English as fallback". Ollama users can
+pin a per-pair model: `--mt-model-pair ja:ko=qwen3:4b`.
 
-When Korean or Chinese subtitles are missing, fetch prints community search
-suggestions and can open likely sources in your browser. Disable that with
-`--no-manual-search`, or force it with `--manual-search always`.
+When Korean or Chinese subtitles are missing, fetch prints community
+search suggestions and can open the likely sources in your browser.
+Toggle with `--manual-search off|on-missing|always`.
 
 `-e all` on **non-anime TV** needs a TMDB key — set one once with
 `getsubtitle --set-key tmdb`, or pass an explicit range like `-e 1-22`.
 
-## Reading Aids
+## Reading aids
 
-Reading aids are phonetic guides for the original script. Format choice matters:
+Phonetic guides above the original script, rendered as ruby (WebVTT)
+or above-the-line ASS or parenthetical (SRT/SMI).
 
-| Use case | Recommended format | Notes |
-|---|---|---|
-| Japanese furigana in asbplayer/browser study | `vtt` | Enable asbplayer `Subtitle HTML = Render` for ruby. |
-| Korean romanization | `ass` | Most reliable for romanization above Hangul. |
-| Mandarin pinyin / Cantonese jyutping | `ass` | Most reliable for readings above Chinese characters. |
-| Maximum player compatibility | `srt` | Parenthetical readings inline; no true ruby/stacking. |
+![SRT vs VTT vs ASS reading-aid format comparison](examples/capability-reading-format-comparison.png)
+*Same kanji line, three formats: SRT (parenthetical), VTT (ruby above
+in asbplayer), ASS (above-the-line for VLC/mpv).*
 
-VTT ruby is valid, but player support is uneven. Use asbplayer/browser rendering
-for Japanese VTT ruby. For local playback, VLC has been most stable with ASS
-study stacks; IINA may flatten ruby or stack readings less predictably depending
-on the file and settings.
+| Language          | Modes                          | Install                                          |
+|-------------------|--------------------------------|--------------------------------------------------|
+| Japanese (`ja`)   | `hiragana`, `katakana`, `romaji` | `pip install -e ".[furigana]"`                 |
+| Korean (`ko`)     | `revised`, `yale`              | `pip install -e ".[romanization-ko]"`            |
+| Mandarin (`zh`)   | `marks`, `numbers`, `letters`  | `pip install -e ".[romanization-zh]"`            |
+| Cantonese (`yue`) | `numbers` (jyutping)           | `pip install -e ".[romanization-yue]"`           |
+| Thai / Arabic / Hindi / Russian | Royal Thai / ALA-LC / IAST / ISO-9 | Wired through; backends land per ROADMAP |
 
-| Language       | Modes                                | Status                                                       |
-|----------------|--------------------------------------|--------------------------------------------------------------|
-| Japanese (`ja`)  | `hiragana`, `katakana`, `romaji`   | Ships today (`pip install -e ".[furigana]"`)                |
-| Korean (`ko`)    | `revised`, `yale`                  | Ships today (`pip install -e ".[romanization-ko]"`)         |
-| Mandarin (`zh`)  | `marks`, `numbers`, `letters`      | Ships today (`pip install -e ".[romanization-zh]"`)         |
-| Cantonese (`yue`)| `numbers` (jyutping)               | Ships today (`pip install -e ".[romanization-yue]"`)        |
-| Thai / Arabic / Hindi / Russian | Royal Thai / ALA-LC / IAST / ISO-9 | Wired through; backends land per ROADMAP        |
+**Format recommendations:**
 
-`reading = "ja:hiragana,ko:revised,zh:marks,yue:numbers"` in TOML;
-`--reading ja:hiragana,ko:revised,zh:marks,yue:numbers` on the CLI.
+| Use case                                  | Format | Notes                                               |
+|-------------------------------------------|--------|-----------------------------------------------------|
+| Japanese furigana in asbplayer / browser  | `vtt`  | Enable asbplayer `Subtitle HTML = Render` for ruby. |
+| Korean romanization above Hangul          | `ass`  | Most reliable in VLC / mpv / IINA.                  |
+| Mandarin pinyin or Cantonese jyutping     | `ass`  | Same — ASS handles readings above characters best.  |
+| Maximum player compatibility (no ruby)    | `srt`  | Parenthetical 漢字（かんじ） form; works anywhere.    |
 
-## Start Here
+VTT ruby is valid markup, but player support is uneven — VLC tends to
+flatten ruby. For local playback of reading aids, use ASS. For
+asbplayer / browser study, use VTT.
 
-After installing, run:
-
-```sh
-getsubtitle setup
-getsubtitle doctor
-getsubtitle -i
-```
-
-`getsubtitle setup` asks what languages you know, what you are learning, what
-you watch, and where you watch it. Then it recommends providers, API keys,
-player settings, and optional dependencies with rough setup time.
-
-`getsubtitle doctor` checks API keys, reading-aid packages, ffmpeg/ffprobe,
-and Ollama before you get stuck mid-run.
-
-`getsubtitle -i` is the guided workflow builder. It asks 4-7 questions
-(which steps, source, languages, optional reading aids) and fills the
-rest in with smart defaults — display order from the language list you
-typed, cleanup preset on, VTT format when reading aids are picked, and
-so on. The banner before the action menu surfaces all five auto-
-decisions so you can revise via "Edit a single answer". Then choose
-Run, Save, Edit, Restart, or Quit.
-
-## Install
-
-### macOS / Linux
+Specify on the CLI:
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/fpenguin/getsubtitle/main/setup.sh -o setup.sh
-sh setup.sh
-getsubtitle -i
+--reading ja:hiragana,ko:revised,zh:marks,yue:numbers
 ```
 
-The installer creates an isolated Python environment, asks which reading-aid
-backends to install, adds a `getsubtitle` command shim in `~/.local/bin`, and
-offers to run `getsubtitle setup`.
+Or in TOML:
 
-### Windows PowerShell
-
-```powershell
-Invoke-WebRequest https://raw.githubusercontent.com/fpenguin/getsubtitle/main/setup.ps1 -OutFile setup.ps1
-.\setup.ps1
-getsubtitle -i
+```toml
+[modify]
+reading = "ja:hiragana,ko:revised,zh:marks,yue:numbers"
 ```
 
-If PowerShell blocks local scripts, run this once for the current terminal:
+## Multi-variant merge
 
-```powershell
-Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass
-.\setup.ps1
-```
-
-The installer creates an isolated environment under `%LOCALAPPDATA%\getsubtitle`,
-asks which reading-aid backends to install, writes `getsubtitle.cmd` to
-`%USERPROFILE%\bin`, and offers to run `getsubtitle setup`.
-
-### pipx
-
-Good if you already use `pipx`:
+Stack the original alongside its reading-aid variants for kanji-heavy
+material:
 
 ```sh
-pipx install "getsubtitle[furigana,romanization-ko,romanization-zh] @ git+https://github.com/fpenguin/getsubtitle.git"
-getsubtitle setup
-getsubtitle -i
+getsubtitle merge FOLDER -l ja,ja-hiragana,en            # kanji + hiragana + English
+getsubtitle merge FOLDER -l ja,ja-hiragana,ja-romaji,en  # + romaji
+getsubtitle merge FOLDER -l ko,ko-revised,en             # 한글 + Revised + English
+getsubtitle merge FOLDER -l zh,zh-marks,en               # 漢字 + pinyin + English
+getsubtitle merge FOLDER -l yue,yue-numbers,en           # 廣東話 + jyutping + English
 ```
 
-On Windows, install pipx first if needed:
+Output filenames collapse same-base tokens — you get
+`Show.S01E01.ja-hiragana-romaji-en.srt`, not the redundant
+`ja-ja-hiragana-ja-romaji-en` variant.
 
-```powershell
-py -m pip install --user pipx
-py -m pipx ensurepath
-```
-
-### Developer Checkout
+Generate variants and stack them in one call:
 
 ```sh
-git clone https://github.com/fpenguin/getsubtitle.git
-cd getsubtitle
-./setup.sh        # macOS/Linux; must run from the repo root
+getsubtitle "URL" \
+    --modify --reading ja:hiragana,ja:romaji \
+    --merge -l ja,ja-hiragana,ja-romaji,en
 ```
 
-On Windows:
-
-```powershell
-git clone https://github.com/fpenguin/getsubtitle.git
-cd getsubtitle
-.\setup.ps1       # must run from the repo root
-```
-
-The installer detects the source checkout and creates an editable venv at
-`./.venv`. Activate it each session with `source .venv/bin/activate`
-on macOS/Linux or `.\.venv\Scripts\Activate.ps1` on Windows.
-
-PyPI note: the `getsubtitle` package name is already occupied by an older
-unrelated project, so `pip install getsubtitle` does **not** install this tool
-yet. Use the GitHub installer or `pipx` command above for now.
-
-## Setup Notes
-
-**Optional dependencies** — install only what you need:
+## Pipeline form (chain verbs in one call)
 
 ```sh
-pip install -e ".[furigana]"          # Japanese (pykakasi)
-pip install -e ".[romanization-ko]"   # Korean (g2pk + korean-romanizer)
-pip install -e ".[romanization-zh]"   # Mandarin (pypinyin)
-pip install -e .                       # bare install (no reading aids)
+# Whole-library pass: fetch + translate + clean + merge
+getsubtitle --fetch /Plex/Anime --subdirectory \
+    --translate ollama \
+    --modify --strip-cc-noise --single-line \
+    --merge -l ja,en --format vtt
+
+# URL → study deck into a specific output folder
+getsubtitle --fetch "https://www.imdb.com/title/tt28299608/" -s 1 -e all \
+    --translate deepl \
+    --merge -l ja,en --format vtt \
+    --output ~/Downloads/GetSubtitle/StudyDeck
 ```
 
-On Windows, prefix each command with `py -m `.
+`--subdirectory` on any PATH-based verb walks each immediate subfolder
+and runs the verb per show. See `getsubtitle --help pipeline` for the
+full schema.
 
-**API keys** — set once, stored in macOS Keychain or env vars:
+## Save workflows as TOML
 
-```sh
-getsubtitle --set-key                # interactive: pick a provider
-getsubtitle --set-key jimaku         # Japanese anime (Jimaku)
-getsubtitle --set-key wyzie          # movies / TV (Wyzie)
-getsubtitle --set-key subdl          # SubDL fallback when Wyzie misses
-getsubtitle --set-key deepl          # DeepL AI translation (free 500K chars/month)
-getsubtitle --set-key tmdb           # title matching + `-e all` for live-action TV
-```
-
-If Keychain isn't available, set `JIMAKU_API_KEY`, `WYZIE_API_KEY`,
-`SUBDL_API_KEY`, `DEEPL_API_KEY`, `TMDB_API_KEY` in your shell instead.
-
-**asbplayer ruby furigana** — open asbplayer settings, then `Misc >
-Subtitles > Subtitle HTML = Render`, and use `--format vtt`. This is mainly
-recommended for Japanese furigana. For Korean, Mandarin, and Cantonese reading
-aids, prefer `--format ass` / `--reading-format ass` so romanization appears
-above the original script more consistently.
-
-**Local player choice** — VLC has been the most stable player in testing for
-ASS study stacks. For Japanese VTT ruby, asbplayer/browser rendering is the
-better-tested path. IINA can play both formats, but ruby/stacked reading aids
-may render differently.
-
-## Common commands
-
-Each verb has its own focused `--help`:
-
-```sh
-getsubtitle --help               # quick overview
-getsubtitle --help doctor        # install/key/dependency health check
-getsubtitle --help fetch         # URL or PATH download
-getsubtitle --help translate     # AI translation
-getsubtitle --help modify        # cleanup, SAMI→SRT, MKV extraction, reading aids
-getsubtitle --help merge         # stack languages into one file
-getsubtitle --help reading       # reading-aid spec (ja/ko/zh/…)
-getsubtitle --help interactive   # the -i wizard
-getsubtitle --help config        # user_settings.toml defaults
-getsubtitle --help keys          # API key setup
-getsubtitle --help advanced      # troubleshooting, experimental flags
-```
-
-## Config files
-
-Save a set of options once, re-run with one flag:
+Run the wizard once, save the answers, re-run later with one flag:
 
 ```sh
 getsubtitle --config simpsons-s1-en-fr.toml
 getsubtitle --config plex-movies-fill-merge.toml
 
-# CLI flags override the file:
+# CLI flags override the saved file:
 getsubtitle --source /Plex/Anime --config plex-movies-fill-merge.toml
 ```
 
@@ -287,122 +230,131 @@ Two example configs ship in this repo:
 Per-user defaults live in `user_settings.toml`:
 
 ```sh
-getsubtitle config --init        # write a commented template
-getsubtitle config --path        # print where it lives
-getsubtitle config --show        # show the effective merged config
+getsubtitle config --init     # write a commented template
+getsubtitle config --show     # show the effective merged config
 ```
 
-Layered config (lowest → highest priority):
+Layered priority (low → high):
 **built-in defaults** < **user_settings.toml** < **--config FILE.toml** < **CLI flags**
 
-API keys never live in any TOML — they're in Keychain or env vars.
+## Setup
+
+**API keys** — set once, stored in macOS Keychain or env vars:
+
+```sh
+getsubtitle --set-key            # interactive: pick a provider
+getsubtitle --set-key jimaku     # Japanese anime (Jimaku)
+getsubtitle --set-key wyzie      # movies / TV (Wyzie)
+getsubtitle --set-key subdl      # SubDL fallback when Wyzie misses
+getsubtitle --set-key deepl      # DeepL AI translation (free 500K chars/month)
+getsubtitle --set-key tmdb       # title matching + `-e all` for live-action TV
+```
+
+If Keychain isn't available, set `JIMAKU_API_KEY`, `WYZIE_API_KEY`,
+`SUBDL_API_KEY`, `DEEPL_API_KEY`, `TMDB_API_KEY` in your shell.
+
+**Health check** — `getsubtitle doctor` reports missing Python deps,
+API keys, ffmpeg/ffprobe, and Ollama before you get stuck mid-run.
+
+**asbplayer ruby** — open asbplayer settings, `Misc > Subtitles >
+Subtitle HTML = Render`, then use `--format vtt`. For local playback
+with reading aids, prefer ASS; VTT ruby support varies by player.
 
 ## Machine translation engines
 
-| Engine            | Offline? | Setup                                            | Quality   |
-|-------------------|----------|--------------------------------------------------|-----------|
-| `argos` (default) | Yes      | `pip install argostranslate`                     | Gist      |
-| `ollama`          | Yes      | Ollama daemon + a model (auto-pulled by default) | Good      |
-| `deepl`           | No       | `--set-key deepl` (free 500K chars/month)        | Best      |
+| Engine            | Local?  | Setup                                      | Quality |
+|-------------------|---------|--------------------------------------------|---------|
+| `argos` (default) | yes     | `pip install argostranslate`               | gist    |
+| `ollama`          | yes     | Ollama daemon + a model (auto-pulled)      | good    |
+| `deepl`           | online  | `--set-key deepl` (free 500K chars/month)  | best    |
 
 Per-pair model selection lives in `[translate.ollama_models]` in
 `user_settings.toml`. Engine spec accepts `ollama:qwen3:8b` colon-form
 to pin a model.
 
-## Advanced
+## Supported URLs
 
-### Pipeline form (chain verbs in one call)
-
-Verbs always run in canonical order (fetch → translate → modify → merge):
-
-```sh
-# Whole-library bilingual pass
-getsubtitle --fetch /Plex/Anime --subdirectory \
-    --translate ollama \
-    --modify --strip-cc-noise --single-line \
-    --merge -l ja,en --format vtt
-
-# URL → study deck into an explicit output folder
-getsubtitle --fetch "https://www.imdb.com/title/tt28299608/" -s 1 -e all \
-    --translate deepl \
-    --merge -l ja,en --format vtt \
-    --output ~/Downloads/GetSubtitle/StudyDeck
-```
-
-Add `--subdirectory` to any PATH-based verb to walk a whole library
-and run it per show. See `getsubtitle --help pipeline` for the full
-schema.
-
-### Multi-variant merge
-
-Stack the original alongside its reading-aid variants in one file —
-useful for kanji-heavy material:
-
-```sh
-getsubtitle merge FOLDER -l ja,ja-hiragana,en          # kanji + hiragana + English
-getsubtitle merge FOLDER -l ja,ja-hiragana,ja-romaji,en  # + romaji
-getsubtitle merge FOLDER -l ko,ko-revised,en           # 한글 + Revised + English
-getsubtitle merge FOLDER -l zh,zh-marks,en             # 漢字 + nǐ hǎo + English
-getsubtitle merge FOLDER -l yue,yue-numbers,en         # 廣東話 + jyutping + English
-```
-
-Recognised pseudo-lang codes: `ja-hiragana`, `ja-katakana`,
-`ja-romaji`, `ko-revised`, `ko-yale`, `zh-marks`, `zh-numbers`,
-`zh-letters`, `yue-numbers`. Each resolves to the matching
-`.{base}.{infix}-{mode}.{srt|vtt|ass}` reading-aid side file produced
-by `modify --reading {lang}:{mode}`. Output filenames collapse
-adjacent same-base tokens
-(`Show.S01E01.ja-hiragana-romaji-en.srt`, not
-`Show.S01E01.ja-ja-hiragana-ja-romaji-en.srt`).
-
-To generate the variants and stack them in one call:
-
-```sh
-getsubtitle "URL" --modify --reading ja:hiragana,ja:romaji \
-    --merge -l ja,ja-hiragana,ja-romaji,en
-
-# Korean/Chinese/Cantonese: prefer ASS for readings above the original script
-getsubtitle modify FOLDER --reading ko:revised --reading-format ass
-getsubtitle merge FOLDER -l ko,ko-revised,en --format ass
-```
-
-### Supported URLs
-
-- **Streaming**: Crunchyroll · Netflix · Hulu · Max (HBO) · Disney+ · Apple TV+ · Paramount+ · Peacock · Prime Video
-- **Catalog**: IMDb · TMDB · AniList · MyAnimeList · TheTVDB · Letterboxd · Rotten Tomatoes · Trakt
-- **Bridges**: AniList ↔ IMDb/TMDB/TVDB (Anime-IDs + Wikidata) · Netflix work ID → IMDb/TMDB (Wikidata P1874)
+- **Streaming:** Crunchyroll · Netflix · Hulu · Max (HBO) · Disney+ · Apple TV+ · Paramount+ · Peacock · Prime Video
+- **Catalog:** IMDb · TMDB · AniList · MyAnimeList · TheTVDB · Letterboxd · Rotten Tomatoes · Trakt
+- **Bridges:** AniList ↔ IMDb / TMDB / TVDB (Anime-IDs + Wikidata) · Netflix work ID → IMDb / TMDB (Wikidata P1874)
 
 For non-anime TV, `-e all` expansion needs a TMDB key.
 
-### Source diagnostics
+## Install — other paths
+
+### pipx
+
+If you already use `pipx`:
 
 ```sh
-getsubtitle sources --check      # which internal sources your Wyzie key reaches
+pipx install "getsubtitle[furigana,romanization-ko,romanization-zh,romanization-yue] @ git+https://github.com/fpenguin/getsubtitle.git"
 ```
 
-If SubDL doesn't appear, a direct SubDL key fills coverage gaps for
-Korean, Spanish, Chinese, and European-language subtitles:
-`getsubtitle --set-key subdl`.
+On Windows: `py -m pip install --user pipx && py -m pipx ensurepath` first.
 
-### Bare SRT (no learning helpers)
+### Developer checkout
 
 ```sh
-getsubtitle "URL" -l ja --no-reading --no-single-line --no-strip-cc-noise --no-mt-engine
+git clone https://github.com/fpenguin/getsubtitle.git
+cd getsubtitle
+./setup.sh                 # macOS/Linux — must run from the repo root
+.\setup.ps1                # Windows — same
 ```
 
-### Developer source smoke tests
+Creates an editable venv at `./.venv`. Activate each session with
+`source .venv/bin/activate` (or `.\.venv\Scripts\Activate.ps1`).
 
-Diagnostic scripts under `scripts/` probe Korean, Chinese, and
-European-language subtitle coverage before new providers are wired in.
-See ROADMAP.md for the diagnostic workflow.
+### Optional dependencies (manual)
+
+```sh
+pip install -e ".[furigana]"         # Japanese (pykakasi)
+pip install -e ".[romanization-ko]"  # Korean (g2pk + korean-romanizer)
+pip install -e ".[romanization-zh]"  # Mandarin (pypinyin)
+pip install -e ".[romanization-yue]" # Cantonese (pycantonese)
+pip install -e .                     # bare install (no reading aids)
+```
+
+On Windows, prefix with `py -m `.
+
+### PowerShell execution policy
+
+If PowerShell blocks `.\setup.ps1`:
+
+```powershell
+Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass
+.\setup.ps1
+```
+
+### PyPI
+
+`pip install getsubtitle` does **not** install this tool — the name
+on PyPI is held by an older unrelated project. Use the GitHub
+installer or the `pipx ... @ git+...` form above.
+
+## Common commands
+
+Each verb has its own focused `--help`:
+
+```sh
+getsubtitle --help               # overview
+getsubtitle --help doctor        # health check
+getsubtitle --help fetch         # URL or PATH download
+getsubtitle --help translate     # AI translation
+getsubtitle --help modify        # cleanup, SAMI→SRT, MKV extraction, reading aids
+getsubtitle --help merge         # stack languages
+getsubtitle --help reading       # reading-aid spec (ja/ko/zh/yue)
+getsubtitle --help interactive   # the -i wizard
+getsubtitle --help config        # user_settings.toml defaults
+getsubtitle --help keys          # API key setup
+getsubtitle --help advanced      # troubleshooting, experimental flags
+```
 
 ## Responsible use
 
-GetSubtitle searches and downloads subtitle files from public
-community databases (Jimaku, Wyzie, optionally Subdivx and Addic7ed).
-It does **not** bypass DRM, account login, or region locks. Don't
-redistribute downloaded subtitles in violation of their original
-license.
+GetSubtitle searches public community databases (Jimaku, Wyzie,
+optionally Subdivx and Addic7ed). It does **not** bypass DRM, account
+login, or region locks. Don't redistribute downloaded subtitles in
+violation of their original license.
 
 ## License
 

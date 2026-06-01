@@ -4799,6 +4799,17 @@ def test_pipeline_translate_rewrites_engine_to_canonical_flags():
     assert "--mt-source" in args and args[args.index("--mt-source") + 1] == "en"
 
 
+def test_pipeline_no_open_folder_prompt_is_global_not_modify_arg():
+    blocks = MODULE["split_pipeline_argv"]([
+        "--fetch", "title://mashle",
+        "--output", "/tmp/out",
+        "--modify", "--strip-cc-noise",
+        "--no-open-folder-prompt",
+    ])
+    assert "--no-open-folder-prompt" in blocks["shared"]
+    assert "--no-open-folder-prompt" not in blocks["modify"]
+
+
 def test_pipeline_requires_target_for_downstream_verbs():
     # `--merge` alone (no --fetch, no --output) → error.
     import io, contextlib
@@ -7939,7 +7950,7 @@ def test_wizard_apply_smart_defaults_fills_missing_answers():
     assert s.master == ""  # blank = first wins downstream
     assert s.asbplayer is True
     assert s.format == "vtt"  # reading aid -> ruby-capable format
-    assert s.output == "~/Movies/Subtitles"
+    assert s.output == "~/Downloads/GetSubtitle"
     # All five notes appear in the banner-friendly summary.
     assert "Display order" in notes
     assert "Timing master" in notes
@@ -7962,7 +7973,7 @@ def test_wizard_smart_defaults_pick_srt_without_reading_aids():
 
 def test_wizard_smart_defaults_local_path_output_lands_beside_source():
     """Local-path sources output beside the source folder/file
-    instead of the default ~/Movies/Subtitles destination."""
+    instead of the default ~/Downloads/GetSubtitle destination."""
     import tempfile
     from pathlib import Path
     with tempfile.TemporaryDirectory() as d:

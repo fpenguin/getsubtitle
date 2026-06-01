@@ -206,10 +206,11 @@ strip_cc_noise = true
 # Which file formats to generate for the reading-aid side files. One of:
 #   "srt"    — broadly compatible, inline parenthetical readings.
 #              Safest fallback. One file per episode.
-#   "vtt"    — ruby <ruby><rt> markup. Renders true furigana / pinyin in
-#              asbplayer when Settings > Misc > Subtitles > Subtitle HTML =
-#              Render.
-#   "ass"    — stacked-line ASS. Experimental; player support varies.
+#   "vtt"    — ruby <ruby><rt> markup. Best for Japanese furigana in
+#              asbplayer/browser study when Settings > Misc > Subtitles >
+#              Subtitle HTML = Render.
+#   "ass"    — stacked-line ASS. Best local-player choice for Korean,
+#              Mandarin, and Cantonese readings above the original script.
 #   "all"    — generate all three (srt + ass + vtt) — useful when you
 #              want different formats for different downstream uses.
 # Comma-lists also work: "srt,vtt"

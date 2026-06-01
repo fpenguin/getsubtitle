@@ -25,3 +25,4 @@ user_settings.toml
 
 # AI-agent briefing kept locally; contains absolute paths for this machine.
 HANDOFF.md
+CLAUDE.md

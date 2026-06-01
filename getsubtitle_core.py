@@ -8477,7 +8477,7 @@ def _is_pipeline_argv(argv: list[str]) -> bool:
 # verb block), so we extract them out of whichever verb block they
 # accidentally land in and put them in "shared".
 _PIPELINE_GLOBAL_VALUED_FLAGS = {"--output", "--source"}     # take next token as value
-_PIPELINE_GLOBAL_BOOL_FLAGS = {"--dry-run", "--force"}
+_PIPELINE_GLOBAL_BOOL_FLAGS = {"--dry-run", "--force", "--no-open-folder-prompt"}
 
 
 def split_pipeline_argv(argv: list[str]) -> dict[str, list[str]]:
@@ -10908,7 +10908,7 @@ def _setup_module_exists(module_name: str) -> bool:
 _SETUP_READING_AID_BY_LANG: dict[str, tuple[str, str, str]] = {
     "ja": ("ja:hiragana", "Japanese hiragana furigana above kanji",
            "Ships now via pykakasi."),
-    "ko": ("ko:revised", "Korean Revised Romanization above hangul",
+    "ko": ("ko:revised", "Korean Revised Romanization above Hangul",
            "Ships now via g2pk + korean-romanizer."),
     "zh": ("zh:marks", "Mandarin pinyin (with tone marks) above hanzi",
            "Ships now via pypinyin."),
@@ -10927,7 +10927,7 @@ _SETUP_READING_AID_BY_LANG: dict[str, tuple[str, str, str]] = {
 
 # Per-language "why" line, install-size hint, and setup-time string for the
 # reading-aid recommendation. Lets a Korean learner see "essential while
-# you're decoding hangul" instead of the generic "shows pronunciation".
+# you're decoding Hangul" instead of the generic "shows pronunciation".
 # install_mb is approximate disk impact AFTER dependencies — pip's own
 # output is the source of truth at install time, but a one-line preview
 # avoids surprising the user when g2pk pulls nltk.
@@ -10942,7 +10942,7 @@ _SETUP_READING_AID_PROSE: dict[str, tuple[str, str, str]] = {
         "~10 seconds (pip install).",
     ),
     "ko": (
-        "Revised Romanization above each hangul syllable, with G2P phonological "
+        "Revised Romanization above each Hangul syllable, with G2P phonological "
         "corrections (같이→gachi, 읽는→ingneun). Most useful in the first ~100 "
         "hours of Korean reading.",
         "Free; g2pk pulls nltk + a small corpus (~80 MB total).",
@@ -12034,7 +12034,7 @@ Install: `pip install -e ".[romanization-ko]"`
 Modes:
   ko:revised     Default. Revised Romanization with G2P preprocessing.
                  G2P handles pronunciation rules so the output reflects how
-                 hangul is actually spoken, not its surface spelling:
+                 Hangul is actually spoken, not its surface spelling:
                    같이  → gachi    (palatalization, not gat-i)
                    읽는  → ingneun  (nasal assimilation)
                    한국어 → hangugeo (linking sounds)
@@ -12089,8 +12089,8 @@ Requires PyCantonese:
 Thai / Arabic / Hindi / Russian — coming soon
 ──────────────────────────────────────────────────────────────────────
 Wired through to CLI and TOML; backends land per the ROADMAP. The
-wizard and setup script accept these so you can save a workflow now
-and re-run when the backend lands.
+wizard can save these choices in a workflow now so you can re-run when
+the backend lands.
 
   th:royal-thai  Thai Royal-Thai transliteration
   ar:ala-lc      Arabic ALA-LC romanization
@@ -12106,8 +12106,8 @@ Output formats (--reading-format)
   vtt    Ruby <ruby><rt> markup. Renders true furigana / inline reading
          aids in asbplayer when Settings > Misc > Subtitles >
          Subtitle HTML is set to Render.
-  ass    Stacked-line layout (reading above original). Experimental;
-         player support varies.
+  ass    Stacked-line layout (reading above original). Best local-player
+         choice for Korean, Mandarin, and Cantonese reading aids.
   all    Generate all three. Same as srt,ass,vtt.
 
 Examples:
@@ -12264,7 +12264,7 @@ Operations (run in this order; pick at least one):
                            Japanese, Korean, Mandarin Chinese, and
                            Cantonese ship now; other languages land as backends
                            arrive (see ROADMAP).
-  --no-romanization        Disable reading-aid generation for this run.
+  --no-reading             Disable reading-aid generation for this run.
   --format CODES           Which reading-aid side files to generate. Comma
                            list of srt, ass, vtt, or 'all'. Default: srt.
                            (Also accepts --reading-format.)
@@ -12508,6 +12508,7 @@ Examples:
   getsubtitle merge ~/Downloads/GetSubtitle/MF\\ Ghost -l ja,ja-hiragana,ja-romaji,en
   getsubtitle merge ~/Downloads/GetSubtitle -l ko,ko-revised,en
   getsubtitle merge ~/Downloads/GetSubtitle -l zh,zh-marks,en
+  getsubtitle merge ~/Downloads/GetSubtitle -l yue,yue-numbers,en
 
 Merge options:
   -l, --langs CODES        Required. Language order for output
@@ -12516,7 +12517,9 @@ Merge options:
   --force                  Overwrite existing outputs and allow low-confidence matches
   --open-folder            Open output folder after writing
   --no-open-folder-prompt  Do not ask whether to open output folder
-  --format FORMAT          srt or vtt. vtt can render ruby reading aids in asbplayer
+  --format FORMAT          srt, vtt, smi, ass, or txt. VTT is best for
+                           asbplayer/browser ruby; ASS is best for local
+                           stacked reading aids.
   --sync MODE              auto, strict, or loose. Default: auto
   --master LANG            Timing master. Default: first language in -l
   --single-line, --single  Flatten each language to one line. Default behavior
@@ -12539,7 +12542,7 @@ Multi-variant merge:
     ja-hiragana, ja-katakana, ja-romaji
     ko-revised, ko-yale
     zh-marks, zh-numbers, zh-letters
-    yue-numbers (wired, backend pending)
+    yue-numbers (ships via romanization-yue / pycantonese)
   Output filename collapses adjacent same-base tokens:
     -l ja,ja-hiragana,ja-romaji,en  ->  Show.ja-hiragana-romaji-en.srt
   Default master prefers the base language when both base and variant
@@ -12736,11 +12739,11 @@ What it asks:
          when translate is selected.
   Q9.  Reading aids — phonetic guides for the original script. Option
          '1' is 'No reading aid (skip)' and the default; aids start at 2:
-           ja:hiragana / ja:katakana / ja:romaji           (★ ships now)
-           ko:revised / ko:yale                            (★ ships now)
-           zh:marks / zh:numbers / zh:letters              (★ ships now)
-           yue:numbers (jyutping)                          (★ ships now)
-           th:royal-thai / ar:ala-lc / etc.                (☆ backend coming)
+          ja:hiragana / ja:katakana / ja:romaji           ships now
+          ko:revised / ko:yale                            ships now
+          zh:marks / zh:numbers / zh:letters              ships now
+          yue:numbers (jyutping)                          ships now
+          th:royal-thai / ar:ala-lc / etc.                backend coming
          The header example adapts to the user's primary script
          (漢字（かんじ） for ja, 한글 (hangeul) for ko, 漢字 (pīnyīn) for zh).
   Q10. Cleanup preset — single-line cues + strip broadcast noise.
@@ -13854,7 +13857,7 @@ def _wizard_q9_format(state: _WizardState) -> None:
     print("    b) VTT  — best for Japanese ruby in asbplayer/browser study")
     print("             workflows; local-player ruby support is uneven.")
     print("    c) SMI")
-    print("    d) ASS  — best local-player choice for stacked Korean/Chinese")
+    print("    d) ASS  — best local-player choice for stacked Korean/Chinese/Cantonese")
     print("             readings above the original script.")
     print("    e) TXT - without timestamp")
     pick = _wizard_prompt("Choose a/b/c/d/e", {"vtt": "b", "srt": "a"}.get(default, "a")).lower()
@@ -13945,8 +13948,8 @@ _WIZARD_STEPS: list[tuple[str, "callable"]] = [
     # `_wizard_apply_smart_defaults` before the Q-banner: display order
     # (Q4 already implies it), master timing language (first lang
     # wins), cleanup preset (always on for learners), output format
-    # (VTT when reading aids, else SRT), output folder (~/Movies/
-    # Subtitles for URL/title, source's parent for local paths).
+    # (VTT when reading aids, else SRT), output folder
+    # (~/Downloads/GetSubtitle for URL/title, source's parent for local paths).
     ("steps",         _wizard_q0_steps),
     ("source",        _wizard_q1_source),
     ("languages",     _wizard_q2_languages),
@@ -13992,11 +13995,11 @@ def _wizard_apply_smart_defaults(state: _WizardState) -> dict[str, str]:
                else "SRT — most compatible")
             + ")"
         )
-    # Output folder: URL/title sources land in ~/Movies/Subtitles by
+    # Output folder: URL/title sources land in ~/Downloads/GetSubtitle by
     # default; local-path sources land beside the source file/folder.
     if not state.output:
         if state.source_kind in ("url", "title"):
-            state.output = "~/Movies/Subtitles"
+            state.output = DEFAULT_OUTPUT_TEXT
             notes["Output folder"] = state.output
         elif state.source_kind == "path" and state.source:
             from pathlib import Path as _P

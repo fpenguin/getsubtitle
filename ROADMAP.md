@@ -36,7 +36,7 @@ After v1.9, use smaller release steps for incremental improvements:
     - Cleanup preset — always on (single-line cues + strip broadcast
       noise; works in every player).
     - Output format — VTT when reading aids are picked, SRT otherwise.
-    - Output folder — `~/Movies/Subtitles` for URL/title sources;
+    - Output folder — `~/Downloads/GetSubtitle` for URL/title sources;
       beside the source folder/file for local paths.
   A typical movie-with-furigana run goes from 12 → 5 questions.
 
@@ -125,7 +125,7 @@ After v1.9, use smaller release steps for incremental improvements:
     the CLI form and the workflow preview.
   - After a successful Run, the wizard offers to open the output
     folder in the OS file manager.
-  - Deferred reading aids (yue/th/ar/hi/ru) are stripped before Run so
+  - Deferred reading aids (th/ar/hi/ru) are stripped before Run so
     the modify step doesn't crash; the Save flow keeps them so the
     saved workflow re-runs cleanly once the backend ships.
   - Cross-provider Japanese fallback: when ja is requested and the
@@ -148,7 +148,7 @@ After v1.9, use smaller release steps for incremental improvements:
 
   Supported pseudo-langs: `ja-hiragana`, `ja-katakana`, `ja-romaji`,
   `ko-revised`, `ko-yale`, `zh-marks`, `zh-numbers`, `zh-letters`, and
-  the wired-through `yue-numbers`. Each resolves to the matching
+  `yue-numbers`. Each resolves to the matching
   `.{base}.{infix}-{mode}.{srt|vtt|ass}` reading-aid side file produced
   by `modify --reading {lang}:{mode}`. Output filename collapses
   adjacent same-base tokens so the result is `ja-hiragana-romaji-en`
@@ -313,7 +313,7 @@ After v1.9, use smaller release steps for incremental improvements:
 
 ### Tests
 
-- 505 automated tests covering URL parsing, provider response shapes, TMDB / AniList resolution, SAMI parsing, VTT/ASS input parsing, MT helpers + auto_load/auto_unload, merge with format hints, pipeline orchestration, `--config` CLI overrides, config validation, source smoke diagnostics, help system, and dispatch routing.
+- 514 automated tests covering URL parsing, provider response shapes, TMDB / AniList resolution, SAMI parsing, VTT/ASS input parsing, MT helpers + auto_load/auto_unload, merge with format hints, pipeline orchestration, `--config` CLI overrides, config validation, source smoke diagnostics, help system, and dispatch routing.
 
 ## Planned (post-v1.0)
 
@@ -336,7 +336,7 @@ After v1.9, use smaller release steps for incremental improvements:
 
 ## v2.0 target: AI-based subtitle sync engine
 
-Aim: make multi-language subtitle stacks line up better when subtitle
+Aim: make multi-language subtitle files line up better when subtitle
 files come from different releases, cuts, intros, ad breaks, fansub
 timings, or streaming sources.
 
