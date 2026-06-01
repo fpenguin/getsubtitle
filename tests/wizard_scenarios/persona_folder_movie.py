@@ -4,7 +4,7 @@ A learner downloaded `Totoro.ja.srt` and `Totoro.en.srt` (movie-style
 filenames produced by save_subtitle). They open the wizard, pick
 merge-only, and point it at the folder.
 
-This is the v1.7.1 movie re-scannability test — `parse_episode_marker`
+This is the v0.7.1 movie re-scannability test — `parse_episode_marker`
 must return synthetic (0, 0) so the scanner sees both files."""
 
 from wizard_harness import Scenario

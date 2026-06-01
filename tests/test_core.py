@@ -2650,7 +2650,7 @@ def test_setup_help_subcommand_works_without_tty():
 # ─── Setup script fixes (review feedback) ────────────────────────────
 
 def test_setup_config_text_uses_canonical_romanization_key():
-    """The wizard emits the v1.1 canonical key `romanization` (not the
+    """The wizard emits the v0.1 canonical key `romanization` (not the
     legacy `furigana = "hiragana"` form). Guards against re-introducing
     the bug the review caught."""
     choice = MODULE["_SetupChoice"](
@@ -2977,7 +2977,7 @@ def test_main_no_args_prints_short_main_help():
     # Must include all five subcommand names + the topic-help pointer.
     for name in ("fetch", "translate", "modify", "merge", "config"):
         assert name in out
-    # Must include the example-config references for v1.0.
+    # Must include the shipped example-config references.
     assert "simpsons-s1-en-fr.toml" in out
     assert "plex-movies-fill-merge.toml" in out
     # Must NOT include the long argparse-style argument table.
@@ -5919,7 +5919,7 @@ def test_parse_furigana_formats_unknown_format_rejected():
     except MODULE["CliError"] as e:
         assert "mp4" in str(e)
         assert "srt, ass, vtt" in str(e).lower() or "srt, ass, vtt" in str(e)
-        # v1.2: topic renamed to `romanization`; `furigana` kept as alias.
+        # v0.2: topic renamed to `romanization`; `furigana` kept as alias.
         assert "--help reading" in str(e)
     else:
         raise AssertionError("expected CliError for unknown format")
@@ -7229,8 +7229,8 @@ def test_bridge_external_ids_to_anilist_uses_mal_id():
     assert calls["wikidata"] == 0, "MAL bridge should not need Wikidata"
 
 
-# ─── v1.1 naming-consistency renames ─────────────────────────────────────
-# These guard the canonical CLI/TOML names introduced in v1.1 along with
+# ─── v0.1 naming-consistency renames ─────────────────────────────────────
+# These guard the canonical CLI/TOML names introduced in v0.1 along with
 # the silent back-compat aliases.
 
 def test_cli_engine_model_mt_source_languages_aliases():
@@ -7448,7 +7448,7 @@ def test_toml_pipeline_retain_folder_structure_underscore_and_hyphen():
 
 def _wizard_state(**overrides):
     """Build a populated _WizardState (URL pipeline by default).
-    Tests then mutate only the fields they care about. v1.7+ uses the
+    Tests then mutate only the fields they care about. v0.7+ uses the
     all-in-one step set so existing emitter assertions about
     --translate / [translate] keep firing; tests that exercise a focused
     subset override `steps=` explicitly."""
@@ -7486,7 +7486,7 @@ def test_interactive_non_tty_raises_clean_error():
 
 
 def test_wizard_emit_cli_uses_canonical_flags():
-    """Generated CLI uses v1.4 canonical long names (--languages, --engine,
+    """Generated CLI uses v0.4 canonical long names (--languages, --engine,
     --mt-source, --reading, --reading-format) and never legacy
     --furigana / --romanization."""
     state = _wizard_state()
@@ -7503,7 +7503,7 @@ def test_wizard_emit_cli_uses_canonical_flags():
 
 
 def test_wizard_emit_toml_uses_canonical_keys():
-    """Generated TOML uses v1.4 canonical keys (mt_source, reading,
+    """Generated TOML uses v0.4 canonical keys (mt_source, reading,
     reading_format) and never legacy mt_source_lang / furigana /
     romanization / furigana_output_format."""
     state = _wizard_state()
@@ -7548,7 +7548,7 @@ def test_wizard_emit_cli_includes_output_target():
 
 
 def test_wizard_reading_aid_emits_canonical_reading_flag():
-    """The wizard uses the v1.4 `--reading` / `[modify].reading` surface
+    """The wizard uses the v0.4 `--reading` / `[modify].reading` surface
     exclusively — no legacy `--romanization` or `--furigana` flags, no
     legacy `romanization = ...` / `furigana = ...` TOML keys."""
     state = _wizard_state(reading_aids=["ja:hiragana"])
@@ -7811,7 +7811,7 @@ def test_wizard_state_to_toml_round_trip_safe():
     assert text.endswith("\n")
 
 
-# ─── v1.6 wizard UX touch-ups ───────────────────────────────────────
+# ─── v0.6 wizard UX touch-ups ───────────────────────────────────────
 
 
 def test_wizard_url_is_movie_detection():
@@ -7975,13 +7975,13 @@ def test_wizard_q11_banner_uses_fixed_70_char_rule():
     assert rule in out
     # No oversize rule.
     assert "=" * 80 not in out
-    # CLI + workflow preview both rendered (v1.7.1 reworded the label).
+    # CLI + workflow preview both rendered (v0.7.1 reworded the label).
     assert cli in out
     assert "workflow file" in out
     assert "About to run" not in out
 
 
-# ─── v1.7 step picker (Q1) ──────────────────────────────────────────
+# ─── v0.7 step picker (Q1) ──────────────────────────────────────────
 
 
 def test_wizard_state_default_steps_include_fetch_modify_merge():
@@ -8397,7 +8397,7 @@ def test_wizard_emit_cli_translate_only_path_form():
 
 
 def test_parse_episode_marker_treats_movie_filenames_as_zero_zero():
-    """v1.7.1 fix: movies have no SxxExx marker. parse_episode_marker
+    """v0.7.1 fix: movies have no SxxExx marker. parse_episode_marker
     must return (0, 0) for `Title.<lang>.srt` shapes so the scanner can
     find them. Combined outputs and furigana variants still return None."""
     pem = MODULE["parse_episode_marker"]
@@ -8415,7 +8415,7 @@ def test_parse_episode_marker_treats_movie_filenames_as_zero_zero():
 
 def test_combine_main_finds_movie_files_and_merges():
     """End-to-end: a folder of Title.ja.srt + Title.en.srt merges into
-    Title.ja-en.srt. The v1.6 movie filename change broke this; v1.7.1
+    Title.ja-en.srt. The v0.6 movie filename change broke this; v0.7.1
     restores it via the (0, 0) synthetic episode key."""
     import tempfile
     from pathlib import Path
@@ -8502,7 +8502,7 @@ def test_wizard_q7_reading_aids_no_reading_aid_is_option_one_default():
 
 def test_wizard_intro_uses_beginner_friendly_terms():
     """Wizard intro talks about 'workflow file' / 'terminal command'
-    instead of 'TOML workflow' / 'pipeline' — v1.7.1 reword. Word
+    instead of 'TOML workflow' / 'pipeline' — v0.7.1 reword. Word
     wrapping may split 'terminal command' across lines, so collapse
     whitespace before matching."""
     intro = MODULE["_WIZARD_INTRO"]
@@ -8513,13 +8513,13 @@ def test_wizard_intro_uses_beginner_friendly_terms():
 
 def test_wizard_intro_has_no_jargon():
     """Intro should not contain 'TOML' or 'pipeline' raw jargon
-    (v1.7.1 reword + v1.8 still maintained)."""
+    (v0.7.1 reword + v0.8 still maintained)."""
     intro = MODULE["_WIZARD_INTRO"]
     assert "TOML" not in intro
     assert "pipeline" not in intro
 
 
-# ─── v1.8 wizard streamlined to ≤7 Qs ─────────────────────────────
+# ─── v0.8 wizard streamlined to ≤7 Qs ─────────────────────────────
 
 
 def test_wizard_dispatch_table_has_at_most_seven_question_steps():
@@ -8670,7 +8670,7 @@ def test_wizard_q11_banner_surfaces_smart_defaults():
 
 def test_wizard_default_full_pipeline_still_emits_fetch_modify_merge():
     """Default steps (no user override) produce the same shape as the
-    pre-v1.7 wizard: --fetch, --modify, --merge."""
+    pre-v0.7 wizard: --fetch, --modify, --merge."""
     s = MODULE["_WizardState"](
         source="https://www.themoviedb.org/movie/8392",
         source_kind="url",
@@ -9733,7 +9733,7 @@ def test_setup_config_text_korean_emits_canonical_romanization_spec():
 
 
 def test_user_settings_example_uses_canonical_names():
-    """The shipped example TOML demonstrates the v1.4 canonical names
+    """The shipped example TOML demonstrates the v0.4 canonical names
     only — no legacy [modify].furigana / [modify].romanization /
     [merge].furigana / strip_furigana_before_mt / mt_source_lang."""
     from pathlib import Path

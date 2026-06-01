@@ -189,7 +189,7 @@ single_line = true
 # Default: true.
 strip_cc_noise = true
 
-# Reading-aid SPEC (the v1.4 umbrella covering ja / ko / zh / and the
+# Reading-aid SPEC (the v0.4 umbrella covering ja / ko / zh / and the
 # languages whose backends ship per the ROADMAP). Comma list of
 # LANG:MODE pairs. Examples:
 #   reading = "ja:hiragana"                        Japanese furigana above kanji
