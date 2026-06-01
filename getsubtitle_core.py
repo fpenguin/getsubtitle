@@ -3218,6 +3218,8 @@ def parse_mt_source_lang(value: str | None, requested_langs: list[str]) -> dict[
     raw = value.strip()
     if not raw:
         return None
+    if raw.lower() == "auto":
+        return None
     parts = [p.strip() for p in raw.split(",") if p.strip()]
     if not parts:
         return None
@@ -3882,8 +3884,21 @@ def text_with_ruby(text: str, mode: str) -> str:
     return restore_existing_readings("".join(chunks), protected)
 
 
+SINGLE_LINE_DECORATIVE_WRAPPERS = str.maketrans("", "", "《》〈〉")
+
+
+def clean_single_line_text(text: str) -> str:
+    """Remove subtitle wrapper glyphs that become distracting in one-line cues."""
+    return text.translate(SINGLE_LINE_DECORATIVE_WRAPPERS).strip()
+
+
 def flatten_subtitle_lines(lines: list[str]) -> list[str]:
-    flattened = "　".join(strip_subtitle_markup(line).strip() for line in lines if line.strip())
+    cleaned = [
+        clean_single_line_text(strip_subtitle_markup(line).strip())
+        for line in lines
+        if line.strip()
+    ]
+    flattened = "　".join(line for line in cleaned if line)
     return [flattened] if flattened else []
 
 
@@ -4333,11 +4348,18 @@ def flatten_srt_in_place(path: Path, separator: str = " ") -> None:
             out_blocks.append(block)
             continue
         header = lines[: time_idx + 1]
-        subtitle_lines = [ln for ln in lines[time_idx + 1 :] if ln.strip()]
+        subtitle_lines = [
+            clean_single_line_text(strip_subtitle_markup(ln).strip())
+            for ln in lines[time_idx + 1 :]
+            if ln.strip()
+        ]
         if not subtitle_lines:
             out_blocks.append(block)
             continue
-        flat = separator.join(strip_subtitle_markup(ln).strip() for ln in subtitle_lines)
+        flat = separator.join(ln for ln in subtitle_lines if ln)
+        if not flat:
+            out_blocks.append("\n".join(header))
+            continue
         out_blocks.append("\n".join(header + [flat]))
     path.write_text("\n\n".join(out_blocks) + "\n", encoding="utf-8")
 
@@ -8616,6 +8638,17 @@ def _pipeline_option_value(args: list[str], *names: str) -> str | None:
     return None
 
 
+_PIPELINE_LANGUAGE_FLAGS = ("-l", "--languages", "--langs", "--lang")
+
+
+def _pipeline_language_value(args: list[str]) -> str | None:
+    return _pipeline_option_value(args, *_PIPELINE_LANGUAGE_FLAGS)
+
+
+def _pipeline_has_language_option(args: list[str]) -> bool:
+    return option_was_passed(args, *_PIPELINE_LANGUAGE_FLAGS)
+
+
 def _pipeline_url_fetch_output_target(fetch_target: str, fetch_options: list[str], output_root: str) -> str:
     media = infer_media(fetch_target)
     title = _pipeline_option_value(fetch_options, "--title")
@@ -8710,6 +8743,8 @@ def pipeline_main(argv: list[str]) -> int:
     shared_source: str | None = None
     shared_output: str | None = None
     shared_dry_run = False
+    shared_force = False
+    shared_no_open_folder_prompt = False
     i = 0
     leftover_shared: list[str] = []
     while i < len(shared):
@@ -8728,6 +8763,14 @@ def pipeline_main(argv: list[str]) -> int:
             continue
         if tok == "--dry-run":
             shared_dry_run = True
+            i += 1
+            continue
+        if tok == "--force":
+            shared_force = True
+            i += 1
+            continue
+        if tok == "--no-open-folder-prompt":
+            shared_no_open_folder_prompt = True
             i += 1
             continue
         leftover_shared.append(tok)
@@ -8795,13 +8838,24 @@ def pipeline_main(argv: list[str]) -> int:
         sub_argv = [fetch_target] + fetch_options
         if shared_output and "--output" not in sub_argv and "-o" not in sub_argv:
             sub_argv += ["--output", shared_output]
+        if (
+            "translate" in blocks
+            and not option_was_passed(
+                sub_argv,
+                "--engine", "--mt-engine", "--no-engine", "--no-mt-engine",
+            )
+        ):
+            # A separate pipeline translate step should own MT. Otherwise the
+            # URL-form fetch parser falls back to [translate].engine defaults
+            # (usually Argos) before the requested pipeline engine can run.
+            sub_argv.append("--no-engine")
         # Propagate shared --dry-run by adding to fetch's args if not already
         # there. URL form respects --dry-run via the URL parser. PATH form
         # is already dry-run by default unless --run; --dry-run is harmless.
         if shared_dry_run and "--dry-run" not in sub_argv:
             sub_argv.append("--dry-run")
         if (
-            has_downstream
+            (has_downstream or shared_no_open_folder_prompt)
             and "--open-folder" not in sub_argv
             and "--no-open-folder-prompt" not in sub_argv
         ):
@@ -8822,9 +8876,18 @@ def pipeline_main(argv: list[str]) -> int:
             raise CliError("--translate needs --output PATH or a PATH --fetch target.")
         _heading(f"translate {downstream_target}")
         tr_args = _rewrite_translate_block(blocks["translate"])
+        if not _pipeline_has_language_option(tr_args):
+            inherited_langs = (
+                _pipeline_language_value(fetch_options)
+                or _pipeline_language_value(blocks.get("merge", []))
+            )
+            if inherited_langs:
+                tr_args += ["--languages", inherited_langs]
         sub_argv = [downstream_target] + tr_args
         if shared_dry_run and "--dry-run" not in sub_argv:
             sub_argv.append("--dry-run")
+        if shared_force and "--force" not in sub_argv:
+            sub_argv.append("--force")
         rc = translate_main(sub_argv)
         rc_total = rc or rc_total
 
@@ -8835,6 +8898,8 @@ def pipeline_main(argv: list[str]) -> int:
         sub_argv = [downstream_target] + blocks["modify"]
         if shared_dry_run and "--dry-run" not in sub_argv:
             sub_argv.append("--dry-run")
+        if shared_force and "--force" not in sub_argv:
+            sub_argv.append("--force")
         rc = modify_main(sub_argv)
         rc_total = rc or rc_total
 
@@ -8847,6 +8912,10 @@ def pipeline_main(argv: list[str]) -> int:
             sub_argv += ["--output", shared_output]
         if shared_dry_run and "--dry-run" not in sub_argv:
             sub_argv.append("--dry-run")
+        if shared_force and "--force" not in sub_argv:
+            sub_argv.append("--force")
+        if shared_no_open_folder_prompt and "--no-open-folder-prompt" not in sub_argv:
+            sub_argv.append("--no-open-folder-prompt")
         # combine_main is the underlying impl for merge.
         rc = combine_main(sub_argv)
         rc_total = rc or rc_total
@@ -9083,6 +9152,23 @@ def _apply_reading_to_args(args) -> None:
         args.yue_reading = "numbers" if mode in ("true", "marks") else mode
 
 
+def _single_japanese_reading_spec(value) -> str | None:
+    """Return `ja:MODE` when a reading spec has exactly one Japanese mode.
+
+    A single Japanese reading can be inlined directly into merged output
+    (`merge --reading ja:hiragana`) so final VTT files contain ruby. Multiple
+    Japanese readings stay on the pseudo-language path (`ja-hiragana`,
+    `ja-katakana`, `ja-romaji`) so users can build multi-row comparison stacks.
+    """
+    if not value:
+        return None
+    pairs = _parse_reading_spec(value)
+    ja_modes = [mode for lang, mode in pairs if lang == "ja"]
+    if len(ja_modes) == 1:
+        return f"ja:{ja_modes[0]}"
+    return None
+
+
 def _resolve_modify_reading(value) -> list[str]:
     """Pipeline `[modify].reading = "ko:true, ja:hiragana"` → CLI flag
     emission. The CLI flag is `--reading SPEC` (a comma string), so
@@ -9302,7 +9388,9 @@ def _toml_to_pipeline_argv(toml_data: dict) -> tuple[list[str], dict]:
             else remaining.pop("mt_source_lang", None)
         )
         if _mt_src_val is not None:
-            argv += ["--mt-source", _normalize_mt_source(_mt_src_val)]
+            mt_source = _normalize_mt_source(_mt_src_val)
+            if mt_source.lower() != "auto":
+                argv += ["--mt-source", mt_source]
         # Global --force propagates to translate.
         if out_force:
             argv.append("--force")
@@ -9342,6 +9430,11 @@ def _toml_to_pipeline_argv(toml_data: dict) -> tuple[list[str], dict]:
             merge_format = extras["output_format"]
         if merge_format:
             argv += ["--format", str(merge_format)]
+        merge_reading = mb.pop("reading", None)
+        if merge_reading is None and isinstance(toml_data.get("modify"), dict):
+            merge_reading = _single_japanese_reading_spec(toml_data["modify"].get("reading"))
+        if merge_reading:
+            argv += _resolve_modify_reading(merge_reading)
         if out_force:
             argv.append("--force")
         for key, value in mb.items():
@@ -14187,6 +14280,8 @@ def _wizard_emit_cli(state: _WizardState) -> list[str]:
     # selected without translate.
     if "translate" in steps and state.mt_engine:
         argv += ["--translate", state.mt_engine]
+        if "fetch" not in steps and state.languages:
+            argv += ["--languages", ",".join(state.languages)]
     elif "fetch" in steps and state.source_kind in ("url", "title"):
         argv.append("--no-engine")
     # Modify block.
@@ -14205,6 +14300,9 @@ def _wizard_emit_cli(state: _WizardState) -> list[str]:
     if "merge" in steps and len(state.order) >= 2:
         argv += ["--merge", "--languages", ",".join(merge_order())]
         add_local_episode_filter(argv)
+        merge_reading = _wizard_merge_inline_reading_spec(state)
+        if merge_reading:
+            argv += ["--reading", merge_reading]
         if state.master:
             argv += ["--master", state.master]
         if state.format:
@@ -14289,6 +14387,10 @@ def _wizard_merge_order(state: _WizardState) -> list[str]:
     return order
 
 
+def _wizard_merge_inline_reading_spec(state: _WizardState) -> str | None:
+    return _single_japanese_reading_spec(state.reading_aids)
+
+
 def _wizard_emit_toml(state: _WizardState) -> str:
     """Build a workflow TOML matching --config FILE.toml schema. Sections
     are only emitted for the verbs the user actually picked at Q1, so a
@@ -14319,6 +14421,8 @@ def _wizard_emit_toml(state: _WizardState) -> str:
     if "translate" in steps and state.mt_engine:
         lines.append("[translate]")
         lines.append(f'engine = "{state.mt_engine}"')
+        if "fetch" not in steps and state.languages:
+            lines.append(f'languages = "{",".join(state.languages)}"')
         lines.append('mt_source = "auto"')
         lines.append("")
     # [modify]
@@ -14349,6 +14453,9 @@ def _wizard_emit_toml(state: _WizardState) -> str:
                 lines.append(f'season = "{state.season}"')
             if state.episode:
                 lines.append(f'episode = "{state.episode}"')
+        merge_reading = _wizard_merge_inline_reading_spec(state)
+        if merge_reading:
+            lines.append(f'reading = "{merge_reading}"')
         if state.master:
             lines.append(f'priority = ["{state.master}"]')
         lines.append('sync = "auto"')
@@ -14366,6 +14473,42 @@ def _wizard_emit_toml(state: _WizardState) -> str:
         lines.append('layout = "archive"')
         lines.append("")
     return "\n".join(lines).rstrip() + "\n"
+
+
+def _wizard_print_saved_workflow_next_steps(path_raw: str, path: Path, cli_string: str) -> None:
+    """Explain how to re-run and reuse a saved workflow TOML."""
+    config_arg = shlex.quote(path_raw)
+    print(f"Your {path.name} runs the same workflow as this command:")
+    print("  # " + cli_string)
+    print()
+    print("Run it later with:")
+    print(f"  getsubtitle --config {config_arg}")
+    print()
+    print("You can recycle this TOML and override saved settings with extra CLI flags.")
+    print("For example, reuse the same language, reading-aid, translation, and merge")
+    print("choices on another show or season:")
+    print(
+        f"  getsubtitle --config {config_arg} "
+        "--source 'https://www.imdb.com/title/tt1234567/' "
+        "--season 3 --episode all "
+        '--output "$HOME/Downloads/GetSubtitle/TV Show/Season 03"'
+    )
+    print()
+    print("CLI flags win over matching TOML settings, so the file can stay as a reusable template.")
+
+
+def _wizard_offer_open_saved_workflow_folder(path: Path) -> None:
+    """Offer to open the folder containing a saved workflow file."""
+    folder = path.expanduser().parent
+    try:
+        folder = folder.resolve()
+    except OSError:
+        folder = folder.expanduser()
+    if _wizard_yesno(f"Open folder containing {path.name}?", default=True):
+        try:
+            open_folder(folder)
+        except Exception as e:
+            print(f"  (could not open folder: {e})")
 
 
 # ─── Dependency probe + auto-setup ─────────────────────────────────────
@@ -14615,11 +14758,9 @@ def interactive_main(argv: list[str] | None = None) -> int:
             path.write_text(toml_str, encoding="utf-8")
             print(f"Saved: {path}")
             print()
-            print(f"Your {path.name} runs the same workflow as this command:")
-            print("  # " + cli_string)
+            _wizard_print_saved_workflow_next_steps(path_raw, path, cli_string)
             print()
-            print("Run it later with:")
-            print(f"  getsubtitle --config {path_raw}")
+            _wizard_offer_open_saved_workflow_folder(path)
             _wizard_clear_draft()
             return 0
 

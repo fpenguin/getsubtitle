@@ -7,11 +7,27 @@ v1.6 / v1.7 / v1.8 / v1.9, what's experimental, and what's on the horizon.
 
 After v1.9, use smaller release steps for incremental improvements:
 
-- **v1.9.1**: small feature, docs, source, and UX batches that do not
+- **v1.9.1+**: small feature, docs, source, and UX batches that do not
   change the core workflow.
 - **v1.9.1.1**: very small follow-ups, help text, tests, and bug fixes.
 - **v2.0**: the next larger behavior milestone, aimed at an AI-based
   subtitle sync engine.
+
+## v1.9.2 — what's new
+
+- **Saved TOML workflows are easier to reuse.** After saving from
+  interactive mode, getsubtitle now shows how to rerun the TOML and how
+  CLI flags can override saved settings for a new show, season, or
+  output folder.
+- **Pipeline translation is more predictable.** URL fetch + translate
+  workflows now let the explicit translate step own machine translation,
+  and local translate workflows inherit the intended language list.
+- **Japanese reading aids reach final merged VTT files.** A single
+  Japanese reading aid such as `ja:hiragana` is carried into merge output
+  so the final multi-language subtitle includes ruby furigana.
+- **Single-line cleanup removes decorative Japanese subtitle wrappers.**
+  When `--single-line` is active, broadcast wrapper marks such as
+  `《》〈〉` are stripped while speaker labels and normal quotes remain.
 
 ## v1.9.1 — what's new
 

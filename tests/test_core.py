@@ -3929,7 +3929,34 @@ def test_modify_main_combines_strip_and_flatten():
             body = target.read_text(encoding="utf-8")
     # Arrow gone AND lines flattened with full-width space (ja).
     assert "➡" not in body
-    assert "《こんな所を　フルスロットルで…。" in body
+    assert "こんな所を　フルスロットルで…。" in body
+    assert "《" not in body
+
+
+def test_modify_main_single_line_removes_japanese_decorative_wrappers():
+    import tempfile
+    from pathlib import Path
+    with _isolated_config(None):
+        with tempfile.TemporaryDirectory() as d:
+            target = Path(d) / "Show.S01E04.ja.srt"
+            target.write_text(
+                "1\n"
+                "00:21:35,327 --> 00:21:38,497\n"
+                "これで労せずして　順位が１つ上がったわけか。》\n"
+                "\n"
+                "2\n"
+                "00:23:42,488 --> 00:23:47,293\n"
+                "（ナレーション）〈次回　第１７話　「残酷な現実」。〉\n",
+                encoding="utf-8",
+            )
+            rc = MODULE["modify_main"]([str(target), "--single-line"])
+            assert rc == 0
+            body = target.read_text(encoding="utf-8")
+    assert "これで労せずして　順位が１つ上がったわけか。" in body
+    assert "（ナレーション）次回　第１７話　「残酷な現実」。" in body
+    assert "》" not in body
+    assert "〈" not in body
+    assert "〉" not in body
 
 
 def test_modify_main_episode_filter_processes_only_requested_episode():
@@ -4799,6 +4826,97 @@ def test_pipeline_translate_rewrites_engine_to_canonical_flags():
     assert "--mt-source" in args and args[args.index("--mt-source") + 1] == "en"
 
 
+def test_pipeline_translate_inherits_fetch_languages_and_owns_mt_for_url_fetch():
+    # Wizard/config workflows often say:
+    #   --fetch URL --languages ja,ko --translate deepl
+    # Fetch should download only; the separate translate step should use the
+    # chosen engine and inherit the requested language list.
+    import io, contextlib, tempfile
+    captured: dict[str, list[str]] = {}
+    scope = MODULE["pipeline_main"].__globals__
+    saved_fetch = scope["fetch_main"]
+    saved_tr = scope["translate_main"]
+
+    def fake_fetch(argv):
+        captured["fetch"] = list(argv)
+        return 0
+
+    def fake_tr(argv):
+        captured["translate"] = list(argv)
+        return 0
+
+    scope["fetch_main"] = fake_fetch
+    scope["translate_main"] = fake_tr
+    try:
+        with tempfile.TemporaryDirectory() as tmp, _isolated_config(None), contextlib.redirect_stdout(io.StringIO()):
+            rc = MODULE["main"]([
+                "--fetch", "https://www.imdb.com/title/tt0245429/",
+                "--languages", "ja,ko",
+                "--translate", "deepl",
+                "--output", f"{tmp}/GetSubtitle",
+            ])
+        assert rc == 0
+    finally:
+        scope["fetch_main"] = saved_fetch
+        scope["translate_main"] = saved_tr
+
+    assert "--no-engine" in captured["fetch"]
+    tr_args = captured["translate"]
+    assert "--engine" in tr_args
+    assert tr_args[tr_args.index("--engine") + 1] == "deepl"
+    assert "--languages" in tr_args
+    assert tr_args[tr_args.index("--languages") + 1] == "ja,ko"
+    assert "--mt-source" not in tr_args
+
+
+def test_pipeline_translate_inherits_merge_languages_for_local_workflow():
+    # Local wizard workflows can be translate + modify + merge with no fetch.
+    # In that case the requested stack is already present on the merge block.
+    import io, contextlib, tempfile
+    captured: dict[str, list[str]] = {}
+    scope = MODULE["pipeline_main"].__globals__
+    saved_tr = scope["translate_main"]
+    saved_modify = scope["modify_main"]
+    saved_combine = scope["combine_main"]
+
+    def fake_tr(argv):
+        captured["translate"] = list(argv)
+        return 0
+
+    def fake_modify(argv):
+        captured["modify"] = list(argv)
+        return 0
+
+    def fake_combine(argv):
+        captured["merge"] = list(argv)
+        return 0
+
+    scope["translate_main"] = fake_tr
+    scope["modify_main"] = fake_modify
+    scope["combine_main"] = fake_combine
+    try:
+        with tempfile.TemporaryDirectory() as tmp, _isolated_config(None), contextlib.redirect_stdout(io.StringIO()):
+            rc = MODULE["main"]([
+                "--source", tmp,
+                "--translate", "deepl",
+                "--modify", "--strip-cc-noise",
+                "--merge", "--languages", "ja,ko",
+                "--output", tmp,
+            ])
+        assert rc == 0
+    finally:
+        scope["translate_main"] = saved_tr
+        scope["modify_main"] = saved_modify
+        scope["combine_main"] = saved_combine
+
+    tr_args = captured["translate"]
+    assert "--engine" in tr_args
+    assert tr_args[tr_args.index("--engine") + 1] == "deepl"
+    assert "--languages" in tr_args
+    assert tr_args[tr_args.index("--languages") + 1] == "ja,ko"
+    assert "--mt-source" not in tr_args
+
+
 def test_pipeline_no_open_folder_prompt_is_global_not_modify_arg():
     blocks = MODULE["split_pipeline_argv"]([
         "--fetch", "title://mashle",
@@ -4808,6 +4926,41 @@ def test_pipeline_no_open_folder_prompt_is_global_not_modify_arg():
     ])
     assert "--no-open-folder-prompt" in blocks["shared"]
     assert "--no-open-folder-prompt" not in blocks["modify"]
+
+
+def test_pipeline_shared_force_and_no_open_prompt_propagate_to_supported_verbs():
+    import io, contextlib, tempfile
+    captured: dict[str, list[str]] = {}
+    scope = MODULE["pipeline_main"].__globals__
+    saved_modify = scope["modify_main"]
+    saved_combine = scope["combine_main"]
+
+    def fake_modify(argv):
+        captured["modify"] = list(argv)
+        return 0
+
+    def fake_combine(argv):
+        captured["merge"] = list(argv)
+        return 0
+
+    scope["modify_main"] = fake_modify
+    scope["combine_main"] = fake_combine
+    try:
+        with tempfile.TemporaryDirectory() as tmp, _isolated_config(None), contextlib.redirect_stdout(io.StringIO()):
+            rc = MODULE["main"]([
+                "--source", tmp,
+                "--modify", "--strip-cc-noise",
+                "--merge", "--languages", "ja,ko",
+                "--force", "--no-open-folder-prompt",
+            ])
+        assert rc == 0
+    finally:
+        scope["modify_main"] = saved_modify
+        scope["combine_main"] = saved_combine
+
+    assert "--force" in captured["modify"]
+    assert "--force" in captured["merge"]
+    assert "--no-open-folder-prompt" in captured["merge"]
 
 
 def test_pipeline_requires_target_for_downstream_verbs():
@@ -4897,6 +5050,121 @@ def test_pipeline_from_config_file_runs_full_pipeline():
         scope["fetch_main"] = saved_fetch
         scope["translate_main"] = saved_tr
         scope["combine_main"] = saved_combine
+
+
+def test_pipeline_config_translate_inherits_fetch_languages_and_disables_inline_mt():
+    import tempfile, io, contextlib
+    from pathlib import Path
+
+    captured: dict[str, list[str]] = {}
+    scope = MODULE["pipeline_main"].__globals__
+    saved_fetch = scope["fetch_main"]
+    saved_tr = scope["translate_main"]
+
+    def fake_fetch(argv):
+        captured["fetch"] = list(argv)
+        return 0
+
+    def fake_tr(argv):
+        captured["translate"] = list(argv)
+        return 0
+
+    scope["fetch_main"] = fake_fetch
+    scope["translate_main"] = fake_tr
+    try:
+        with tempfile.TemporaryDirectory() as tmp:
+            cfg = Path(tmp) / "jpko.toml"
+            cfg.write_text(
+                '[fetch]\n'
+                'source = "https://www.crunchyroll.com/watch/GX9U31PV1/sawatari-koki-the-demon-god"\n'
+                'season = "1"\n'
+                'episode = "all"\n'
+                'languages = "ja,ko"\n'
+                '\n'
+                '[translate]\n'
+                'engine = "deepl"\n'
+                'mt_source = "auto"\n'
+                '\n'
+                '[output]\n'
+                f'target = "{tmp}/GetSubtitle"\n',
+                encoding="utf-8",
+            )
+            with _isolated_config(None), contextlib.redirect_stdout(io.StringIO()):
+                rc = MODULE["main"](["--config", str(cfg)])
+            assert rc == 0
+    finally:
+        scope["fetch_main"] = saved_fetch
+        scope["translate_main"] = saved_tr
+
+    assert "--no-engine" in captured["fetch"]
+    tr_args = captured["translate"]
+    assert "--engine" in tr_args
+    assert tr_args[tr_args.index("--engine") + 1] == "deepl"
+    assert "--languages" in tr_args
+    assert tr_args[tr_args.index("--languages") + 1] == "ja,ko"
+
+
+def test_pipeline_config_translate_inherits_merge_languages_for_legacy_local_toml():
+    import tempfile, io, contextlib
+    from pathlib import Path
+
+    captured: dict[str, list[str]] = {}
+    scope = MODULE["pipeline_main"].__globals__
+    saved_tr = scope["translate_main"]
+    saved_modify = scope["modify_main"]
+    saved_combine = scope["combine_main"]
+
+    def fake_tr(argv):
+        captured["translate"] = list(argv)
+        return 0
+
+    def fake_modify(argv):
+        captured["modify"] = list(argv)
+        return 0
+
+    def fake_combine(argv):
+        captured["merge"] = list(argv)
+        return 0
+
+    scope["translate_main"] = fake_tr
+    scope["modify_main"] = fake_modify
+    scope["combine_main"] = fake_combine
+    try:
+        with tempfile.TemporaryDirectory() as tmp:
+            cfg = Path(tmp) / "Ja2KoVTT.toml"
+            cfg.write_text(
+                '[translate]\n'
+                'engine = "deepl"\n'
+                'mt_source = "auto"\n'
+                '\n'
+                '[modify]\n'
+                'single_line = true\n'
+                'strip_cc_noise = true\n'
+                'reading = "ja:hiragana"\n'
+                'reading_format = "vtt"\n'
+                '\n'
+                '[merge]\n'
+                'languages = "ja,ko"\n'
+                'sync = "auto"\n'
+                'format = "vtt"\n'
+                '\n'
+                '[output]\n'
+                f'target = "{tmp}"\n',
+                encoding="utf-8",
+            )
+            with _isolated_config(None), contextlib.redirect_stdout(io.StringIO()):
+                rc = MODULE["main"](["--config", str(cfg)])
+            assert rc == 0
+    finally:
+        scope["translate_main"] = saved_tr
+        scope["modify_main"] = saved_modify
+        scope["combine_main"] = saved_combine
+
+    tr_args = captured["translate"]
+    assert "--engine" in tr_args
+    assert tr_args[tr_args.index("--engine") + 1] == "deepl"
+    assert "--languages" in tr_args
+    assert tr_args[tr_args.index("--languages") + 1] == "ja,ko"
 
 
 def test_pipeline_toml_missing_required_source_errors():
@@ -5023,6 +5291,12 @@ def test_normalize_mt_source_accepts_string_and_dict():
     out = f({"ko": ["ja", "en"], "es": "en"})
     pairs = set(out.split(","))
     assert pairs == {"ko:ja|en", "es:en"}
+
+
+def test_parse_mt_source_lang_treats_auto_as_no_override():
+    p = MODULE["parse_mt_source_lang"]
+    assert p("auto", ["ja", "ko"]) is None
+    assert p(" AUTO ", ["ja", "ko"]) is None
 
 
 def test_parse_mt_source_lang_accepts_fallback_list():
@@ -5370,6 +5644,19 @@ def test_toml_to_pipeline_argv_emits_output_section_and_pair_models():
     # [output].format overrides per-verb format → --format vtt for merge
     assert "--format" in argv
     assert argv[argv.index("--format") + 1] == "vtt"
+
+
+def test_toml_merge_inherits_single_japanese_reading_from_modify():
+    convert = MODULE["_toml_to_pipeline_argv"]
+    argv, _extras = convert({
+        "modify": {"reading": "ja:hiragana", "reading_format": "vtt"},
+        "merge": {"languages": "ja,ko", "format": "vtt"},
+        "output": {"target": "/tmp/show"},
+    })
+    merge_idx = argv.index("--merge")
+    merge_block = argv[merge_idx:]
+    assert "--reading" in merge_block
+    assert merge_block[merge_block.index("--reading") + 1] == "ja:hiragana"
 
 
 def test_language_aliases_full_names_normalize_to_iso():
@@ -6570,7 +6857,8 @@ def test_flatten_srt_in_place_joins_multi_line_cues():
         MODULE["flatten_srt_in_place"](path, separator="　")
         out = path.read_text(encoding="utf-8")
     # Cue 1 should be joined onto one line with a full-width space.
-    assert "（テイラー）《こんな所を　フルスロットルで来るなんて…。" in out
+    assert "（テイラー）こんな所を　フルスロットルで来るなんて…。" in out
+    assert "《" not in out
     # Cue 2 unchanged.
     assert "single-line cue stays as-is" in out
     # Cue 3 fully joined.
@@ -7137,6 +7425,19 @@ def test_wizard_reading_aid_emits_canonical_reading_flag():
     assert "romanization =" not in toml
 
 
+def test_wizard_single_japanese_reading_reaches_merge_output():
+    state = _wizard_state(reading_aids=["ja:hiragana"], format="vtt")
+    cli = MODULE["_wizard_emit_cli"](state)
+    merge_idx = cli.index("--merge")
+    merge_block = cli[merge_idx:]
+    assert "--reading" in merge_block
+    assert merge_block[merge_block.index("--reading") + 1] == "ja:hiragana"
+
+    toml = MODULE["_wizard_emit_toml"](state)
+    merge_block_text = toml.split("[merge]", 1)[1]
+    assert 'reading = "ja:hiragana"' in merge_block_text
+
+
 def test_wizard_multiple_japanese_readings_expand_merge_variants():
     state = _wizard_state(
         source_title="MF Ghost 2nd Season",
@@ -7193,6 +7494,47 @@ def test_wizard_save_refuses_overwrite_without_confirm():
             path.write_text(MODULE["_wizard_emit_toml"](state))
         after = open(target, encoding="utf-8").read()
         assert after == before, "save logic must not overwrite when user says no"
+
+
+def test_wizard_saved_workflow_next_steps_mentions_cli_overrides():
+    import contextlib
+    import io
+    from pathlib import Path
+
+    with contextlib.redirect_stdout(io.StringIO()) as buf:
+        MODULE["_wizard_print_saved_workflow_next_steps"](
+            "jpko.toml",
+            Path("jpko.toml"),
+            "getsubtitle --fetch URL --languages ja,ko",
+        )
+    out = buf.getvalue()
+    assert "getsubtitle --config jpko.toml" in out
+    assert "--source 'https://www.imdb.com/title/tt1234567/'" in out
+    assert "--season 3 --episode all" in out
+    assert '--output "$HOME/Downloads/GetSubtitle/TV Show/Season 03"' in out
+    assert "CLI flags win over matching TOML settings" in out
+
+
+def test_wizard_offer_open_saved_workflow_folder_opens_parent(tmp_path):
+    import contextlib
+    import io
+
+    path = tmp_path / "jpko.toml"
+    path.write_text("[fetch]\n", encoding="utf-8")
+    fn_g = MODULE["_wizard_offer_open_saved_workflow_folder"].__globals__
+    saved_yesno = fn_g["_wizard_yesno"]
+    saved_open_folder = fn_g["open_folder"]
+    opened = []
+    try:
+        fn_g["_wizard_yesno"] = lambda q, default=True: True
+        fn_g["open_folder"] = lambda folder: opened.append(folder)
+        with contextlib.redirect_stdout(io.StringIO()):
+            MODULE["_wizard_offer_open_saved_workflow_folder"](path)
+    finally:
+        fn_g["_wizard_yesno"] = saved_yesno
+        fn_g["open_folder"] = saved_open_folder
+
+    assert opened == [tmp_path.resolve()]
 
 
 def test_wizard_emit_toml_korean_reading_aid_passes_through():
@@ -7689,6 +8031,32 @@ def test_wizard_emit_cli_modify_merge_uses_source_pipeline_flag():
     assert "--modify" in cli
     assert "--merge" in cli
     assert "/tmp/Show --languages" not in cli
+
+
+def test_wizard_emit_local_translate_merge_carries_translate_languages():
+    s = MODULE["_WizardState"](
+        source="/tmp/Show",
+        source_kind="path",
+        languages=["ja", "ko"],
+        order=["ja", "ko"],
+        mt_engine="deepl",
+        reading_aids=["ja:hiragana"],
+        asbplayer=True,
+        format="vtt",
+        output="/tmp/Show",
+        steps={"translate", "modify", "merge"},
+    )
+    cli = MODULE["_wizard_emit_cli"](s)
+    tr_idx = cli.index("--translate")
+    mod_idx = cli.index("--modify")
+    tr_block = cli[tr_idx:mod_idx]
+    assert "--languages" in tr_block
+    assert tr_block[tr_block.index("--languages") + 1] == "ja,ko"
+
+    toml = MODULE["_wizard_emit_toml"](s)
+    translate_block = toml.split("[modify]", 1)[0]
+    assert "[translate]" in translate_block
+    assert 'languages = "ja,ko"' in translate_block
 
 
 def test_wizard_local_video_file_becomes_parent_folder_with_episode_filter():
