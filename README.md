@@ -7,15 +7,15 @@ reading aids, and translations in one synced file.
 Built for anime, drama, and sitcom immersion learners. Output works in VLC, mpv, Plex, and asbplayer.
 
 ![Multi-language subtitle with Japanese VTT ruby and English support lines](examples/capability-ja-vtt-ruby-quad-stack.png)
-*Japanese WebVTT in asbplayer: hiragana ruby above each kanji, with
-romaji and English support lines stacked below in one synced cue.*
+*Japanese WebVTT in asbplayer: hiragana ruby above kanji, full-sentence
+romaji as a normal subtitle line, and English support in one synced cue.*
 
 ## Why Learners Use It
 
 - **Watch with two, three, or four subtitles at once** — dual subtitles,
   triple subtitles, or a full multi-subtitle study file.
-- **Add reading aids**: Japanese furigana, Korean Revised Romanization, and
-  Mandarin pinyin.
+- **Add reading aids**: Japanese furigana/katakana ruby, full-sentence
+  Japanese romaji, Korean Revised Romanization, and Mandarin pinyin.
 - **Fill missing subtitles** with DeepL, Ollama, or Argos when the language
   you need is unavailable.
 - **Clean messy captions** by removing broadcast noise and flattening cues for
@@ -27,7 +27,7 @@ romaji and English support lines stacked below in one synced cue.*
 
 | If you want to…                        | GetSubtitle…                                                                | Example                                                                          |
 |----------------------------------------|-----------------------------------------------------------------------------|----------------------------------------------------------------------------------|
-| Learn **Japanese** from anime          | downloads `ja`, adds furigana ruby, combines it with your native language   | ![Japanese reading modes](examples/capability-ja-reading-modes-compare.png)      |
+| Learn **Japanese** from anime          | downloads `ja`, adds furigana ruby or full-sentence romaji, combines it with your native language | ![Japanese reading modes](examples/capability-ja-reading-modes-compare.png)      |
 | Learn **Korean** with romanization       | fetches `ko`, generates Revised + Yale romanization, combines with English | ![Korean Revised + Yale + English](examples/capability-ko-revised-yale-english-ass.png) |
 | Learn **Mandarin** with pinyin         | renders `nǐ hǎo` pinyin above hanzi in ASS                                  | ![Mandarin pinyin stack](examples/capability-zh-pinyin-ass-stack.png)            |
 | Learn **Cantonese** with jyutping      | renders jyutping numbered tones above traditional Chinese                   | ![Cantonese jyutping stack](examples/capability-yue-jyutping-ass-stack.png)      |
@@ -122,8 +122,10 @@ Toggle with `--manual-search off|on-missing|always`.
 
 ## Reading aids
 
-Phonetic guides above the original script, rendered as ruby (WebVTT)
-or above-the-line ASS or parenthetical (SRT/SMI).
+Phonetic guides and learner reading rows for the original script.
+Japanese hiragana/katakana can render as true ruby in WebVTT; Japanese
+romaji is a normal full-sentence subtitle line. Other languages render
+as above-the-line ASS or parenthetical SRT/SMI.
 
 ![SRT vs VTT vs ASS reading-aid format comparison](examples/capability-reading-format-comparison.png)
 *Same kanji line, three formats: SRT (parenthetical), VTT (ruby above
@@ -141,7 +143,8 @@ in asbplayer), ASS (above-the-line for VLC/mpv).*
 
 | Use case                                  | Format | Notes                                               |
 |-------------------------------------------|--------|-----------------------------------------------------|
-| Japanese furigana in asbplayer / browser  | `vtt`  | Enable asbplayer `Subtitle HTML = Render` for ruby. |
+| Japanese hiragana/katakana ruby in asbplayer / browser | `vtt`  | Enable asbplayer `Subtitle HTML = Render` for ruby. |
+| Japanese full-sentence romaji             | `vtt`, `srt`, or `ass` | Normal subtitle-size row, not tiny ruby text. |
 | Korean romanization above Hangul          | `ass`  | Most reliable in VLC / mpv / IINA.                  |
 | Mandarin pinyin or Cantonese jyutping     | `ass`  | Same — ASS handles readings above characters best.  |
 | Maximum player compatibility (no ruby)    | `srt`  | Parenthetical 漢字（かんじ） form; works anywhere.    |
@@ -165,12 +168,11 @@ reading = "ja:hiragana,ko:revised,zh:marks,yue:numbers"
 
 ## Multi-variant merge
 
-Stack the original alongside its reading-aid variants for kanji-heavy
-material:
+Stack the original alongside its reading-aid variants:
 
 ```sh
-getsubtitle merge FOLDER -l ja,ja-hiragana,en            # kanji + hiragana + English
-getsubtitle merge FOLDER -l ja,ja-hiragana,ja-romaji,en  # + romaji
+getsubtitle merge FOLDER -l ja,ja-hiragana,en            # kanji + hiragana ruby + English
+getsubtitle merge FOLDER -l ja,ja-hiragana,ja-romaji,en  # + full-sentence romaji
 getsubtitle merge FOLDER -l ko,ko-revised,en             # 한글 + Revised + English
 getsubtitle merge FOLDER -l zh,zh-marks,en               # 漢字 + pinyin + English
 getsubtitle merge FOLDER -l yue,yue-numbers,en           # 廣東話 + jyutping + English
@@ -187,6 +189,10 @@ getsubtitle "URL" \
     --modify --reading ja:hiragana,ja:romaji \
     --merge -l ja,ja-hiragana,ja-romaji,en
 ```
+
+Merged outputs include a short GetSubtitle credit/disclaimer cue at the
+beginning and end. Use `--no-watermark` or `[merge] watermark = false`
+to omit it for private/test files.
 
 ## Pipeline form (chain verbs in one call)
 
