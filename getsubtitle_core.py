@@ -11117,23 +11117,28 @@ def _setup_parse_langs(raw: str) -> list[str]:
 
 
 def _setup_select(question: str, options: list[tuple[str, str]], default: str) -> str:
-    """Single-letter multiple-choice prompt. Re-prompts on unrecognised
-    input rather than silently falling back to the default — silent
-    fallback led to people answering 'movies' (=> 'm', not in set) and
-    getting routed into the 'mixed' branch without knowing."""
+    """Numbered multiple-choice prompt. Options are (key, label) pairs;
+    `key` is the internal token the caller maps to a value. We display
+    1..N and translate the typed number back to the matching key, so the
+    user answers in numbers (consistent with the interactive wizard) while
+    callers keep their stable key->value mapping. Re-prompts on
+    unrecognised input rather than silently falling back to the default —
+    silent fallback led to people answering 'movies' and getting routed
+    into the 'mixed' branch without knowing."""
     print()
     print(question)
-    for key, label in options:
-        print(f"  {key}) {label}")
-    valid = {key for key, _label in options}
+    keys = [key for key, _label in options]
+    for i, (_key, label) in enumerate(options, start=1):
+        print(f"  {i}) {label}")
+    # `default` arrives as a key; surface its number in the prompt.
+    default_num = str(keys.index(default) + 1) if default in keys else "1"
     while True:
-        answer = _wizard_prompt("Choose", default).strip().lower()
+        answer = _wizard_prompt("Number", default_num).strip()
         if not answer:
             return default
-        head = answer[:1]
-        if head in valid:
-            return head
-        print(f"    (didn't recognise {answer!r} — pick one of {sorted(valid)})")
+        if answer.isdigit() and 1 <= int(answer) <= len(keys):
+            return keys[int(answer) - 1]
+        print(f"    (didn't recognise {answer!r} — pick a number 1-{len(keys)})")
 
 
 def _setup_system_summary() -> list[str]:
@@ -12979,60 +12984,66 @@ Interactive workflow builder.
 Walks through a guided Q&A and shows the equivalent terminal command
 plus a saveable workflow file before letting you pick a final action.
 
-What it asks:
-  Q1.  Which steps to run — fetch / translate / modify / merge.
-         Default: fetch + modify + merge (no AI translation).
-         Pick a subset to skip irrelevant downstream questions:
-           '4'   → merge-only (folder of existing .srt files)
-           '3'   → modify-only (add furigana to a single .ja.srt)
-           '2'   → translate-only
-           '3,4' → modify + merge
-           'a'   → all four
-  Q2.  Source kind — title search / streaming URL / folder or file.
-         (default flips to 'folder' when no TMDB key is configured,
-          so first-time users land on the most reliable path.
-          Skipped when fetch isn't selected — source defaults to a
-          local path the user is dropping in for modify / merge.)
-  Q3.  The actual title / URL / path.
-         (title search picks among TMDB + AniList candidates, with
-          'r) Re-enter a different title' to abandon poor hits)
-         (path input strips wrapping single/double quotes — drag-drop
-          from Finder / GNOME Files / Konsole now works as expected)
-  Q4.  Languages to collect (comma list: ja,en,ko,es,…).
-  Q5.  Display order (top → bottom on screen). Only when merging.
-  Q6.  Which language controls timing — one option per collected
-         language, no hidden 'Custom' branch. Only when merging.
-  Q7.  Episode scope (URL/title, TV only): movie / season+episode /
-         all / auto. Skipped automatically for movies (TMDB /movie/,
-         AniList format=MOVIE, single-episode SPECIAL/OVA/ONA).
-  Q8.  AI translation engine: skip / argos / ollama / deepl. Only
-         when translate is selected.
-  Q9.  Reading aids — phonetic guides for the original script. Option
-         '1' is 'No reading aid (skip)' and the default; aids start at 2:
-          ja:hiragana / ja:katakana / ja:romaji           ships now
-          ko:revised / ko:yale                            ships now
-          zh:marks / zh:numbers / zh:letters              ships now
-          yue:numbers (jyutping)                          ships now
-          th:royal-thai / ar:ala-lc / etc.                backend coming
-         The header example adapts to the user's primary script
-         (漢字（かんじ） for ja, 한글 (hangeul) for ko, 漢字 (pīnyīn) for zh).
-  Q10. Cleanup preset — single-line cues + strip broadcast noise.
-         Works in any player (VLC, mpv, IINA, Infuse, asbplayer, Plex web).
-  Q11. Final format: SRT / VTT / SMI / ASS / TXT. Only when merging.
-  Q12. Output folder.
+You answer each menu by NUMBER (1/2/3…); only free-text fields take typed
+text (languages, paths, URL, title, season/episode). Headings are numbered
+contiguously from what you picked, so a subset run has no gaps.
 
-Final action menu:
-  a) Run it now      — dispatches immediately. Default for local sources;
-                       URL/title sources default to (b) since fetches can
+What it asks (only the questions relevant to your step choice appear):
+  • Which steps to run — fetch / translate / modify / merge.
+      Default: fetch + modify + merge (no AI translation).
+      Pick a subset to skip irrelevant downstream questions:
+        '4' → merge-only (folder of existing .srt files)
+        '3' → modify-only (add furigana to a single .ja.srt)
+        '2' → translate-only   '3,4' → modify + merge   'a' → all four
+  • Source kind — title search / streaming URL / folder or file.
+      (default flips to 'folder' when no TMDB key is configured, so
+       first-time users land on the most reliable path. Skipped when
+       fetch isn't selected — the source is the local path you drop in.)
+  • The actual title / URL / path.
+      (title search picks among TMDB + AniList candidates, with 'r' to
+       re-enter a different title. Path input strips wrapping single/
+       double quotes — Finder / GNOME Files / Konsole drag-drop works.)
+  • Languages to collect (comma list: ja,en,ko,es,…).
+  • Episode scope (URL/title, TV only): movie / season+episode / all /
+      auto. Skipped for movies (TMDB /movie/, AniList format=MOVIE,
+      single-episode SPECIAL/OVA/ONA) and when the source filename
+      already encodes SxxExx.
+  • AI translation engine: skip / argos / ollama / deepl. Only when
+      translate is selected.
+  • Reading aids — phonetic guides for the original script. Option 1 is
+      'No reading aid (skip)' and the default; aids start at 2 and are
+      filtered to the languages you're collecting:
+        ja:hiragana / ja:katakana / ja:romaji           ships now
+        ko:revised / ko:yale                            ships now
+        zh:marks / zh:numbers / zh:letters              ships now
+        yue:numbers (jyutping)                          ships now
+        th:royal-thai / ar:ala-lc / etc.                backend coming
+      The header example adapts to your primary script
+      (漢字（かんじ） for ja, 한글 (hangeul) for ko, 漢字 (pīnyīn) for zh).
+
+Auto-filled for you (shown in a "Smart defaults filled in for you" banner,
+revisable via Edit — these are NOT asked as questions):
+  • Display order — the order you typed the languages (top → bottom).
+  • Timing master — the first language.
+  • Cleanup preset — single-line cues + strip broadcast noise (on).
+      Works in any player (VLC, mpv, IINA, Infuse, asbplayer, Plex web).
+  • Output format — VTT when a ja:hiragana/furigana ruby aid is picked,
+      else SRT (most compatible).
+  • Output folder — ~/Downloads/GetSubtitle for URL/title sources;
+      beside the source for local paths.
+
+Final action menu (answer by number):
+  1) Run it now      — dispatches immediately. Default for local sources;
+                       URL/title sources default to 2 since fetches can
                        be slow. Offers to open the output folder when
                        finished.
-  b) Save as a workflow file
+  2) Save as a workflow file
                      — writes a self-contained .toml. Re-prompts on
                        overwrite collisions. Run later via
                        `getsubtitle --config FILE.toml`.
-  c) Edit an answer  — list current answers, jump to one question.
-  d) Start over      — confirms 'discard all answers?' before clearing.
-  e) Quit
+  3) Edit an answer  — list current answers, jump to one question.
+  4) Start over      — confirms 'discard all answers?' before clearing.
+  5) Quit
 
 Before the action menu the wizard prints both the terminal command AND
 the equivalent workflow file (in TOML, saveable as .toml) so you can
@@ -13623,6 +13634,51 @@ def _wizard_pick_title_candidate(title: str) -> tuple[str, str, str, bool] | Non
 _VALID_STEPS = ("fetch", "translate", "modify", "merge")
 
 
+def _wizard_next_q(state: _WizardState) -> str:
+    """Return the next contiguous question label ('Q1.', 'Q2.', …).
+
+    The wizard's question functions kept fixed numbers from an older
+    12-question flow, so a trimmed run showed visible gaps (Q1 → Q2 →
+    Q4 → Q7). A running counter numbers each heading in the order it is
+    actually printed, which stays gap-free even when `state.steps`
+    mutates mid-flow (the local-language preflight can add 'fetch'
+    after the source/languages questions have already been numbered)."""
+    n = getattr(state, "_qcount", 0) + 1
+    state._qcount = n
+    return f"Q{n}."
+
+
+def _wizard_step_headings(label: str, state: _WizardState) -> int:
+    """How many numbered headings a step prints in the forward pass.
+
+    Every step prints one, except the source step: with fetch enabled it
+    shows a source-kind picker AND an entry prompt (two headings); local-
+    only flows show a single folder/file prompt."""
+    if label == "source":
+        return 2 if "fetch" in state.steps else 1
+    return 1
+
+
+def _wizard_qcount_before(state: _WizardState, target_label: str) -> int:
+    """Count numbered headings shown before `target_label` in a forward
+    pass, honoring the same step-gating as `_run_wizard`. Used to prime
+    the counter when the edit loop re-runs a single question so the
+    re-asked heading keeps its forward-pass number."""
+    skip = {
+        "scope":        "fetch" not in state.steps,
+        "translate":    "translate" not in state.steps,
+        "reading_aids": "modify" not in state.steps,
+    }
+    count = 0
+    for lbl, _fn in _WIZARD_STEPS:
+        if lbl == target_label:
+            break
+        if skip.get(lbl, False):
+            continue
+        count += _wizard_step_headings(lbl, state)
+    return count
+
+
 def _wizard_q0_steps(state: _WizardState) -> None:
     """Q1: pick which pipeline steps to include. The user can run the
     full pipeline (default) or a focused subset — e.g. 'just merge' for
@@ -13631,7 +13687,7 @@ def _wizard_q0_steps(state: _WizardState) -> None:
     asking irrelevant questions downstream and keeps the emitted CLI
     short."""
     print()
-    print("Q1. What do you want getsubtitle to do?")
+    print(f"{_wizard_next_q(state)} What do you want getsubtitle to do?")
     print("    1) Fetch     — download subtitles from a URL or title")
     print("    2) Translate — fill any missing language with AI translation")
     print("    3) Modify    — clean up cues, add reading aids (furigana/pinyin/…)")
@@ -13678,7 +13734,7 @@ def _wizard_q1_source(state: _WizardState) -> None:
         # No URL/title branch — the local-path branch is the only one
         # that makes sense for modify/merge/translate alone.
         state.source_kind = "path"
-        print("Q2. Folder or file to process.")
+        print(f"{_wizard_next_q(state)} Folder or file to process.")
         print("    Drop a folder of .srt files, a single .srt file, or any path")
         print("    your selected step(s) should operate on.")
         while True:
@@ -13718,28 +13774,29 @@ def _wizard_q1_source(state: _WizardState) -> None:
             state.source = str(path)
             print(f"    Identified as: {description}")
             return
-    print("Q2. What should getsubtitle work on?")
-    print("    a) A movie/show title (The Simpsons, Totoro, The Matrix, …)")
-    print("    b) A streaming/catalog URL (IMDb, AniList, Netflix, Crunchyroll, …)")
-    print("    c) A folder or file on disk (your Plex/Movies, ~/Downloads, …)")
+    print(f"{_wizard_next_q(state)} What should getsubtitle work on?")
+    print("    1) A movie/show title (The Simpsons, Totoro, The Matrix, …)")
+    print("    2) A streaming/catalog URL (IMDb, AniList, Netflix, Crunchyroll, …)")
+    print("    3) A folder or file on disk (your Plex/Movies, ~/Downloads, …)")
     # Default to title search only when a title-resolver key is available;
     # otherwise default to the path branch, which is the most reliable first-
     # time experience.
-    default_q1 = "a" if get_provider_api_key("tmdb") else "c"
+    default_q1 = "1" if get_provider_api_key("tmdb") else "3"
     while True:
-        pick = _wizard_prompt("Choose a/b/c", default_q1).lower()
-        if pick in ("a", "b", "c"):
+        pick = _wizard_prompt("Number", default_q1).strip()
+        if pick in ("1", "2", "3"):
             break
-        print("    Invalid selection. Type a, b, or c. To search for a title, choose a first.")
-    if pick.startswith("c"):
+        print("    Invalid selection. Type 1, 2, or 3. To search for a title, choose 1 first.")
+    if pick == "3":
         state.source_kind = "path"
-    elif pick.startswith("a"):
+    elif pick == "1":
         state.source_kind = "title"
     else:
         state.source_kind = "url"
     print()
+    entry_q = _wizard_next_q(state)
     if state.source_kind == "url":
-        print("Q3. Enter the URL.")
+        print(f"{entry_q} Enter the URL.")
         while True:
             src = _wizard_prompt("URL")
             if _looks_like_url(src):
@@ -13749,7 +13806,7 @@ def _wizard_q1_source(state: _WizardState) -> None:
                 return
             print("    That does not look like an http/https URL. Try again, or enter 'q' to quit.")
     if state.source_kind == "title":
-        print("Q3. Enter the movie or show title.")
+        print(f"{entry_q} Enter the movie or show title.")
         while True:
             title = _wizard_prompt("Title")
             if _looks_like_url(title):
@@ -13780,7 +13837,7 @@ def _wizard_q1_source(state: _WizardState) -> None:
                 state.is_movie = picked_is_movie or _wizard_url_is_movie(picked_url)
                 print(f"    Locked to ID source: {label} [{provider}]")
             return
-    print("Q3. Enter the folder or file path.")
+    print(f"{entry_q} Enter the folder or file path.")
     while True:
         src = _wizard_prompt("Folder or file path")
         try:
@@ -13795,7 +13852,7 @@ def _wizard_q1_source(state: _WizardState) -> None:
 
 def _wizard_q2_languages(state: _WizardState) -> None:
     print()
-    print("Q4. Which subtitle languages do you want to collect?")
+    print(f"{_wizard_next_q(state)} Which subtitle languages do you want to collect?")
     print("    List them in the order you want them displayed (top → bottom).")
     print("    Examples: ja,en   ja,ko,en,es   japanese,korean,english")
     raw = _wizard_prompt("Languages (comma-separated)", "ja,en")
@@ -13970,22 +14027,20 @@ def _wizard_q4_master(state: _WizardState) -> None:
         return
     # Q5 inherits its choices from Q4's order list. The smart "first
     # learner-priority match" heuristic confused users (Korean learner
-    # collecting en,ja,ko sees option b) Japanese — ja). Cleaner:
-    # offer first-displayed (the common case) and a custom override
-    # over the collected languages.
+    # collecting en,ja,ko sees option 2 = Japanese). Cleaner: offer
+    # first-displayed (the common case) and a custom override over the
+    # collected languages.
     print()
     print("Q6. Which language controls cue timing (the 'master' track)?")
     # List one option per collected language so the user doesn't have to
     # navigate a "Custom" branch. The first-displayed is the recommendation.
-    letters = "abcdefghijklmnop"
-    for i, code in enumerate(state.order):
-        tail = "  (recommended — first displayed)" if i == 0 else ""
-        print(f"    {letters[i]}) {code}{tail}")
-    valid = letters[: len(state.order)]
-    choices = "/".join(valid)
-    pick = _wizard_prompt(f"Choose {choices}", "a").lower()
-    if pick and pick[0] in valid:
-        idx = letters.index(pick[0])
+    for i, code in enumerate(state.order, start=1):
+        tail = "  (recommended — first displayed)" if i == 1 else ""
+        print(f"    {i}) {code}{tail}")
+    n = len(state.order)
+    pick = _wizard_prompt("Number", "1").strip()
+    if pick.isdigit() and 1 <= int(pick) <= n:
+        idx = int(pick) - 1
         # First-displayed is the default — leave master empty so the
         # downstream 'first lang wins' logic keeps working.
         state.master = "" if idx == 0 else state.order[idx]
@@ -14006,22 +14061,36 @@ def _wizard_q5_scope(state: _WizardState) -> None:
         state.season = ""
         state.episode = ""
         return
+    if state.season or state.episode:
+        print()
+        scope_q = _wizard_next_q(state)
+        if state.season and state.episode:
+            if state.season.isdigit() and state.episode.isdigit():
+                label = _episode_label_se(int(state.season), int(state.episode))
+            else:
+                label = f"season {state.season}, episode {state.episode}"
+            print(f"{scope_q} Episode scope already selected: {label}")
+        elif state.season:
+            print(f"{scope_q} Season scope already selected: season {state.season}")
+        else:
+            print(f"{scope_q} Episode scope already selected: episode {state.episode}")
+        return
     print()
-    print("Q5. What episode scope?")
-    print("    a) Movie / single item (no season/episode)")
-    print("    b) A specific season + episode (or range)")
-    print("    c) Whole season, every episode (-e all)")
-    print("    d) Auto — let getsubtitle infer from the URL/title metadata")
+    print(f"{_wizard_next_q(state)} What episode scope?")
+    print("    1) Movie / single item (no season/episode)")
+    print("    2) A specific season + episode (or range)")
+    print("    3) Whole season, every episode (-e all)")
+    print("    4) Auto — let getsubtitle infer from the URL/title metadata")
     print("       (anime URLs typically resolve to single episodes; movies to a")
     print("        single item; TV without -e usually picks S01E01)")
-    pick = _wizard_prompt("Choose a/b/c/d", "d").lower()
-    if pick.startswith("a"):
+    pick = _wizard_prompt("Number", "4").strip()
+    if pick == "1":
         state.season = ""
         state.episode = ""
-    elif pick.startswith("b"):
+    elif pick == "2":
         state.season = _wizard_prompt("Season (e.g. 1 or 1-3)", "1")
         state.episode = _wizard_prompt("Episode (e.g. 1 or 3-5)", "1")
-    elif pick.startswith("c"):
+    elif pick == "3":
         state.season = _wizard_prompt("Season (e.g. 1)", "1")
         state.episode = "all"
         # Non-anime TV needs TMDB to expand -e all. Heads-up only.
@@ -14038,13 +14107,13 @@ def _wizard_q5_scope(state: _WizardState) -> None:
 
 def _wizard_q6_translate(state: _WizardState) -> None:
     print()
-    print("Q6. If a language is missing, what should we do?")
-    print("    a) Skip — accept the gap (no AI translation)")
-    print("    b) Argos — on your computer, low quality (free)")
-    print("    c) Ollama — on your computer, good quality (free; slower)")
-    print("    d) DeepL — online, best quality (free tier; needs API key)")
-    pick = _wizard_prompt("Choose a/b/c/d", "a").lower()
-    state.mt_engine = {"a": "", "b": "argos", "c": "ollama", "d": "deepl"}.get(pick[:1], "")
+    print(f"{_wizard_next_q(state)} If a language is missing, what should we do?")
+    print("    1) Skip — accept the gap (no AI translation)")
+    print("    2) Argos — on your computer, low quality (free)")
+    print("    3) Ollama — on your computer, good quality (free; slower)")
+    print("    4) DeepL — online, best quality (free tier; needs API key)")
+    pick = _wizard_prompt("Number", "1").strip()
+    state.mt_engine = {"1": "", "2": "argos", "3": "ollama", "4": "deepl"}.get(pick[:1], "")
 
 
 def _wizard_q7_reading_aids(state: _WizardState) -> None:
@@ -14060,7 +14129,7 @@ def _wizard_q7_reading_aids(state: _WizardState) -> None:
         state.reading_aids = []
         return
     print()
-    print("Q7. Reading aids (phonetic guides for the original script).")
+    print(f"{_wizard_next_q(state)} Reading aids (phonetic guides for the original script).")
     # Pick a script-appropriate example so Korean / Mandarin users don't
     # see a kanji-only sample. Falls back to a Japanese example only when
     # ja is the first relevant language.
@@ -14123,15 +14192,15 @@ def _wizard_q9_format(state: _WizardState) -> None:
     default = "vtt" if (state.asbplayer and needs_ruby) else "srt"
     print()
     print("Q11. Final output format.")
-    print("    a) SRT  — most compatible (default if no ruby reading aid)")
-    print("    b) VTT  — best for Japanese ruby in asbplayer/browser study")
+    print("    1) SRT  — most compatible (default if no ruby reading aid)")
+    print("    2) VTT  — best for Japanese ruby in asbplayer/browser study")
     print("             workflows; local-player ruby support is uneven.")
-    print("    c) SMI")
-    print("    d) ASS  — best local-player choice for stacked Korean/Chinese/Cantonese")
+    print("    3) SMI")
+    print("    4) ASS  — best local-player choice for stacked Korean/Chinese/Cantonese")
     print("             readings above the original script.")
-    print("    e) TXT - without timestamp")
-    pick = _wizard_prompt("Choose a/b/c/d/e", {"vtt": "b", "srt": "a"}.get(default, "a")).lower()
-    state.format = {"a": "srt", "b": "vtt", "c": "smi", "d": "ass", "e": "txt"}.get(pick[:1], default)
+    print("    5) TXT - without timestamp")
+    pick = _wizard_prompt("Number", {"vtt": "2", "srt": "1"}.get(default, "1")).strip()
+    state.format = {"1": "srt", "2": "vtt", "3": "smi", "4": "ass", "5": "txt"}.get(pick[:1], default)
     if needs_ruby and state.format != "vtt":
         print("    Note: hiragana readings render as ruby (above-the-kanji)")
         print("          only in VTT; SRT/SMI/ASS fall back to parenthetical")
@@ -14145,13 +14214,13 @@ def _wizard_q9_format(state: _WizardState) -> None:
 def _wizard_q10_output(state: _WizardState) -> None:
     print()
     print("Q12. Where should the final files go?")
-    print("    a) Default — ~/Downloads/GetSubtitle")
-    print("    b) Same folder as the source files (in-place)")
-    print("    c) Custom folder")
-    pick = _wizard_prompt("Choose a/b/c", "a").lower()
-    if pick.startswith("a"):
+    print("    1) Default — ~/Downloads/GetSubtitle")
+    print("    2) Same folder as the source files (in-place)")
+    print("    3) Custom folder")
+    pick = _wizard_prompt("Number", "1").strip()
+    if pick == "1":
         state.output = "~/Downloads/GetSubtitle"
-    elif pick.startswith("b"):
+    elif pick == "2":
         state.output = ""  # default downstream = beside source
     else:
         state.output = _wizard_prompt("Output folder", "~/Downloads/GetSubtitle")
@@ -14197,14 +14266,14 @@ def _wizard_q11_action(state: _WizardState) -> str:
     print()
     # Default-action heuristic: save-first is safer when "run" would start a
     # long network job (URL/title sources). For local paths, run-first is fine.
-    default_pick = "b" if state.source_kind in ("url", "title") else "a"
-    print("    a) Run it now")
-    print("    b) Save as a reusable workflow file")
-    print("    c) Edit a single answer")
-    print("    d) Start over from beginning")
-    print("    e) Quit")
-    pick = _wizard_prompt("Choose a/b/c/d/e", default_pick).lower()
-    mapping = {"a": "run", "b": "save", "c": "edit", "d": "restart", "e": "quit"}
+    default_pick = "2" if state.source_kind in ("url", "title") else "1"
+    print("    1) Run it now")
+    print("    2) Save as a reusable workflow file")
+    print("    3) Edit a single answer")
+    print("    4) Start over from beginning")
+    print("    5) Quit")
+    pick = _wizard_prompt("Number", default_pick).strip()
+    mapping = {"1": "run", "2": "save", "3": "edit", "4": "restart", "5": "quit"}
     return mapping.get(pick[:1], "run")
 
 
@@ -14288,6 +14357,9 @@ def _run_wizard(state: _WizardState | None = None) -> tuple[_WizardState, str]:
     matching question — we don't ask Q3 if `state.languages` is already
     populated. The user can still revisit any answer via Q12's edit loop."""
     state = state or _WizardState()
+    # Reset the contiguous question counter for this forward pass so the
+    # printed headings number 1..N with no gaps (see _wizard_next_q).
+    state._qcount = 0
     for label, fn in _WIZARD_STEPS:
         # Skip pre-answered questions so resume / setup-profile pre-fill
         # actually saves keystrokes.
@@ -14351,6 +14423,13 @@ def _run_wizard(state: _WizardState | None = None) -> tuple[_WizardState, str]:
             visible = int(pick)
             idx = 0 if visible in (1, 2) else visible - 2
             if 0 <= idx < len(_WIZARD_STEPS):
+                edit_label = _WIZARD_STEPS[idx][0]
+                if edit_label == "scope":
+                    state.season = ""
+                    state.episode = ""
+                # Prime the counter so the re-asked heading keeps the
+                # number it had during the forward pass.
+                state._qcount = _wizard_qcount_before(state, edit_label)
                 _WIZARD_STEPS[idx][1](state)
                 _wizard_save_draft(state)
 
@@ -14824,6 +14903,44 @@ def _wizard_run_setup(state: _WizardState, gaps: list[tuple[str, str, str]]) -> 
         print()
 
 
+def _wizard_dependency_check_before_run(state: _WizardState) -> str:
+    """Return the action to take after dependency probing.
+
+    `run` means all blockers are resolved or only warnings remain. `save`
+    means the user tried or skipped setup but required pieces are still
+    missing, so the safe path is to save the workflow instead of dispatching
+    a doomed run. `quit` exits without running.
+    """
+    gaps = _wizard_probe_dependencies(state)
+    if not gaps:
+        return "run"
+
+    print()
+    print("Dependency check — issues found:")
+    for sev, label, fix in gaps:
+        marker = "✗ block" if sev == "block" else "• warn "
+        print(f"  {marker}  {label}")
+    blockers = [g for g in gaps if g[0] == "block"]
+    if not blockers:
+        return "run"
+
+    if _wizard_yesno("Run setup now to fix these?", default=True):
+        _wizard_run_setup(state, gaps)
+
+    remaining = [g for g in _wizard_probe_dependencies(state) if g[0] == "block"]
+    if not remaining:
+        return "run"
+
+    print()
+    print("Still missing required setup:")
+    for _sev, label, fix in remaining:
+        print(f"  - {label}: {fix}")
+    print("Not running yet, because this workflow would fail before it starts.")
+    if _wizard_yesno("Save the workflow instead so you can run it after setup?", default=True):
+        return "save"
+    return "quit"
+
+
 # ─── Entry point ───────────────────────────────────────────────────────
 
 _WIZARD_INTRO = """
@@ -14904,16 +15021,11 @@ def interactive_main(argv: list[str] | None = None) -> int:
         # Probe dependencies only for the 'run' action. Save can be cross-
         # machine — don't nag a user generating a TOML for a different box.
         if action == "run":
-            gaps = _wizard_probe_dependencies(state)
-            if gaps:
-                print()
-                print("Dependency check — issues found:")
-                for sev, label, fix in gaps:
-                    marker = "✗ block" if sev == "block" else "• warn "
-                    print(f"  {marker}  {label}")
-                blockers = [g for g in gaps if g[0] == "block"]
-                if blockers and _wizard_yesno("Run setup now to fix these?", default=True):
-                    _wizard_run_setup(state, gaps)
+            action = _wizard_dependency_check_before_run(state)
+            if action == "quit":
+                _wizard_clear_draft()
+                print("Quit.")
+                return 0
 
         cli_string = _wizard_emit_cli_string(state)
         toml_str = _wizard_emit_toml(state)

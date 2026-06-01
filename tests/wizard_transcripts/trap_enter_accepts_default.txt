@@ -1,0 +1,90 @@
+
+getsubtitle — interactive workflow builder
+
+I'll ask a few short questions, then show you the equivalent terminal
+command and a reusable workflow file. You can save the workflow for
+later, run it now, or edit a single answer. Press 'q' at any prompt
+to quit, or Ctrl-C to bail.
+
+
+Q1. What do you want getsubtitle to do?
+    1) Fetch     — download subtitles from a URL or title
+    2) Translate — fill any missing language with AI translation
+    3) Modify    — clean up cues, add reading aids (furigana/pinyin/…)
+    4) Merge     — stack multiple languages into one study file
+
+    Default: fetch + modify + merge (no AI translation).
+    Common shortcuts: '4' for merge-only, '3' for modify-only,
+    '2' for AI-translation-only, '3,4' for modify + merge.
+  Numbers (comma-separated), 'a' for all, or Enter for default [1,3,4] >
+    Selected: fetch + modify + merge.
+
+Q2. What should getsubtitle work on?
+    1) A movie/show title (The Simpsons, Totoro, The Matrix, …)
+    2) A streaming/catalog URL (IMDb, AniList, Netflix, Crunchyroll, …)
+    3) A folder or file on disk (your Plex/Movies, ~/Downloads, …)
+  Number [3] >
+
+Q3. Enter the folder or file path.
+  Folder or file path > {TMP}/Foo
+    Identified as: local subtitle folder: 0 video file(s), 2 subtitle file(s)
+
+Q4. Which subtitle languages do you want to collect?
+    List them in the order you want them displayed (top → bottom).
+    Examples: ja,en   ja,ko,en,es   japanese,korean,english
+  Languages (comma-separated) [ja,en] >
+
+Q5. Reading aids (phonetic guides for the original script).
+    VTT renders them as ruby above the script; SRT / SMI / ASS
+    show them as parenthetical 漢字（かんじ） form.
+    Pick any combination by number, or '1' to skip.
+    1) No reading aid (skip)
+    2) Japanese — hiragana readings for kanji   [ja:hiragana]
+    3) Japanese — katakana readings for kanji   [ja:katakana]
+    4) Japanese — full-sentence romaji   [ja:romaji]
+  Numbers (comma-separated) [1] >
+
+======================================================================
+Smart defaults filled in for you (edit via 'Edit a single answer'):
+======================================================================
+  Display order  ja, en  (top → bottom on screen)
+  Timing master  ja  (first language)
+  Cleanup preset on  (single-line cues + strip broadcast noise)
+  Output format  SRT  (SRT — most compatible)
+  Output folder  {TMP}/Foo  (beside source)
+======================================================================
+Based on your choice, you can try:
+======================================================================
+  getsubtitle --fetch {TMP}/Foo --languages ja,en --modify --strip-cc-noise --single-line --merge --languages ja,en --format srt --output {TMP}/Foo
+======================================================================
+Equivalent workflow file (save as .toml):
+======================================================================
+  [fetch]
+  source = "{TMP}/Foo"
+  languages = "ja,en"
+
+  [modify]
+  single_line = true
+  strip_cc_noise = true
+
+  [merge]
+  languages = "ja,en"
+  sync = "auto"
+  format = "srt"
+
+  [output]
+  target = "{TMP}/Foo"
+  layout = "archive"
+======================================================================
+
+    1) Run it now
+    2) Save as a reusable workflow file
+    3) Edit a single answer
+    4) Start over from beginning
+    5) Quit
+  Number [1] >
+
+Running:
+  getsubtitle --fetch {TMP}/Foo --languages ja,en --modify --strip-cc-noise --single-line --merge --languages ja,en --format srt --output {TMP}/Foo
+
+  Open folder? [Y/n] >

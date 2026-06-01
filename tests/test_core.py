@@ -2839,12 +2839,13 @@ def test_setup_select_reprompts_on_unrecognised_input():
     import io, contextlib
     fn = MODULE["_setup_select"]
     g = fn.__globals__
-    answers = iter(["x", "y", "b"])  # two bad then a valid pick
+    answers = iter(["x", "9", "2"])  # non-numeric, out-of-range, then a valid pick
     saved = g["_wizard_prompt"]
     try:
         g["_wizard_prompt"] = lambda q, default=None, **kw: next(answers)
         with contextlib.redirect_stdout(io.StringIO()):
             result = fn("Pick", [("a", "A"), ("b", "B"), ("c", "C")], "a")
+        # Options display as 1/2/3; '2' maps back to the caller's key 'b'.
         assert result == "b"  # not the default — the user's eventual valid pick
     finally:
         g["_wizard_prompt"] = saved
@@ -7764,6 +7765,40 @@ def test_wizard_dependency_probe_flags_deepl_missing_key_as_block():
     assert deepl_gaps and deepl_gaps[0][0] == "block"
 
 
+def test_wizard_dependency_check_saves_instead_of_running_with_remaining_blocker():
+    """A block-level dependency must actually block the Run action.
+
+    Regression: DeepL setup could be offered and declined inside setup,
+    then the wizard still dispatched a run that would immediately fail.
+    """
+    import contextlib
+    import io
+
+    state = _wizard_state(mt_engine="deepl")
+    blocker = [("block", "DeepL API key", "getsubtitle --set-key deepl")]
+    fn_g = MODULE["_wizard_dependency_check_before_run"].__globals__
+    saved_probe = fn_g["_wizard_probe_dependencies"]
+    saved_yesno = fn_g["_wizard_yesno"]
+    saved_setup = fn_g["_wizard_run_setup"]
+    answers = iter([True, True])  # try setup, then save workflow instead
+    setup_called = []
+    try:
+        fn_g["_wizard_probe_dependencies"] = lambda _state: blocker
+        fn_g["_wizard_yesno"] = lambda _q, default=True: next(answers)
+        fn_g["_wizard_run_setup"] = lambda _state, _gaps: setup_called.append(True)
+        with contextlib.redirect_stdout(io.StringIO()) as buf:
+            action = MODULE["_wizard_dependency_check_before_run"](state)
+    finally:
+        fn_g["_wizard_probe_dependencies"] = saved_probe
+        fn_g["_wizard_yesno"] = saved_yesno
+        fn_g["_wizard_run_setup"] = saved_setup
+    out = buf.getvalue()
+    assert action == "save"
+    assert setup_called == [True]
+    assert "Still missing required setup" in out
+    assert "Not running yet" in out
+
+
 def test_wizard_state_to_toml_round_trip_safe():
     """The draft TOML must be valid enough that we can load it back."""
     state = _wizard_state()
@@ -7807,6 +7842,38 @@ def test_wizard_q5_scope_skipped_for_movies():
     # / episode fields stay empty for the movie path.
     assert s.season == ""
     assert s.episode == ""
+
+
+def test_wizard_q5_scope_keeps_episode_inferred_from_selected_file():
+    """When local-file preflight adds Fetch, Q5 must not ask for S/E again.
+
+    The selected filename already pinned the scope, so the URL/title scope
+    prompt should preserve it instead of defaulting back to S01E01.
+    """
+    import contextlib
+    import io
+
+    s = MODULE["_WizardState"](
+        source="https://anilist.co/anime/166610/",
+        source_kind="url",
+        languages=["ja", "en"],
+        order=["ja", "en"],
+        season="2",
+        episode="13",
+    )
+    fn_g = MODULE["_wizard_q5_scope"].__globals__
+    saved_prompt = fn_g["_wizard_prompt"]
+    try:
+        fn_g["_wizard_prompt"] = lambda *_a, **_k: (_ for _ in ()).throw(
+            AssertionError("Q5 should not prompt when scope is already pinned")
+        )
+        with contextlib.redirect_stdout(io.StringIO()) as buf:
+            MODULE["_wizard_q5_scope"](s)
+    finally:
+        fn_g["_wizard_prompt"] = saved_prompt
+    assert s.season == "2"
+    assert s.episode == "13"
+    assert "S02E13" in buf.getvalue()
 
 
 def test_mediainfo_movie_skips_season_subdir():
@@ -7897,7 +7964,7 @@ def test_wizard_q11_banner_uses_fixed_70_char_rule():
     fn_g = MODULE["_wizard_q11_action"].__globals__
     saved_input = fn_g.get("input")
     try:
-        fn_g["input"] = lambda *a, **k: "a"
+        fn_g["input"] = lambda *a, **k: "1"
         with contextlib.redirect_stdout(buf):
             MODULE["_wizard_q11_action"](s)
     finally:
@@ -7969,6 +8036,36 @@ def test_wizard_q0_steps_accepts_numbers_and_all_alias():
     finally:
         if saved is not None:
             fn_g["input"] = saved
+
+
+def test_wizard_next_q_numbers_contiguously():
+    """`_wizard_next_q` hands out gap-free labels from a per-pass counter
+    so trimmed flows never show Q1 -> Q2 -> Q4 jumps. The reset lives in
+    `_run_wizard`; here we drive the counter directly."""
+    s = MODULE["_WizardState"]()
+    s._qcount = 0
+    labels = [MODULE["_wizard_next_q"](s) for _ in range(4)]
+    assert labels == ["Q1.", "Q2.", "Q3.", "Q4."]
+    # Re-priming the counter (as the edit loop does) continues from there.
+    s._qcount = 1
+    assert MODULE["_wizard_next_q"](s) == "Q2."
+
+
+def test_wizard_qcount_before_honors_step_gating():
+    """`_wizard_qcount_before` mirrors `_run_wizard`'s gating so the edit
+    loop can re-derive a question's forward-pass number. Source counts as
+    two headings with fetch (kind picker + entry), one without."""
+    # Merge-only: steps(1) + source(1, no fetch) + languages(1) = 3 before
+    # reading_aids. If scope/translate weren't gated out it would be 5,
+    # so this pins the gating.
+    merge_only = MODULE["_WizardState"](steps={"merge"})
+    assert MODULE["_wizard_qcount_before"](merge_only, "reading_aids") == 3
+    # Full fetch flow: source contributes two headings (kind picker + entry).
+    full = MODULE["_WizardState"](steps={"fetch", "modify", "merge"})
+    assert MODULE["_wizard_qcount_before"](full, "steps") == 0
+    assert MODULE["_wizard_qcount_before"](full, "languages") == 3  # 1 + 2
+    assert MODULE["_wizard_qcount_before"](full, "scope") == 4      # + languages
+    assert MODULE["_wizard_qcount_before"](full, "reading_aids") == 5  # + scope
 
 
 def test_wizard_languages_offer_modify_for_korean_reading_aids():
@@ -8349,8 +8446,8 @@ def test_wizard_q4_master_lists_one_option_per_language():
     fn_g = MODULE["_wizard_q4_master"].__globals__
     saved = fn_g.get("input")
     try:
-        # Pick the 3rd language explicitly via 'c'.
-        fn_g["input"] = lambda *a, **k: "c"
+        # Pick the 3rd language explicitly via '3'.
+        fn_g["input"] = lambda *a, **k: "3"
         s = MODULE["_WizardState"](
             languages=["en", "ja", "ko", "zh", "yue"],
             order=["en", "ja", "ko", "zh", "yue"],
@@ -8360,8 +8457,8 @@ def test_wizard_q4_master_lists_one_option_per_language():
             MODULE["_wizard_q4_master"](s)
         out = buf.getvalue()
         # All five languages appear as labeled options.
-        for letter, code in zip("abcde", ["en", "ja", "ko", "zh", "yue"]):
-            assert f"{letter}) {code}" in out
+        for num, code in zip("12345", ["en", "ja", "ko", "zh", "yue"]):
+            assert f"{num}) {code}" in out
         assert "Custom" not in out
         assert s.master == "ko"
     finally:
@@ -8557,7 +8654,7 @@ def test_wizard_q11_banner_surfaces_smart_defaults():
     fn_g = MODULE["_wizard_q11_action"].__globals__
     saved = fn_g.get("input")
     try:
-        fn_g["input"] = lambda *a, **k: "e"  # pick quit
+        fn_g["input"] = lambda *a, **k: "5"  # pick quit
         buf = io.StringIO()
         with contextlib.redirect_stdout(buf):
             MODULE["_wizard_q11_action"](s)
@@ -8709,7 +8806,7 @@ def test_wizard_q9_format_describes_vtt_and_ass_player_fit():
     fn_g = MODULE["_wizard_q9_format"].__globals__
     saved_input = fn_g.get("input")
     try:
-        fn_g["input"] = lambda *a, **k: "a"
+        fn_g["input"] = lambda *a, **k: "1"
         s = MODULE["_WizardState"](reading_aids=[], asbplayer=False)
         buf = io.StringIO()
         with contextlib.redirect_stdout(buf):
@@ -9993,3 +10090,35 @@ def test_source_smoke_scripts_support_json_output():
     data = json.loads(proc.stdout)
     assert data["name"] == "european"
     assert data["results"]
+
+
+# ─── Wizard scenarios (end-to-end transcripts) ───────────────────────────
+#
+# Each scenario file under tests/wizard_scenarios/ exports a SCENARIO
+# (or SCENARIOS) constant. The harness drives the wizard with canned
+# input, captures a transcript, compares against a golden snapshot under
+# tests/wizard_transcripts/, and asserts on state + emitted CLI/TOML.
+#
+# Re-bless transcripts after intentional wizard wording changes with:
+#   WIZARD_UPDATE_SNAPSHOTS=1 .venv/bin/pytest tests/test_core.py::test_wizard_scenario -q
+
+import sys as _wizard_sys  # noqa: E402
+from pathlib import Path as _WizardPath  # noqa: E402
+
+_wizard_sys.path.insert(0, str(_WizardPath(__file__).resolve().parent))
+
+import pytest as _wizard_pytest  # noqa: E402
+import wizard_harness as _wizard_harness  # noqa: E402
+
+
+_WIZARD_SCENARIOS = _wizard_harness.collect_scenarios()
+
+
+@_wizard_pytest.mark.parametrize(
+    "scenario",
+    _WIZARD_SCENARIOS,
+    ids=[s.name for s in _WIZARD_SCENARIOS] or None,
+)
+def test_wizard_scenario(scenario):
+    """End-to-end wizard transcript test. See tests/wizard_scenarios/."""
+    _wizard_harness.run_and_assert(scenario)

@@ -1,0 +1,123 @@
+
+getsubtitle — interactive workflow builder
+
+I'll ask a few short questions, then show you the equivalent terminal
+command and a reusable workflow file. You can save the workflow for
+later, run it now, or edit a single answer. Press 'q' at any prompt
+to quit, or Ctrl-C to bail.
+
+
+Q1. What do you want getsubtitle to do?
+    1) Fetch     — download subtitles from a URL or title
+    2) Translate — fill any missing language with AI translation
+    3) Modify    — clean up cues, add reading aids (furigana/pinyin/…)
+    4) Merge     — stack multiple languages into one study file
+
+    Default: fetch + modify + merge (no AI translation).
+    Common shortcuts: '4' for merge-only, '3' for modify-only,
+    '2' for AI-translation-only, '3,4' for modify + merge.
+  Numbers (comma-separated), 'a' for all, or Enter for default [1,3,4] > 1,2,3,4
+    Selected: fetch + translate + modify + merge.
+
+Q2. What should getsubtitle work on?
+    1) A movie/show title (The Simpsons, Totoro, The Matrix, …)
+    2) A streaming/catalog URL (IMDb, AniList, Netflix, Crunchyroll, …)
+    3) A folder or file on disk (your Plex/Movies, ~/Downloads, …)
+  Number [3] > 2
+
+Q3. Enter the URL.
+  URL > https://www.imdb.com/title/tt28299608/
+    Identified as: IMDb title URL
+
+Q4. Which subtitle languages do you want to collect?
+    List them in the order you want them displayed (top → bottom).
+    Examples: ja,en   ja,ko,en,es   japanese,korean,english
+  Languages (comma-separated) [ja,en] > ja,en
+
+Q5. What episode scope?
+    1) Movie / single item (no season/episode)
+    2) A specific season + episode (or range)
+    3) Whole season, every episode (-e all)
+    4) Auto — let getsubtitle infer from the URL/title metadata
+       (anime URLs typically resolve to single episodes; movies to a
+        single item; TV without -e usually picks S01E01)
+  Number [4] > 1
+
+Q6. If a language is missing, what should we do?
+    1) Skip — accept the gap (no AI translation)
+    2) Argos — on your computer, low quality (free)
+    3) Ollama — on your computer, good quality (free; slower)
+    4) DeepL — online, best quality (free tier; needs API key)
+  Number [1] > 4
+
+Q7. Reading aids (phonetic guides for the original script).
+    VTT renders them as ruby above the script; SRT / SMI / ASS
+    show them as parenthetical 漢字（かんじ） form.
+    Pick any combination by number, or '1' to skip.
+    1) No reading aid (skip)
+    2) Japanese — hiragana readings for kanji   [ja:hiragana]
+    3) Japanese — katakana readings for kanji   [ja:katakana]
+    4) Japanese — full-sentence romaji   [ja:romaji]
+  Numbers (comma-separated) [1] > 1
+
+======================================================================
+Smart defaults filled in for you (edit via 'Edit a single answer'):
+======================================================================
+  Display order  ja, en  (top → bottom on screen)
+  Timing master  ja  (first language)
+  Cleanup preset on  (single-line cues + strip broadcast noise)
+  Output format  SRT  (SRT — most compatible)
+  Output folder  ~/Downloads/GetSubtitle
+======================================================================
+Based on your choice, you can try:
+======================================================================
+  getsubtitle --fetch https://www.imdb.com/title/tt28299608/ --languages ja,en --translate deepl --modify --strip-cc-noise --single-line --merge --languages ja,en --format srt --output ~/Downloads/GetSubtitle
+======================================================================
+Equivalent workflow file (save as .toml):
+======================================================================
+  [fetch]
+  source = "https://www.imdb.com/title/tt28299608/"
+  languages = "ja,en"
+
+  [translate]
+  engine = "deepl"
+  mt_source = "auto"
+
+  [modify]
+  single_line = true
+  strip_cc_noise = true
+
+  [merge]
+  languages = "ja,en"
+  sync = "auto"
+  format = "srt"
+
+  [output]
+  target = "~/Downloads/GetSubtitle"
+  layout = "archive"
+======================================================================
+
+    1) Run it now
+    2) Save as a reusable workflow file
+    3) Edit a single answer
+    4) Start over from beginning
+    5) Quit
+  Number [2] > 2
+
+  Save to (relative paths OK) [getsubtitle-workflow.toml] > {TMP}/deepl-flow.toml
+Saved: {TMP}/deepl-flow.toml
+
+Your deepl-flow.toml runs the same workflow as this command:
+  # getsubtitle --fetch https://www.imdb.com/title/tt28299608/ --languages ja,en --translate deepl --modify --strip-cc-noise --single-line --merge --languages ja,en --format srt --output ~/Downloads/GetSubtitle
+
+Run it later with:
+  getsubtitle --config {TMP}/deepl-flow.toml
+
+You can recycle this TOML and override saved settings with extra CLI flags.
+For example, reuse the same language, reading-aid, translation, and merge
+choices on another show or season:
+  getsubtitle --config {TMP}/deepl-flow.toml --source 'https://www.imdb.com/title/tt1234567/' --season 3 --episode all --output "$HOME/Downloads/GetSubtitle/TV Show/Season 03"
+
+CLI flags win over matching TOML settings, so the file can stay as a reusable template.
+
+  Open folder containing deepl-flow.toml? [Y/n] > n
