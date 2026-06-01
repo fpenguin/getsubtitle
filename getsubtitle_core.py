@@ -3834,6 +3834,69 @@ def ruby_tag(surface: str, reading: str) -> str:
     return f"<ruby>{html_escape(surface)}<rt>{html_escape(reading)}</rt></ruby>"
 
 
+ROMAJI_LEADING_PARTICLES = {
+    "が": "ga",
+    "を": "wo",
+    "は": "ha",
+    "に": "ni",
+    "へ": "he",
+    "と": "to",
+    "で": "de",
+    "も": "mo",
+    "の": "no",
+    "や": "ya",
+}
+ROMAJI_NO_SPACE_BEFORE = set(".,!?;:)]}）】」』。、！？；：")
+ROMAJI_NO_SPACE_AFTER = set("([{（【「『")
+
+
+def _join_romaji_tokens(tokens: list[str]) -> str:
+    out = ""
+    for token in [t for t in tokens if t]:
+        if not out:
+            out = token
+            continue
+        if token[0] in ROMAJI_NO_SPACE_BEFORE or out[-1] in ROMAJI_NO_SPACE_AFTER:
+            out += token
+        else:
+            out += " " + token
+    return out.strip()
+
+
+def japanese_full_sentence_reading(text: str, mode: str) -> str:
+    """Return a full Japanese reading line for romaji-style learner rows."""
+    try:
+        import pykakasi  # type: ignore
+    except Exception as e:
+        raise CliError(
+            "Furigana needs the pykakasi package.\n"
+            "  Quick install: python3 -m pip install pykakasi\n"
+            "  Or reinstall with the extra: pip install -e \".[furigana]\"\n"
+            "  See: getsubtitle --help reading"
+        ) from e
+
+    text = EXISTING_READING_RE.sub(lambda m: m.group(1), strip_subtitle_markup(text))
+    kakasi = pykakasi.kakasi()
+    converted = kakasi.convert(text)
+    chunks: list[str] = []
+    for c in converted:
+        surface = c.get("orig", "")
+        reading = c.get(_pykakasi_reading_key(mode), "")
+        if reading and reading != surface and (has_kanji(surface) or mode == "romaji"):
+            if mode == "romaji" and surface and not has_kanji(surface):
+                particle = ROMAJI_LEADING_PARTICLES.get(surface[0])
+                if particle and reading.startswith(particle) and len(reading) > len(particle):
+                    chunks.append(particle)
+                    chunks.append(reading[len(particle):])
+                    continue
+            chunks.append(reading)
+        else:
+            chunks.append(surface)
+    if mode == "romaji":
+        return _join_romaji_tokens(chunks)
+    return "".join(chunks).strip()
+
+
 def text_with_readings(text: str, mode: str) -> str:
     try:
         import pykakasi  # type: ignore
@@ -3870,7 +3933,11 @@ def text_with_ruby(text: str, mode: str) -> str:
             "  See: getsubtitle --help reading"
         ) from e
 
-    protected_text, protected = protect_existing_readings_as_ruby(strip_subtitle_markup(text))
+    clean_text = strip_subtitle_markup(text)
+    if mode == "romaji":
+        return html_escape(japanese_full_sentence_reading(clean_text, mode))
+
+    protected_text, protected = protect_existing_readings_as_ruby(clean_text)
     kakasi = pykakasi.kakasi()
     converted = kakasi.convert(protected_text)
     chunks = []
@@ -4008,7 +4075,7 @@ def _strip_vtt_markup(text: str) -> str:
     return text
 
 
-def parse_vtt(text: str) -> list[SrtCue]:
+def parse_vtt(text: str, *, preserve_ruby: bool = False) -> list[SrtCue]:
     """Parse a WebVTT body into the same SrtCue structure used by the
     merge pipeline. Ruby markup is collapsed to `漢字（かんじ）` so that
     furigana information survives the read. Other VTT-specific markup
@@ -4047,7 +4114,7 @@ def parse_vtt(text: str) -> list[SrtCue]:
         srt_time_line = f"{start} --> {end}"
         text_lines = []
         for ln in lines[time_line_idx + 1:]:
-            stripped = _strip_vtt_markup(ln).strip()
+            stripped = ln.strip() if preserve_ruby else _strip_vtt_markup(ln).strip()
             if stripped:
                 text_lines.append(stripped)
         cues.append(SrtCue(
@@ -4160,13 +4227,19 @@ def parse_smi_for_lang(path: Path, lang: str) -> list[SrtCue]:
     return _sami_cues_to_srt_cues(by_lang[lang])
 
 
-def read_cues_from_file(path: Path, *, lang_hint: str | None = None) -> list[SrtCue]:
+def read_cues_from_file(
+    path: Path,
+    *,
+    lang_hint: str | None = None,
+    preserve_vtt_ruby: bool = False,
+) -> list[SrtCue]:
     """Read any supported subtitle file into the unified SrtCue
     representation used by the merge pipeline.
 
     Dispatch by extension:
       .srt        → parse_srt
-      .vtt        → parse_vtt (ruby collapsed to 漢字（かんじ）)
+      .vtt        → parse_vtt (ruby collapsed to 漢字（かんじ） unless
+                    preserve_vtt_ruby is true)
       .ass/.ssa    → parse_ass (Events Dialogue timing/text; styling ignored)
       .smi/.sami  → parse_smi_for_lang (requires lang_hint)
     """
@@ -4174,7 +4247,10 @@ def read_cues_from_file(path: Path, *, lang_hint: str | None = None) -> list[Srt
     if suffix == ".srt":
         return parse_srt(path.read_text(encoding="utf-8-sig", errors="replace"))
     if suffix == ".vtt":
-        return parse_vtt(path.read_text(encoding="utf-8-sig", errors="replace"))
+        return parse_vtt(
+            path.read_text(encoding="utf-8-sig", errors="replace"),
+            preserve_ruby=preserve_vtt_ruby,
+        )
     if suffix in (".ass", ".ssa"):
         return parse_ass(path.read_text(encoding="utf-8-sig", errors="replace"))
     if suffix in (".smi", ".sami"):
@@ -4838,6 +4914,9 @@ def kanji_reading_line(text: str, mode: str) -> str:
             "  Or reinstall with the extra: pip install -e \".[furigana]\"\n"
             "  See: getsubtitle --help reading"
         ) from e
+
+    if mode == "romaji":
+        return japanese_full_sentence_reading(text, mode)
 
     text = EXISTING_READING_RE.sub(lambda m: m.group(1), strip_subtitle_markup(text))
     kakasi = pykakasi.kakasi()
@@ -6421,6 +6500,10 @@ def group_subtitle_files_with_hints(
 
     def score(lang: str, source_format: str, is_mt: bool) -> tuple[int, int]:
         hint = format_hints.get(lang)
+        if hint is None and lang in _PSEUDO_LANG_VARIANTS:
+            base, _infix, mode = _PSEUDO_LANG_VARIANTS[lang]
+            if base == "ja" and mode in {"hiragana", "katakana"}:
+                hint = "vtt"
         fmt_rank = -1 if hint and source_format == hint else fmt_priority.get(source_format, 99)
         return (fmt_rank, 1 if is_mt else 0)
 
@@ -6713,7 +6796,10 @@ def _pseudo_lang_reading_lines(pseudo_lang: str, lines: list[str], preserve_line
             continue
         if base == "ja":
             reading = kanji_reading_line(clean, mode)
-            out.append(reading if reading and has_kanji(clean) else clean)
+            if mode == "romaji":
+                out.append(reading or clean)
+            else:
+                out.append(reading if reading and has_kanji(clean) else clean)
         elif base == "ko":
             pair = hangul_reading_pair_lines(clean, mode)
             out.append(pair[0] if pair else clean)
@@ -6877,6 +6963,7 @@ def build_combine_parser() -> argparse.ArgumentParser:
     p.add_argument("-e", "--episode", default="all", metavar="N|N-M|all", help="Episode filter. Accepts one episode, a range, a comma list, or all. Default: all detected episodes.")
     p.add_argument("-o", "--output", metavar="DIR", help="Output directory. Default: beside each episode's master SRT.")
     p.add_argument("--format", choices=["srt", "vtt", "smi", "ass", "txt"], default="srt", help="Combined output format. srt = broad compatibility; vtt = WebVTT with ruby markup when --reading is used; smi = SAMI; ass = styled script; txt = plain text without timestamps. Default: srt.")
+    p.add_argument("--no-watermark", action="store_true", help="Do not add the short GetSubtitle credit/disclaimer cues to merged outputs.")
     p.add_argument("--subdirectory", action="store_true", help="Bulk mode: treat each immediate subdirectory of PATH as its own show and run combine once per subdir. Useful for whole-library passes.")
     p.add_argument("--dry-run", action="store_true", help="Show the plan without writing files.")
     p.add_argument("--force", action="store_true", help="Overwrite existing combined outputs and bypass the episode-level match-rate threshold.")
@@ -6899,6 +6986,55 @@ def build_combine_parser() -> argparse.ArgumentParser:
 
 def _format_rate(rate: float) -> str:
     return f"{rate * 100:.0f}%"
+
+
+MERGED_WATERMARK_LINES = [
+    "Prepared with GetSubtitle on GitHub.",
+    "Media and subtitle rights remain with their respective copyright holders.",
+]
+MERGED_WATERMARK_DURATION_MS = 4000
+MERGED_WATERMARK_GAP_MS = 500
+
+
+def _srt_time_line_from_ms(start_ms: int, end_ms: int) -> str:
+    return f"{_format_srt_timestamp(start_ms)} --> {_format_srt_timestamp(end_ms)}"
+
+
+def add_merged_watermarks(cues: list[SrtCue]) -> list[SrtCue]:
+    """Add a short credit/disclaimer cue at the beginning and end.
+
+    Kept as normal subtitle cues so every merged output format can serialize
+    it without special cases.
+    """
+    if not cues:
+        return cues
+
+    try:
+        first_start_ms, _first_end_ms = parse_srt_time_line(cues[0].time_line)
+        _last_start_ms, last_end_ms = parse_srt_time_line(cues[-1].time_line)
+    except Exception:
+        first_start_ms = 0
+        last_end_ms = 0
+
+    if first_start_ms > MERGED_WATERMARK_GAP_MS + 1000:
+        intro_end_ms = min(
+            MERGED_WATERMARK_DURATION_MS,
+            max(1000, first_start_ms - MERGED_WATERMARK_GAP_MS),
+        )
+    else:
+        intro_end_ms = MERGED_WATERMARK_DURATION_MS
+
+    outro_start_ms = max(0, last_end_ms + MERGED_WATERMARK_GAP_MS)
+    outro_end_ms = outro_start_ms + MERGED_WATERMARK_DURATION_MS
+    watermarked = [
+        SrtCue("1", _srt_time_line_from_ms(0, intro_end_ms), list(MERGED_WATERMARK_LINES)),
+        *cues,
+        SrtCue("1", _srt_time_line_from_ms(outro_start_ms, outro_end_ms), list(MERGED_WATERMARK_LINES)),
+    ]
+    return [
+        SrtCue(str(index), cue.time_line, list(cue.text_lines))
+        for index, cue in enumerate(watermarked, start=1)
+    ]
 
 
 def combine_main(argv: list[str]) -> int:
@@ -7038,7 +7174,11 @@ def combine_main(argv: list[str]) -> int:
         # extension (SRT/VTT/SMI) so the merger can consume any input
         # format selected by the per-language :format hint upstream.
         try:
-            master_cues = read_cues_from_file(files[master_lang], lang_hint=master_lang)
+            master_cues = read_cues_from_file(
+                files[master_lang],
+                lang_hint=master_lang,
+                preserve_vtt_ruby=args.format == "vtt",
+            )
         except Exception as e:
             skipped.append((key, f"could not parse master subtitle: {e}"))
             continue
@@ -7059,11 +7199,31 @@ def combine_main(argv: list[str]) -> int:
                 continue
             if is_pseudo_lang(lang):
                 base_lang, _infix, _mode = _PSEUDO_LANG_VARIANTS[lang]
+                use_ruby_side_file = (
+                    args.format == "vtt"
+                    and lang in files
+                    and base_lang == "ja"
+                    and _mode in {"hiragana", "katakana"}
+                )
+                if use_ruby_side_file:
+                    try:
+                        target_cues[lang] = read_cues_from_file(
+                            files[lang],
+                            lang_hint=lang,
+                            preserve_vtt_ruby=args.format == "vtt",
+                        )
+                        continue
+                    except Exception:
+                        pass
                 if base_lang not in base_cue_cache:
                     if base_lang not in files:
                         continue
                     try:
-                        base_cue_cache[base_lang] = read_cues_from_file(files[base_lang], lang_hint=base_lang)
+                        base_cue_cache[base_lang] = read_cues_from_file(
+                            files[base_lang],
+                            lang_hint=base_lang,
+                            preserve_vtt_ruby=args.format == "vtt",
+                        )
                     except Exception:
                         continue
                 target_cues[lang] = derive_pseudo_lang_cues(
@@ -7075,7 +7235,11 @@ def combine_main(argv: list[str]) -> int:
             if lang not in files:
                 continue
             try:
-                cues = read_cues_from_file(files[lang], lang_hint=lang)
+                cues = read_cues_from_file(
+                    files[lang],
+                    lang_hint=lang,
+                    preserve_vtt_ruby=args.format == "vtt",
+                )
             except Exception:
                 # Treat as missing for this lang rather than skipping the
                 # whole episode.
@@ -7149,6 +7313,8 @@ def combine_main(argv: list[str]) -> int:
     written: list[Path] = []
     for key, _src, dest, _rates in plan:
         combined, _missing = _COMBINE_PENDING.pop(dest, ([], []))
+        if not args.no_watermark:
+            combined = add_merged_watermarks(combined)
         dest.parent.mkdir(parents=True, exist_ok=True)
         if args.format == "vtt":
             body = serialize_vtt(combined)
@@ -9435,6 +9601,9 @@ def _toml_to_pipeline_argv(toml_data: dict) -> tuple[list[str], dict]:
             merge_reading = _single_japanese_reading_spec(toml_data["modify"].get("reading"))
         if merge_reading:
             argv += _resolve_modify_reading(merge_reading)
+        merge_watermark = mb.pop("watermark", None)
+        if merge_watermark is False:
+            argv.append("--no-watermark")
         if out_force:
             argv.append("--force")
         for key, value in mb.items():
@@ -10390,6 +10559,9 @@ BUILTIN_CONFIG_DEFAULTS: dict[str, dict[str, object]] = {
         # cue stack on the matching language line. Defaults to true so the
         # most common ja+en case "just works"; disable per-run with --no-reading.
         "reading": True,
+        # Add a short GetSubtitle credit/disclaimer cue at the beginning and
+        # end of merged study files. Disable per-run with --no-watermark.
+        "watermark": True,
     },
     "output": {
         "target": DEFAULT_OUTPUT_TEXT,
@@ -10644,7 +10816,7 @@ def validate_user_config(raw: dict) -> dict:
         mg_out["languages"] = _validate_lang_list(mg["langs"], "merge.langs")
     if "sync" in mg:
         mg_out["sync"] = _validate_enum(mg["sync"], "merge.sync", {"auto", "strict", "loose"})
-    for bk in ("preserve_lines", "reading"):
+    for bk in ("preserve_lines", "reading", "watermark"):
         if bk in mg:
             mg_out[bk] = _validate_bool(mg[bk], f"merge.{bk}")
     if "priority" in mg:
@@ -11933,6 +12105,8 @@ def _apply_combine_config_defaults(parser: argparse.ArgumentParser) -> None:
         overrides["sync"] = mg["sync"]
     if mg.get("preserve_lines"):
         overrides["preserve_lines"] = True
+    if mg.get("watermark") is False:
+        overrides["no_watermark"] = True
     out_cfg = cfg.get("output", {})
     if out_cfg.get("force"):
         overrides["force"] = True
@@ -12102,7 +12276,7 @@ Install: `pip install -e ".[furigana]"` (or just `pip install pykakasi`)
 Modes:
   ja:hiragana    Default. 漢字（かんじ） — hiragana above each kanji block.
   ja:katakana    漢字（カンジ） — katakana above each kanji block.
-  ja:romaji      漢字（kanji） — Hepburn romaji above each kanji block.
+  ja:romaji      kyou wa nihongo wo renshuu shitai — full-sentence Hepburn romaji.
 
 Examples:
   getsubtitle URL -l ja --reading ja:hiragana
@@ -12610,6 +12784,7 @@ Merge options:
   --force                  Overwrite existing outputs and allow low-confidence matches
   --open-folder            Open output folder after writing
   --no-open-folder-prompt  Do not ask whether to open output folder
+  --no-watermark           Skip GetSubtitle credit/disclaimer cues
   --format FORMAT          srt, vtt, smi, ass, or txt. VTT is best for
                            asbplayer/browser ruby; ASS is best for local
                            stacked reading aids.
@@ -12627,6 +12802,8 @@ Notes:
   - Input formats: srt, vtt, ass/ssa, smi. Use -l ja:vtt,en,ko:smi when
     multiple formats exist for the same language.
   - --reading ja:hiragana inlines Japanese readings before merging.
+  - Merged outputs include a short GetSubtitle credit/disclaimer cue at the
+    beginning and end. Use --no-watermark to omit it.
   - --sync auto|strict|loose controls how strictly cues match.
 
 Multi-variant merge:
@@ -13110,7 +13287,7 @@ _WIZARD_READING_AID_MENU: list[tuple[str, str, str, bool]] = [
     # works for both.
     ("ja", "ja:hiragana",       "Japanese — hiragana readings for kanji",   True),
     ("ja", "ja:katakana",       "Japanese — katakana readings for kanji",   True),
-    ("ja", "ja:romaji",         "Japanese — romaji readings for kanji",     True),
+    ("ja", "ja:romaji",         "Japanese — full-sentence romaji",          True),
     ("ko", "ko:revised",        "Korean — Revised Romanization (G2P)",      True),
     ("ko", "ko:yale",           "Korean — Yale Romanization",               True),
     ("zh", "zh:marks",          "Mandarin — pinyin with tone marks",        True),

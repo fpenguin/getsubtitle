@@ -194,7 +194,7 @@ strip_cc_noise = true
 # LANG:MODE pairs. Examples:
 #   reading = "ja:hiragana"                        Japanese furigana above kanji
 #   reading = "ja:katakana"                        Japanese katakana above kanji
-#   reading = "ja:romaji"                          Japanese romaji above kanji
+#   reading = "ja:romaji"                          Japanese full-sentence romaji
 #   reading = "ko:revised"                         Korean Revised Romanization
 #   reading = "ko:yale"                            Korean Yale Romanization
 #   reading = "zh:marks"                           Mandarin pinyin with tones

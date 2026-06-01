@@ -13,6 +13,19 @@ After v1.9, use smaller release steps for incremental improvements:
 - **v2.0**: the next larger behavior milestone, aimed at an AI-based
   subtitle sync engine.
 
+## v1.9.3 — what's new
+
+- **Japanese romaji is now full-sentence learner text.** `ja:romaji`
+  romanizes kana-only and mixed Japanese lines, emits normal subtitle-size
+  rows in VTT, and avoids tiny `<rt>` ruby annotation text.
+- **Japanese multi-variant VTT preserves true ruby where it helps.**
+  `ja-hiragana` and `ja-katakana` prefer generated ruby VTT side files,
+  so readings sit above kanji; `ja-romaji` stays a normal full sentence.
+- **Merged files can include a credit/disclaimer.** Merge outputs now add
+  a short GetSubtitle credit and rights-holder disclaimer at the beginning
+  and end by default. Use `--no-watermark` or `[merge] watermark = false`
+  to omit it.
+
 ## v1.9.2 — what's new
 
 - **Saved TOML workflows are easier to reuse.** After saving from

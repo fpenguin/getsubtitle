@@ -1628,6 +1628,32 @@ def test_kanji_reading_pair_lines_aligns_rows_to_same_display_width():
     assert MODULE["display_cells"](reading) == MODULE["display_cells"](text)
 
 
+def test_kanji_reading_line_romaji_uses_full_sentence():
+    try:
+        line = MODULE["kanji_reading_line"]("（望）７号車と６号車がくっついた。", "romaji")
+    except MODULE["CliError"] as e:
+        if "pykakasi" in str(e):
+            return
+        raise
+    assert "gousha" in line
+    assert "kuttsuita" in line
+    assert "７" in line or "7" in line
+    assert "号車" not in line
+
+
+def test_text_with_ruby_romaji_outputs_normal_sized_line():
+    try:
+        out = MODULE["text_with_ruby"]("（望）７号車と６号車がくっついた。", "romaji")
+    except MODULE["CliError"] as e:
+        if "pykakasi" in str(e):
+            return
+        raise
+    assert "<ruby>" not in out
+    assert "<rt>" not in out
+    assert "gousha" in out
+    assert "kuttsuita" in out
+
+
 def test_combine_cues_does_not_reuse_same_target_cue():
     SrtCue = MODULE["SrtCue"]
     master = [
@@ -1793,6 +1819,88 @@ def test_multi_variant_merge_end_to_end():
         assert "I will study kanji." in content
 
 
+def test_multi_variant_vtt_prefers_japanese_ruby_side_file():
+    import tempfile
+    from pathlib import Path
+    with tempfile.TemporaryDirectory() as d:
+        root = Path(d)
+        (root / "Show.S01E01.ja.srt").write_text(
+            "1\n00:00:01,000 --> 00:00:03,000\n漢字を勉強します。\n",
+            encoding="utf-8",
+        )
+        (root / "Show.S01E01.ja.furigana-hiragana.single-line.ruby.vtt").write_text(
+            "WEBVTT\n\n"
+            "00:00:01.000 --> 00:00:03.000\n"
+            "<ruby>漢字<rt>かんじ</rt></ruby>を<ruby>勉強<rt>べんきょう</rt></ruby>します。\n",
+            encoding="utf-8",
+        )
+        (root / "Show.S01E01.en.srt").write_text(
+            "1\n00:00:01,000 --> 00:00:03,000\nI will study kanji.\n",
+            encoding="utf-8",
+        )
+        rc = MODULE["combine_main"]([
+            str(root), "-l", "ja-hiragana,ja,en", "--format", "vtt",
+            "--sync", "loose", "--force", "--no-open-folder-prompt",
+        ])
+        assert rc == 0
+        out = root / "Show.S01E01.ja-hiragana-ja-en.vtt"
+        assert out.exists()
+        content = out.read_text(encoding="utf-8")
+        assert "<ruby>漢字<rt>かんじ</rt></ruby>" in content
+        assert "漢字（かんじ）" not in content
+        assert "I will study kanji." in content
+
+
+def test_multi_variant_vtt_derives_japanese_romaji_full_sentence():
+    import tempfile
+    from pathlib import Path
+    with tempfile.TemporaryDirectory() as d:
+        root = Path(d)
+        (root / "Show.S01E01.ja.srt").write_text(
+            "1\n00:00:01,000 --> 00:00:03,000\n７号車と６号車がくっついた。\n",
+            encoding="utf-8",
+        )
+        (root / "Show.S01E01.ja.furigana-romaji.single-line.ruby.vtt").write_text(
+            "WEBVTT\n\n"
+            "00:00:01.000 --> 00:00:03.000\n"
+            "<ruby>号車<rt>gousha</rt></ruby>だけ\n",
+            encoding="utf-8",
+        )
+        (root / "Show.S01E01.en.srt").write_text(
+            "1\n00:00:01,000 --> 00:00:03,000\nThe cars stuck together.\n",
+            encoding="utf-8",
+        )
+        rc = MODULE["combine_main"]([
+            str(root), "-l", "ja-romaji,ja,en", "--format", "vtt",
+            "--sync", "loose", "--force", "--no-open-folder-prompt",
+        ])
+        assert rc == 0
+        content = (root / "Show.S01E01.ja-romaji-ja-en.vtt").read_text(encoding="utf-8")
+        assert "gousha" in content
+        assert "kuttsuita" in content
+        assert "<ruby>号車<rt>gousha</rt></ruby>だけ" not in content
+
+
+def test_multi_variant_japanese_romaji_handles_kana_only_lines():
+    import tempfile
+    from pathlib import Path
+    with tempfile.TemporaryDirectory() as d:
+        root = Path(d)
+        (root / "Show.S01E01.ja.srt").write_text(
+            "1\n00:00:01,000 --> 00:00:03,000\nここからセクター２！\n",
+            encoding="utf-8",
+        )
+        rc = MODULE["combine_main"]([
+            str(root), "-l", "ja-romaji,ja", "--format", "vtt",
+            "--sync", "loose", "--force", "--no-open-folder-prompt",
+        ])
+        assert rc == 0
+        content = (root / "Show.S01E01.ja-romaji-ja.vtt").read_text(encoding="utf-8")
+        assert "kokokara" in content
+        assert "sekutaa" in content
+        assert "ここからセクター２！" in content
+
+
 def test_multi_variant_merge_derives_clean_korean_reading_rows():
     import tempfile
     from pathlib import Path
@@ -1896,10 +2004,38 @@ def test_combine_main_writes_combined_file():
         # both present in the stacked output. (Furigana would only inline
         # if --reading ja:hiragana were passed; see the multi-variant
         # merge tests for stacked-variant coverage.)
+        assert "Prepared with GetSubtitle on GitHub." in body
+        assert "Media and subtitle rights remain with their respective copyright holders." in body
+        assert body.count("Prepared with GetSubtitle on GitHub.") == 2
+        cues = MODULE["parse_srt"](body)
+        assert cues[0].text_lines[0] == "Prepared with GetSubtitle on GitHub."
+        assert cues[-1].text_lines[0] == "Prepared with GetSubtitle on GitHub."
         assert "彼女" in body
         assert "運命" in body
         assert "人間" in body
         assert "그녀에게 점을 보려는 사람들의 행렬이" in body
+
+
+def test_combine_main_no_watermark_flag_omits_credit_cues():
+    import tempfile
+    from pathlib import Path
+    with tempfile.TemporaryDirectory() as d:
+        root = Path(d)
+        (root / "Show.S01E07.ja.srt").write_text(
+            "1\n00:00:01,000 --> 00:00:03,000\nこんにちは\n",
+            encoding="utf-8",
+        )
+        (root / "Show.S01E07.en.srt").write_text(
+            "1\n00:00:01,000 --> 00:00:03,000\nHello\n",
+            encoding="utf-8",
+        )
+        rc = MODULE["combine_main"]([str(root), "-l", "ja,en", "--no-watermark"])
+        assert rc == 0
+        body = (root / "Show.S01E07.ja-en.srt").read_text(encoding="utf-8")
+    assert "Prepared with GetSubtitle" not in body
+    assert "copyright holders" not in body
+    assert "こんにちは" in body
+    assert "Hello" in body
 
 
 def test_combine_main_open_folder_flag_opens_output_folder():
@@ -8596,7 +8732,8 @@ def test_wizard_reading_aid_labels_format_agnostic():
     labels = [row[2] for row in ja_rows]
     for label in labels:
         assert "above kanji" not in label.lower(), label
-        assert "readings for kanji" in label.lower(), label
+    assert any("readings for kanji" in label.lower() for label in labels)
+    assert any("full-sentence romaji" in label.lower() for label in labels)
 
 
 # ─── Korean romanization ────────────────────────────────────────────
