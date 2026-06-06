@@ -71,6 +71,7 @@ def test_release_source_choices_include_new_services():
 def test_parse_season_from_title_strips_common_markers():
     p = MODULE["parse_season_from_title"]
     assert p("Mashle Magic And Muscles Season 2") == ("Mashle Magic And Muscles", 2)
+    assert p("MF GHOST 3rd Season") == ("MF GHOST", 3)
     assert p("Mashle Magic And Muscles - Season 2") == ("Mashle Magic And Muscles", 2)
     assert p("Hibike Euphonium S2") == ("Hibike Euphonium", 2)
     assert p("Hibike Euphonium Part 1") == ("Hibike Euphonium", 1)
@@ -1321,6 +1322,32 @@ def test_save_subtitle_season_all_uses_parseable_episode_marker():
             saved = MODULE["save_subtitle"](FakeSub(), Path(d), media, "all", "1")
         assert saved[0].name == "Show - S01E01.ja.srt"
         assert MODULE["parse_episode_marker"](saved[0].name) == (1, 1)
+    finally:
+        scope["download_bytes"] = saved_dl
+
+
+def test_save_subtitle_episode_filename_start_shifts_output_episode_number():
+    import tempfile
+    from pathlib import Path
+    scope = MODULE["save_subtitle"].__globals__
+    saved_dl = scope["download_bytes"]
+    try:
+        scope["download_bytes"] = lambda url, headers=None: b"1\n00:00:01,000 --> 00:00:02,000\nhi\n"
+
+        class FakeSub:
+            name = "ep1.srt"
+            language = "ja"
+            url = "mock://"
+            download_headers = None
+
+        with tempfile.TemporaryDirectory() as d:
+            media = MODULE["MediaInfo"](source_url="x", provider="crunchyroll", title="MF Ghost")
+            saved = MODULE["save_subtitle"](
+                FakeSub(), Path(d), media, "3", "1",
+                episode_filename_start=25,
+            )
+        assert saved[0].name == "MF Ghost - S03E25.ja.srt"
+        assert MODULE["parse_episode_marker"](saved[0].name) == (3, 25)
     finally:
         scope["download_bytes"] = saved_dl
 
@@ -4490,6 +4517,122 @@ def test_fetch_main_profile_override_applies_to_all_folders():
     assert any("es,ko" in lv for lv in captured_langs), captured_langs
 
 
+def test_fetch_main_path_form_respects_explicit_languages_over_profile_defaults():
+    import tempfile, io, contextlib
+    from pathlib import Path
+    scope = MODULE["fetch_main"].__globals__
+    saved_run = scope["subprocess"].run
+    captured_langs: list[str] = []
+
+    class _FakeResult:
+        returncode = 0
+
+    def fake_run(args, **kwargs):
+        for i, a in enumerate(args):
+            if a == "-l" and i + 1 < len(args):
+                captured_langs.append(args[i + 1])
+        return _FakeResult()
+
+    scope["subprocess"].run = fake_run
+    saved_detect = scope["detect_profile_from_title"]
+    scope["detect_profile_from_title"] = lambda title, year=None: "en"
+    try:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "Fena - Pirate Princess").mkdir()
+            (root / "Fena - Pirate Princess" / "S01E01.mkv").touch()
+            with _isolated_config(None):
+                out = io.StringIO()
+                with contextlib.redirect_stdout(out):
+                    MODULE["main"]([
+                        "fetch", str(root), "--subdirectory",
+                        "--languages", "ja,ko", "--run",
+                    ])
+                text = out.getvalue()
+    finally:
+        scope["subprocess"].run = saved_run
+        scope["detect_profile_from_title"] = saved_detect
+
+    assert captured_langs == ["ja,ko"], captured_langs
+    assert "es,ko" not in captured_langs
+    assert "requested languages: ja,ko" in text
+    assert "fetch: -l ja,ko (requested)" in text
+
+
+def test_fetch_main_explicit_season_folder_fetches_once_with_parent_title():
+    import tempfile, io, contextlib
+    from pathlib import Path
+    scope = MODULE["fetch_main"].__globals__
+    saved_run = scope["subprocess"].run
+    saved_detect = scope["detect_profile_from_title"]
+    captured: list[list[str]] = []
+
+    class _FakeResult:
+        returncode = 0
+
+    def fake_run(args, **kwargs):
+        captured.append(args)
+        return _FakeResult()
+
+    scope["subprocess"].run = fake_run
+    scope["detect_profile_from_title"] = lambda title, year=None: "ja"
+    try:
+        with tempfile.TemporaryDirectory() as tmp:
+            season = Path(tmp) / "Fena - Pirate Princess" / "Season 01"
+            season.mkdir(parents=True)
+            (season / "Fena - Pirate Princess - S01E01.mkv").touch()
+            (season / "Fena - Pirate Princess - S01E02.mkv").touch()
+            with _isolated_config(None), contextlib.redirect_stdout(io.StringIO()):
+                rc = MODULE["main"](["fetch", str(season), "--languages", "ja,ko", "--run"])
+        assert rc == 0
+    finally:
+        scope["subprocess"].run = saved_run
+        scope["detect_profile_from_title"] = saved_detect
+
+    assert len(captured) == 1
+    cmd = captured[0]
+    assert cmd[cmd.index("--title") + 1] == "Fena - Pirate Princess"
+    assert cmd[cmd.index("-s") + 1] == "1"
+    assert cmd[cmd.index("-e") + 1] == "all"
+    assert cmd[cmd.index("-l") + 1] == "ja,ko"
+
+
+def test_fetch_main_explicit_video_file_scopes_to_that_episode():
+    import tempfile, io, contextlib
+    from pathlib import Path
+    scope = MODULE["fetch_main"].__globals__
+    saved_run = scope["subprocess"].run
+    saved_detect = scope["detect_profile_from_title"]
+    captured: list[list[str]] = []
+
+    class _FakeResult:
+        returncode = 0
+
+    def fake_run(args, **kwargs):
+        captured.append(args)
+        return _FakeResult()
+
+    scope["subprocess"].run = fake_run
+    scope["detect_profile_from_title"] = lambda title, year=None: "ja"
+    try:
+        with tempfile.TemporaryDirectory() as tmp:
+            video = Path(tmp) / "Fena - Pirate Princess" / "Season 01" / "Fena - Pirate Princess - S01E10.mkv"
+            video.parent.mkdir(parents=True)
+            video.touch()
+            with _isolated_config(None), contextlib.redirect_stdout(io.StringIO()):
+                rc = MODULE["main"](["fetch", str(video), "--languages", "ja,ko", "--run"])
+        assert rc == 0
+    finally:
+        scope["subprocess"].run = saved_run
+        scope["detect_profile_from_title"] = saved_detect
+
+    assert len(captured) == 1
+    cmd = captured[0]
+    assert cmd[cmd.index("--title") + 1] == "Fena - Pirate Princess"
+    assert cmd[cmd.index("-s") + 1] == "1"
+    assert cmd[cmd.index("-e") + 1] == "10"
+
+
 def test_fetch_main_dry_run_is_default_for_path_form():
     # PATH form is dry-run by default — no real subprocess calls should
     # leak through; the captured _batch_run path adds --dry-run when not
@@ -5391,6 +5534,29 @@ def test_pipeline_output_dry_run_true_does_not_add_run():
         assert captured and "--run" not in captured[0], captured
         # --dry-run should have been propagated instead.
         assert "--dry-run" in captured[0], captured
+    finally:
+        scope["fetch_main"] = saved_fetch
+
+
+def test_inline_pipeline_path_fetch_adds_run_by_default():
+    import tempfile, io, contextlib
+    from pathlib import Path
+    captured: list[list[str]] = []
+    scope = MODULE["pipeline_main"].__globals__
+    saved_fetch = scope["fetch_main"]
+
+    def fake_fetch(argv):
+        captured.append(list(argv))
+        return 0
+
+    scope["fetch_main"] = fake_fetch
+    try:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "Show"
+            root.mkdir()
+            with _isolated_config(None), contextlib.redirect_stdout(io.StringIO()):
+                MODULE["main"](["--fetch", str(root), "--languages", "ja,ko", "--merge"])
+        assert captured and "--run" in captured[0], captured
     finally:
         scope["fetch_main"] = saved_fetch
 
@@ -6475,6 +6641,93 @@ def test_deepl_translator_uses_header_auth_not_form_body():
     assert params["text"] == ["こんにちは"]
 
 
+def test_deepl_usage_uses_usage_endpoint_and_header():
+    import json
+
+    captured = {}
+
+    class _Response:
+        def __enter__(self):
+            return self
+        def __exit__(self, exc_type, exc, tb):
+            return False
+        def read(self):
+            return json.dumps({
+                "character_count": 180118,
+                "character_limit": 500000,
+            }).encode("utf-8")
+
+    def fake_urlopen(req, timeout=15):
+        captured["url"] = req.full_url
+        captured["authorization"] = req.get_header("Authorization")
+        return _Response()
+
+    urllib_mod = MODULE["urllib"]
+    saved_urlopen = urllib_mod.request.urlopen
+    try:
+        urllib_mod.request.urlopen = fake_urlopen
+        usage = MODULE["DeepLTranslator"]("test-key:fx").usage()
+    finally:
+        urllib_mod.request.urlopen = saved_urlopen
+
+    assert captured["url"] == "https://api-free.deepl.com/v2/usage"
+    assert captured["authorization"] == "DeepL-Auth-Key test-key:fx"
+    assert usage.character_count == 180118
+    assert usage.character_limit == 500000
+
+
+def test_format_deepl_usage_shows_remaining_characters():
+    lines = MODULE["format_deepl_usage"](
+        MODULE["DeepLUsage"](character_count=180118, character_limit=500000)
+    )
+    assert lines == [
+        "Account characters this period: 180,118 / 500,000 (319,882 remaining, 36.0% used)"
+    ]
+
+
+def test_translate_main_prints_deepl_usage_after_success():
+    import contextlib
+    import io
+    import tempfile
+    from pathlib import Path
+
+    class _FakeDeepL(MODULE["DeepLTranslator"]):
+        def __init__(self):
+            super().__init__("fake-key:fx")
+        def is_available(self):
+            return True
+        def translate_batch(self, texts, source, target, on_progress=None):
+            if on_progress is not None:
+                on_progress(len(texts), len(texts))
+            return [f"[{target}] {t}" for t in texts]
+        def usage(self):
+            return MODULE["DeepLUsage"](character_count=1200, character_limit=500000)
+
+    scope = MODULE["translate_main"].__globals__
+    saved_select = scope["select_translator"]
+    try:
+        scope["select_translator"] = lambda engine, model: _FakeDeepL()
+        with _isolated_config(None):
+            with tempfile.TemporaryDirectory() as d:
+                root = Path(d)
+                (root / "Show.S01E07.ja.srt").write_text(
+                    "1\n00:00:01,000 --> 00:00:02,000\nこんにちは\n", encoding="utf-8"
+                )
+                buf = io.StringIO()
+                with contextlib.redirect_stdout(buf):
+                    rc = MODULE["translate_main"]([
+                        str(root), "-l", "ja,ko", "--engine", "deepl",
+                    ])
+        text = buf.getvalue()
+    finally:
+        scope["select_translator"] = saved_select
+
+    assert rc == 0
+    assert "DeepL usage:" in text
+    assert "1,200 / 500,000" in text
+    assert "498,800 remaining" in text
+
+
 def test_ollama_missing_model_is_pulled_before_translate():
     import json
 
@@ -6922,8 +7175,27 @@ def test_strip_cc_noise_removes_continuation_arrows():
     assert "00:00:01,000 --> 00:00:02,000" in out
 
 
+def test_strip_cc_noise_removes_decorative_wrappers():
+    src = (
+        "1\n"
+        "00:00:01,000 --> 00:00:02,000\n"
+        "あ…。　《Ｍｉｓｔａｋｅ！》\n"
+        "\n"
+        "2\n"
+        "00:00:03,000 --> 00:00:04,000\n"
+        "〈次回　第１７話〉\n"
+    )
+    out = MODULE["strip_cc_noise_text"](src)
+    assert "《" not in out
+    assert "》" not in out
+    assert "〈" not in out
+    assert "〉" not in out
+    assert "あ…。　Ｍｉｓｔａｋｅ！" in out
+    assert "次回　第１７話" in out
+
+
 def test_strip_cc_noise_text_is_idempotent():
-    s = "foo➡\nbar"
+    s = "《foo➡》\nbar"
     once = MODULE["strip_cc_noise_text"](s)
     twice = MODULE["strip_cc_noise_text"](once)
     assert once == twice == "foo\nbar"
@@ -6940,18 +7212,19 @@ def test_strip_cc_noise_in_place_rewrites_file():
     with tempfile.TemporaryDirectory() as d:
         path = Path(d) / "show.ja.srt"
         path.write_text(
-            "1\n00:00:01,000 --> 00:00:02,000\nなんて…。➡\n", encoding="utf-8"
+            "1\n00:00:01,000 --> 00:00:02,000\n《なんて…。➡》\n", encoding="utf-8"
         )
         MODULE["strip_cc_noise_in_place"](path)
         out = path.read_text(encoding="utf-8")
     assert "➡" not in out
+    assert "《" not in out
+    assert "》" not in out
     assert "なんて…。" in out
 
 
 def test_strip_cc_arrows_legacy_aliases_still_work():
-    # The narrow arrow-specific helpers must continue to exist (and behave
-    # identically to the noise umbrella) so any external caller using the
-    # old names is not broken by the rename.
+    # The narrow arrow-specific helper must continue to exist so any external
+    # caller using the old name is not broken by the rename.
     s = "foo➡\nbar"
     assert MODULE["strip_cc_arrows_text"](s) == MODULE["strip_cc_noise_text"](s)
 
@@ -7522,6 +7795,24 @@ def test_wizard_emit_toml_uses_canonical_keys():
     assert indices == sorted(indices)
 
 
+def test_wizard_emit_cli_and_toml_include_episode_filename_start():
+    state = _wizard_state(
+        source="https://www.crunchyroll.com/series/GEXH3W2W7/mf-ghost",
+        source_kind="url",
+        season="3",
+        episode="1-12",
+        episode_filename_start="25",
+        mt_engine="",
+        reading_aids=[],
+        format="srt",
+    )
+    cli = MODULE["_wizard_emit_cli"](state)
+    assert "--episode-filename-start" in cli
+    assert cli[cli.index("--episode-filename-start") + 1] == "25"
+    toml = MODULE["_wizard_emit_toml"](state)
+    assert 'episode_filename_start = "25"' in toml
+
+
 def test_wizard_preserves_display_order_distinct_from_collection():
     """If Q2 collects ja,en,ko but Q3 reorders to ko,ja,en, the merge
     languages reflect Q3, not Q2."""
@@ -8060,12 +8351,13 @@ def test_wizard_qcount_before_honors_step_gating():
     # so this pins the gating.
     merge_only = MODULE["_WizardState"](steps={"merge"})
     assert MODULE["_wizard_qcount_before"](merge_only, "reading_aids") == 3
-    # Full fetch flow: source contributes two headings (kind picker + entry).
+    # Full fetch flow: source contributes two headings (kind picker + entry),
+    # and episode scope now comes before languages.
     full = MODULE["_WizardState"](steps={"fetch", "modify", "merge"})
     assert MODULE["_wizard_qcount_before"](full, "steps") == 0
-    assert MODULE["_wizard_qcount_before"](full, "languages") == 3  # 1 + 2
-    assert MODULE["_wizard_qcount_before"](full, "scope") == 4      # + languages
-    assert MODULE["_wizard_qcount_before"](full, "reading_aids") == 5  # + scope
+    assert MODULE["_wizard_qcount_before"](full, "scope") == 3      # 1 + 2
+    assert MODULE["_wizard_qcount_before"](full, "languages") == 4  # + scope
+    assert MODULE["_wizard_qcount_before"](full, "reading_aids") == 5  # + languages
 
 
 def test_wizard_languages_offer_modify_for_korean_reading_aids():
@@ -9117,6 +9409,42 @@ def test_plan_mkv_subtitle_extraction_skips_image_streams_and_names_text_outputs
             assert any("image subtitle" in note for note in notes)
     finally:
         g["_ffprobe_subtitle_streams"] = saved_probe
+
+
+def test_convert_text_subtitle_to_srt_file_converts_ass_source():
+    import tempfile
+    from pathlib import Path
+    fn = MODULE["convert_text_subtitle_to_srt_file"]
+    with tempfile.TemporaryDirectory() as td:
+        ass = Path(td) / "Episode.en.ass"
+        ass.write_text(
+            "[Events]\n"
+            "Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text\n"
+            r"Dialogue: 0,0:00:01.00,0:00:03.00,Default,,0,0,0,,Hello\Nthere"
+            "\n",
+            encoding="utf-8",
+        )
+        out, written = fn(ass)
+        assert written is True
+        assert out is not None
+        text = out.read_text(encoding="utf-8")
+        assert out.name == "Episode.en.srt"
+        assert "00:00:01,000 --> 00:00:03,000" in text
+        assert "Hello\nthere" in text
+
+
+def test_manual_search_suggestions_include_japanese_fallbacks():
+    media = MODULE["MediaInfo"](
+        provider="title",
+        source_url="title://fena",
+        title="Fena: Pirate Princess",
+        title_aliases=["海賊王女", "Kaizoku Oujo"],
+    )
+    suggestions = MODULE["build_manual_search_suggestions"](media, ["ja"])
+    labels = [s.label for s in suggestions]
+    assert "Jimaku web search" in labels
+    assert "Kitsunekko" in labels
+    assert any("Japanese subtitle" in s.note or "anime subtitle" in s.note for s in suggestions)
 
 
 def test_doctor_main_runs_without_network_or_provider_calls():

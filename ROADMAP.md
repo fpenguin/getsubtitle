@@ -14,6 +14,28 @@ Until the app is marketing-ready for v1.0, use pre-1.0 release steps:
 - **v2.0**: a later larger behavior milestone, aimed at an AI-based
   subtitle sync engine.
 
+## v0.9.5 — what's new
+
+- **Interactive wizard backtracking and cleaner ordering.** The wizard now
+  advertises `back`, asks fetch/source/scope questions before translation
+  and reading-aid choices, and includes regression transcripts for the
+  Crunchyroll scope traps.
+- **Crunchyroll episode-number help.** The wizard separates season and
+  episode/range input, supports filename episode offsets such as saving
+  provider E01 as S03E25, and avoids silent "auto" surprises on series pages.
+- **Local video/folder fetch fixes.** A season folder is treated as one show
+  season, a single video file is scoped to that episode, explicit languages
+  override profile defaults, and inline PATH pipelines run live when the user
+  chooses to run.
+- **MKV fallback after online fetch misses.** Local MKV/video files can expose
+  embedded text subtitles as source tracks for later translation/merge, with
+  ASS/VTT text tracks converted to SRT when needed.
+- **Better missing-Japanese guidance.** Manual search suggestions now include
+  Japanese options such as Jimaku web search, Kitsunekko, and alternate-title
+  Japanese subtitle searches.
+- **DeepL usage summary.** DeepL runs can show character usage/remaining
+  balance after translation.
+
 ## v0.9.4 — what's new
 
 - **Interactive wizard is easier to follow.** Menus now use numeric

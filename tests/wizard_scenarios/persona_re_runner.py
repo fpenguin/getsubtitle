@@ -14,10 +14,10 @@ SCENARIO = Scenario(
         "1,3,4",        # fetch + modify + merge
         "2",            # URL
         "https://www.imdb.com/title/tt28299608/",
-        "ja,en",
         "2",            # scope: specific season + episode
         "1",
         "1",
+        "ja,en",
         "1",            # reading aids — skip
         "2",            # action: save (URL default)
         "{TMP}/saved.toml",

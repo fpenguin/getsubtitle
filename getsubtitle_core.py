@@ -1449,6 +1449,7 @@ def infer_from_anilist_url(url: str) -> MediaInfo:
 _TRAILING_SEASON_RE = re.compile(
     r"\s*(?:[-:]\s*)?"
     r"(?:season\s*0*(\d+)"
+    r"|0*(\d+)(?:st|nd|rd|th)\s+season"
     r"|s(?:eason)?\s*0*(\d+)"
     r"|part\s*0*(\d+)"
     r"|cours?\s*0*(\d+))"
@@ -2635,7 +2636,8 @@ def _subdivx_items_from_html(html: str) -> list[dict]:
 
 DEFAULT_OLLAMA_HOST = "http://localhost:11434"
 DEFAULT_OLLAMA_MODEL = "qwen3:4b"
-DEEPL_FREE_API = "https://api-free.deepl.com/v2/translate"
+DEEPL_FREE_API_BASE = "https://api-free.deepl.com"
+DEEPL_PRO_API_BASE = "https://api.deepl.com"
 
 
 class TranslatorError(CliError):
@@ -2669,6 +2671,81 @@ class _BaseTranslator:
         have nothing to release. Subclasses override when they do.
         Returns True if anything was released."""
         return False
+
+
+@dataclass
+class DeepLUsage:
+    character_count: int
+    character_limit: int | None = None
+    api_key_character_count: int | None = None
+    api_key_character_limit: int | None = None
+
+
+def _deepl_api_base(api_key: str | None) -> str:
+    """DeepL Free keys conventionally end with ':fx'; Pro keys use api.deepl.com."""
+    key = (api_key or "").strip()
+    return DEEPL_FREE_API_BASE if key.endswith(":fx") else DEEPL_PRO_API_BASE
+
+
+def _deepl_int(data: dict, key: str) -> int | None:
+    value = data.get(key)
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, int):
+        return value
+    if isinstance(value, str) and value.isdigit():
+        return int(value)
+    return None
+
+
+def format_deepl_usage(usage: DeepLUsage) -> list[str]:
+    """Human-readable DeepL usage lines."""
+    lines: list[str] = []
+    if usage.character_limit and usage.character_limit > 0:
+        remaining = max(usage.character_limit - usage.character_count, 0)
+        pct = (usage.character_count / usage.character_limit) * 100
+        lines.append(
+            "Account characters this period: "
+            f"{usage.character_count:,} / {usage.character_limit:,} "
+            f"({remaining:,} remaining, {pct:.1f}% used)"
+        )
+    else:
+        lines.append(f"Account characters this period: {usage.character_count:,} used")
+    if usage.api_key_character_count is not None:
+        key_limit = usage.api_key_character_limit
+        # DeepL returns a very large sentinel when no key-level limit is set.
+        if key_limit and 0 < key_limit < 1_000_000_000_000:
+            remaining = max(key_limit - usage.api_key_character_count, 0)
+            pct = (usage.api_key_character_count / key_limit) * 100
+            lines.append(
+                "API key characters this period: "
+                f"{usage.api_key_character_count:,} / {key_limit:,} "
+                f"({remaining:,} remaining, {pct:.1f}% used)"
+            )
+        else:
+            lines.append(
+                "API key characters this period: "
+                f"{usage.api_key_character_count:,} used (no key-level limit)"
+            )
+    return lines
+
+
+def print_deepl_usage_summary(translators: Iterable[_BaseTranslator]) -> None:
+    deepl_translators = [
+        tr for tr in translators
+        if isinstance(tr, DeepLTranslator)
+    ]
+    if not deepl_translators:
+        return
+    translator = deepl_translators[0]
+    print("\nDeepL usage:")
+    try:
+        usage = translator.usage()
+    except TranslatorError as e:
+        print(f"  unavailable: {e}")
+        return
+    for line in format_deepl_usage(usage):
+        print(f"  {line}")
 
 
 class ArgosTranslator(_BaseTranslator):
@@ -3018,12 +3095,50 @@ class DeepLTranslator(_BaseTranslator):
     def is_available(self) -> bool:
         return bool(self.api_key)
 
+    @property
+    def api_base(self) -> str:
+        return _deepl_api_base(self.api_key)
+
     def setup_help(self, source_lang: str | None = None, target_lang: str | None = None) -> str:
         return (
             "Set up the DeepL API key:\n"
             "  getsubtitle --set-key deepl     # macOS Keychain / guided\n"
             "  export DEEPL_API_KEY=...        # Linux/Windows env var\n"
             "Get a free Developer key at https://www.deepl.com/your-account/keys"
+        )
+
+    def usage(self) -> DeepLUsage:
+        if not self.api_key:
+            raise TranslatorError(
+                "DeepL API key not set. Run: getsubtitle --set-key deepl, or "
+                "export DEEPL_API_KEY=..."
+            )
+        req = urllib.request.Request(
+            f"{self.api_base}/v2/usage",
+            headers={
+                "Authorization": f"DeepL-Auth-Key {self.api_key}",
+                "User-Agent": "getsubtitle/0.1",
+            },
+        )
+        try:
+            with urllib.request.urlopen(req, timeout=15) as res:
+                data = json.loads(res.read().decode("utf-8"))
+        except urllib.error.HTTPError as e:
+            msg = e.read().decode("utf-8", errors="replace").strip()[:200]
+            detail = f": {msg}" if msg else ""
+            raise TranslatorError(f"DeepL HTTP {e.code}{detail}") from e
+        except urllib.error.URLError as e:
+            raise TranslatorError(f"DeepL network error: {e.reason}") from e
+        if not isinstance(data, dict):
+            raise TranslatorError("DeepL returned an unexpected usage response.")
+        count = _deepl_int(data, "character_count")
+        if count is None:
+            raise TranslatorError("DeepL usage response did not include character_count.")
+        return DeepLUsage(
+            character_count=count,
+            character_limit=_deepl_int(data, "character_limit"),
+            api_key_character_count=_deepl_int(data, "api_key_character_count"),
+            api_key_character_limit=_deepl_int(data, "api_key_character_limit"),
         )
 
     def translate_batch(self, texts: list[str], source_lang: str, target_lang: str, on_progress=None) -> list[str]:
@@ -3049,7 +3164,7 @@ class DeepLTranslator(_BaseTranslator):
                 params.append(("text", t))
             body = urllib.parse.urlencode(params).encode("utf-8")
             req = urllib.request.Request(
-                DEEPL_FREE_API,
+                f"{self.api_base}/v2/translate",
                 data=body,
                 headers={
                     "Authorization": f"DeepL-Auth-Key {self.api_key}",
@@ -3687,7 +3802,24 @@ def print_provider_debug(records: list[ProviderDebugRecord]) -> None:
         print("  " + "  ".join(row[i].ljust(widths[i]) for i in range(len(header))))
 
 
-def save_subtitle(sub: SubtitleFile, dest_dir: Path, media: MediaInfo, season: str, episode: str) -> list[Path]:
+def _episode_for_output_filename(episode: str, episode_filename_start: int | None = None) -> str:
+    if episode_filename_start is None or episode_filename_start <= 1:
+        return episode
+    ep = str(episode).strip().lower()
+    if not ep.isdigit():
+        return episode
+    return str(int(ep) + episode_filename_start - 1)
+
+
+def save_subtitle(
+    sub: SubtitleFile,
+    dest_dir: Path,
+    media: MediaInfo,
+    season: str,
+    episode: str,
+    *,
+    episode_filename_start: int | None = None,
+) -> list[Path]:
     dest_dir.mkdir(parents=True, exist_ok=True)
     raw = download_bytes(sub.url, headers=sub.download_headers)
     ext = Path(sub.name).suffix.lower() or ".srt"
@@ -3714,7 +3846,8 @@ def save_subtitle(sub: SubtitleFile, dest_dir: Path, media: MediaInfo, season: s
         # convention would otherwise emit.
         filename = f"{show}.{sub.language}{ext}"
     else:
-        ep = "00" if episode in {"all", "auto"} else f"{int(episode):02d}"
+        filename_episode = _episode_for_output_filename(episode, episode_filename_start)
+        ep = "00" if filename_episode in {"all", "auto"} else f"{int(filename_episode):02d}"
         ss = "01" if season == "all" else "00" if season == "auto" else f"{int(season):02d}"
         filename = f"{show} - S{ss}E{ep}.{sub.language}{ext}"
     out = dest_dir / filename
@@ -3730,6 +3863,7 @@ def download_planned_subtitles(
     media: MediaInfo,
     season: str,
     layout: str,
+    episode_filename_start: int | None = None,
 ) -> tuple[list[Path], list[str]]:
     saved: list[Path] = []
     failures: list[str] = []
@@ -3738,7 +3872,15 @@ def download_planned_subtitles(
         progress_bar(idx, len(planned), "downloading", f"episode {ep} {sub.language}", transient=True)
         dest = output_dir(base, media, season, layout)
         try:
-            saved.extend(save_subtitle(sub, dest, media, season, ep))
+            if episode_filename_start and episode_filename_start > 1:
+                saved.extend(
+                    save_subtitle(
+                        sub, dest, media, season, ep,
+                        episode_filename_start=episode_filename_start,
+                    )
+                )
+            else:
+                saved.extend(save_subtitle(sub, dest, media, season, ep))
         except CliError as e:
             provider = sub.provider or sub.source_provider or "provider"
             failures.append(f"{sub.language} ep{ep}: download failed from {provider} — {e}")
@@ -3988,13 +4130,20 @@ def strip_cc_arrows_text(text: str) -> str:
     return cleaned
 
 
+def strip_cc_decorative_wrappers_text(text: str) -> str:
+    """Remove broadcast subtitle wrapper marks such as 《...》 and 〈...〉."""
+    return text.translate(SINGLE_LINE_DECORATIVE_WRAPPERS)
+
+
 def strip_cc_noise_text(text: str) -> str:
     """Umbrella cleanup for closed-caption / broadcast-caption artifacts.
 
-    Currently delegates to strip_cc_arrows_text. As we identify more shapes
-    of CC noise to remove (music markers, voiceover brackets, etc.) we can
-    layer them in here without changing the CLI flag or the call sites."""
-    return strip_cc_arrows_text(text)
+    As we identify more shapes of CC noise to remove (music markers,
+    voiceover brackets, etc.) we can layer them in here without changing the
+    CLI flag or the call sites."""
+    cleaned = strip_cc_arrows_text(text)
+    cleaned = strip_cc_decorative_wrappers_text(cleaned)
+    return cleaned
 
 
 @dataclass
@@ -4036,6 +4185,14 @@ def serialize_srt(cues: list[SrtCue]) -> str:
         body = "\n".join(cue.text_lines) if cue.text_lines else ""
         blocks.append(f"{cue.index}\n{cue.time_line}\n{body}".rstrip())
     return "\n\n".join(blocks) + "\n"
+
+
+def renumber_cues(cues: list[SrtCue]) -> list[SrtCue]:
+    """Return a copy with simple 1..N cue indexes."""
+    return [
+        SrtCue(index=str(idx), time_line=cue.time_line, text_lines=list(cue.text_lines))
+        for idx, cue in enumerate(cues, start=1)
+    ]
 
 
 _VTT_CUE_HEADER_RE = re.compile(
@@ -7650,6 +7807,8 @@ def translate_main(argv: list[str]) -> int:
         if released:
             uniq = sorted(set(released))
             print(f"Unloaded Ollama model(s) from memory: {', '.join(uniq)}")
+    if args.mt_engine == "deepl" and translator_cache:
+        print_deepl_usage_summary(translator_cache.values())
 
     print(f"\nWrote {len(written)} machine-translated file(s).")
     if written:
@@ -7716,7 +7875,7 @@ def build_modify_parser() -> argparse.ArgumentParser:
         ),
     )
     p.add_argument("paths", nargs="+", metavar="PATH", help="One or more subtitle files or directories to scan (recursive).")
-    p.add_argument("--strip-cc-noise", action="store_true", help="Remove broadcast closed-caption noise (currently: Japanese ➡ continuation arrows) in place.")
+    p.add_argument("--strip-cc-noise", action="store_true", help="Remove broadcast closed-caption noise (Japanese ➡ continuation arrows and decorative wrappers like 《...》) in place.")
     p.add_argument("--single-line", "--single", action="store_true", help="Flatten each SRT cue to one text line in place. Useful for asbplayer.")
     # Hidden compat alias for the pre-reading --furigana flag. Internally
     # equivalent to `--reading ja:MODE`.
@@ -7843,6 +8002,121 @@ def extract_mkv_subtitle_plan(
             msg = (proc.stderr or proc.stdout or "ffmpeg failed").strip()
             errors.append(f"{video.name} stream {stream_index}: {msg}")
     return written, skipped, errors
+
+
+def convert_text_subtitle_to_srt_file(path: Path, *, force: bool = False) -> tuple[Path | None, bool]:
+    """Convert a text subtitle sidecar (.ass/.ssa/.vtt) to sibling .srt.
+
+    Returns (path, written). Existing .srt files are returned as available
+    sources with written=False. Unsupported or empty files return (None, False).
+    """
+    suffix = path.suffix.lower()
+    if suffix == ".srt":
+        return path, False
+    if suffix not in {".ass", ".ssa", ".vtt"}:
+        return None, False
+    out_path = path.with_suffix(".srt")
+    if out_path.exists() and not force:
+        return out_path, False
+    try:
+        cues = read_cues_from_file(path)
+    except CliError:
+        return None, False
+    if not cues:
+        return None, False
+    out_path.write_text(serialize_srt(renumber_cues(cues)), encoding="utf-8")
+    return out_path, True
+
+
+def _embedded_subtitle_lang_summary(plan: list[tuple[Path, int, str, str, Path]]) -> str:
+    langs: list[str] = []
+    for _video, _stream_index, lang, _codec, _dest in plan:
+        base_lang = lang.split(".", 1)[0]
+        if base_lang not in langs:
+            langs.append(base_lang)
+    return ", ".join(langs) if langs else "unknown"
+
+
+def maybe_extract_embedded_subtitles_after_fetch_miss(
+    target: Path,
+    *,
+    force: bool = False,
+) -> bool:
+    """Offer MKV embedded subtitles as a fallback source after online fetch misses.
+
+    Returns True when at least one SRT source is available after extraction or
+    conversion, so downstream translate/modify/merge stages may continue.
+    """
+    video_files = scan_video_files([target])
+    if not video_files:
+        return False
+    try:
+        plan, notes = plan_mkv_subtitle_extraction(video_files)
+    except CliError as e:
+        print("\nOnline fetch did not succeed, and embedded subtitle extraction is unavailable.")
+        print(f"  {e}")
+        return False
+    if not plan:
+        print("\nOnline fetch did not succeed, and no extractable embedded text subtitles were found.")
+        for note in notes[:10]:
+            print(f"  - {note}")
+        return False
+
+    print("\nOnline fetch did not succeed for this local video/folder.")
+    print(
+        "Embedded text subtitles were found in the MKV/video file(s): "
+        f"{_embedded_subtitle_lang_summary(plan)}."
+    )
+    print("These can be extracted and used as translation/merge source subtitles.")
+    for video, stream_index, lang, codec, dest in plan[:12]:
+        print(f"  - {video.name} stream {stream_index} ({lang}, {codec}) -> {dest.name}")
+    if len(plan) > 12:
+        print(f"  ... and {len(plan) - 12} more")
+    if notes:
+        print("  Notes:")
+        for note in notes[:8]:
+            print(f"    - {note}")
+
+    if sys.stdin.isatty():
+        answer = input("\nExtract embedded subtitles now and continue? [Y/n] ").strip().lower()
+        if answer in {"n", "no"}:
+            print("Embedded subtitle extraction skipped.")
+            return False
+    else:
+        print("\nRun this to extract embedded subtitles manually:")
+        print(f"  getsubtitle modify {shlex.quote(str(target))} --extract-mkv-subs")
+        return False
+
+    written, skipped, errors = extract_mkv_subtitle_plan(plan, force=force)
+    available = [dest for *_rest, dest in plan if dest.exists()]
+    converted: list[Path] = []
+    srt_sources: list[Path] = []
+    for path in sorted(set([*written, *skipped, *available])):
+        srt_path, was_written = convert_text_subtitle_to_srt_file(path, force=force)
+        if srt_path is not None:
+            srt_sources.append(srt_path)
+            if was_written:
+                converted.append(srt_path)
+
+    if errors:
+        print("\nEmbedded subtitle extraction errors:")
+        for msg in errors[:10]:
+            print(f"  - {msg}")
+    print("\nEmbedded subtitle fallback:")
+    print(f"  extracted: {len(written)} file(s)")
+    if skipped:
+        print(f"  already existed: {len(skipped)} file(s)")
+    if converted:
+        print(f"  converted to SRT for translation: {len(converted)} file(s)")
+    if srt_sources:
+        print("  SRT source files now available:")
+        for path in srt_sources[:8]:
+            print(f"    - {path.name}")
+        if len(srt_sources) > 8:
+            print(f"    ... and {len(srt_sources) - 8} more")
+        return True
+    print("  No SRT source files became available; downstream translation may still have no source.")
+    return False
 
 
 def modify_main(argv: list[str]) -> int:
@@ -8301,6 +8575,24 @@ def detect_show_and_season(folder: "Path", root: "Path") -> tuple["Path", int | 
     return folder, None
 
 
+def detect_show_and_season_for_video_file(video: "Path") -> tuple["Path", int | None]:
+    """Infer show/season for one explicit video file path.
+
+    Handles Plex-style `Show/Season 01/Episode.mkv` by using the parent show
+    folder as the title. Falls back to the containing folder for flat layouts.
+    """
+    folder = video.parent
+    season = parse_season_from_folder_name(folder.name)
+    if season is not None and folder.parent.exists():
+        return folder.parent, season
+    parsed = parse_episode_marker(video.name)
+    if parsed is not None:
+        parsed_season, _episode = parsed
+        if parsed_season > 0:
+            return folder, parsed_season
+    return folder, None
+
+
 def _batch_find_video_folders(root: "Path") -> list["Path"]:
     """Return SUB-folders under root that directly contain video files.
 
@@ -8323,6 +8615,13 @@ def _batch_find_bare_video_files(root: "Path") -> list["Path"]:
     return sorted(
         p for p in root.iterdir()
         if p.is_file() and p.suffix.lower() in _BATCH_VIDEO_EXTS
+    )
+
+
+def _directory_has_direct_video_files(root: "Path") -> bool:
+    return root.is_dir() and any(
+        p.is_file() and p.suffix.lower() in _BATCH_VIDEO_EXTS
+        for p in root.iterdir()
     )
 
 
@@ -8359,6 +8658,24 @@ _BATCH_FETCH_LANGS = {
     "en": ["es", "ko"],    # EN master → fetch Spanish + Korean
 }
 _BATCH_MT_SOURCE = {"ja": "ja", "ko": "ko", "en": "en"}
+
+
+def _batch_fetch_langs_from_rest(rest: list[str]) -> list[str] | None:
+    """Return explicit -l/--languages from fetch PATH residual args.
+
+    PATH fetch has an older profile mode where languages are chosen from
+    `_BATCH_FETCH_LANGS`. Pipeline/wizard calls pass `--languages` explicitly;
+    that user choice must override profile defaults.
+    """
+    for i, tok in enumerate(rest):
+        if tok in ("-l", "--langs", "--lang", "--languages") and i + 1 < len(rest):
+            langs = split_csv(rest[i + 1], "")
+            return langs or None
+        for flag in ("--langs=", "--lang=", "--languages="):
+            if tok.startswith(flag):
+                langs = split_csv(tok.split("=", 1)[1], "")
+                return langs or None
+    return None
 
 
 def build_fetch_parser() -> argparse.ArgumentParser:
@@ -8452,37 +8769,51 @@ def fetch_main(argv: list[str]) -> int:
     mode = "DRY RUN (no writes)" if dry_run else "LIVE"
     print(f"fetch — root: {target_path}")
     print(f"mode: {mode}")
+    requested_langs = _batch_fetch_langs_from_rest(rest)
+
     if args.profile:
         print(f"profile override: {args.profile}")
+    if requested_langs:
+        print(f"requested languages: {','.join(requested_langs)}")
     elif not get_provider_api_key("tmdb"):
         print("note: no TMDB key — profile detection falls back to char-set heuristics.")
         print("      Set one with: getsubtitle --set-key tmdb")
 
     total_targets = 0
+    rc_total = 0
     for show in roots:
         # Each `show` is one show folder (or one bare file). Walk inside
         # to find video-bearing folders / loose files; reuse the batch
         # walker since it already handles Plex Season subdirs.
         if show.is_dir():
-            targets = _batch_walk_targets(show)
+            if _directory_has_direct_video_files(show):
+                show_folder, season = detect_show_and_season_for_video_file(
+                    next(p for p in show.iterdir() if p.is_file() and p.suffix.lower() in _BATCH_VIDEO_EXTS)
+                )
+                targets = [(show, show_folder, season)]
+            else:
+                targets = _batch_walk_targets(show)
             if not targets:
                 # No video files found anywhere inside — treat the show
                 # folder itself as the target (user may want to download
                 # before videos exist).
                 targets = [(show, show, None)]
         else:
-            targets = [(show, show, None)]
+            show_folder, season = detect_show_and_season_for_video_file(show)
+            targets = [(show, show_folder, season)]
         for target, show_folder, season in targets:
             profile = args.profile or detect_profile_from_title(show_folder.name)
-            _batch_fetch_one(
+            rc = _batch_fetch_one(
                 target=target, show_folder=show_folder, season=season,
                 profile=profile, dry_run=dry_run,
+                fetch_langs_override=requested_langs,
             )
+            rc_total = rc or rc_total
             total_targets += 1
 
     print()
     print(f"Processed {total_targets} target(s).")
-    return 0
+    return rc_total
 
 
 def build_merge_parser() -> argparse.ArgumentParser:
@@ -8511,7 +8842,8 @@ def _batch_describe_target(target: "Path", show_folder: "Path", season: int | No
 
 
 def _batch_fetch_one(target: "Path", show_folder: "Path", season: int | None,
-                     profile: str, dry_run: bool) -> None:
+                     profile: str, dry_run: bool,
+                     fetch_langs_override: list[str] | None = None) -> int:
     """Run fetch for one disk target (folder or bare file).
 
     Fetch-only — does NOT auto-translate. Users wanting MT to fill missing
@@ -8520,11 +8852,19 @@ def _batch_fetch_one(target: "Path", show_folder: "Path", season: int | None,
     """
     _batch_heading(_batch_describe_target(target, show_folder, season, profile))
 
-    title = show_folder.name
+    title = show_folder.stem if show_folder.is_file() else show_folder.name
     is_folder = target.is_dir()
     output_dir = target if is_folder else target.parent
 
-    fetch_langs = _BATCH_FETCH_LANGS.get(profile, _BATCH_FETCH_LANGS["en"])
+    fetch_langs = fetch_langs_override or _BATCH_FETCH_LANGS.get(profile, _BATCH_FETCH_LANGS["en"])
+    episode_arg = "all"
+    parsed_episode = parse_episode_marker(target.name) if target.is_file() else None
+    if parsed_episode is not None:
+        parsed_season, parsed_ep = parsed_episode
+        if season is None and parsed_season > 0:
+            season = parsed_season
+        if parsed_ep > 0:
+            episode_arg = str(parsed_ep)
 
     fetch_cmd = [
         sys.executable, "-m", "getsubtitle",
@@ -8532,10 +8872,15 @@ def _batch_fetch_one(target: "Path", show_folder: "Path", season: int | None,
     fetch_cmd += ["--title", title]
     if season is not None:
         fetch_cmd += ["-s", str(season)]
-    fetch_cmd += ["-e", "all", "-l", ",".join(fetch_langs),
+    fetch_cmd += ["-e", episode_arg, "-l", ",".join(fetch_langs),
                   "--layout", "flat", "-o", str(output_dir), "-y"]
-    print(f"  fetch: -l {','.join(fetch_langs)}")
-    _batch_run(fetch_cmd, dry_run=dry_run)
+    suffix = " (requested)" if fetch_langs_override else ""
+    print(f"  fetch: -l {','.join(fetch_langs)}{suffix}")
+    rc = _batch_run(fetch_cmd, dry_run=dry_run)
+    if rc and not dry_run:
+        if maybe_extract_embedded_subtitles_after_fetch_miss(target):
+            return 0
+    return rc
 
 
 def _batch_merge_one(target: "Path", show_folder: "Path", season: int | None,
@@ -9020,6 +9365,8 @@ def pipeline_main(argv: list[str]) -> int:
         # is already dry-run by default unless --run; --dry-run is harmless.
         if shared_dry_run and "--dry-run" not in sub_argv:
             sub_argv.append("--dry-run")
+        elif not _looks_like_url(fetch_target) and "--run" not in sub_argv:
+            sub_argv.append("--run")
         if (
             (has_downstream or shared_no_open_folder_prompt)
             and "--open-folder" not in sub_argv
@@ -9638,6 +9985,7 @@ _PIPELINE_CLI_OVERRIDE_MAP: dict[str, tuple[str, str]] = {
     "--source": ("fetch", "source"),
     "--season": ("fetch", "season"),
     "--episode": ("fetch", "episode"),
+    "--episode-filename-start": ("fetch", "episode_filename_start"),
     "--languages": ("fetch", "languages"),
     "--langs": ("fetch", "languages"),
     "-l": ("fetch", "languages"),
@@ -9723,6 +10071,7 @@ def _merge_overrides_into_toml(data: dict, overrides: dict, verb_blocks: dict) -
             "-s": ("season", None),
             "--episode": ("episode", None),
             "-e": ("episode", None),
+            "--episode-filename-start": ("episode_filename_start", None),
             "--languages": ("languages", None),
             "--langs": ("languages", None),
             "-l": ("languages", None),
@@ -9949,11 +10298,12 @@ def build_parser() -> argparse.ArgumentParser:
     search = p.add_argument_group("Search")
     search.add_argument("-s", "--season", default="auto", metavar="N|all", help="Season to search. Default: infer from URL/metadata when possible.")
     search.add_argument("-e", "--episode", default="auto", metavar="N|N-M|all", help="Episode to search. Accepts one episode, a range, a comma list, or all. Default: infer from URL/metadata when possible.")
+    search.add_argument("--episode-filename-start", type=int, metavar="N", help="Use N as the output filename episode number for the first searched episode. Example: search Season 3 episodes 1-12 but save as S03E25-S03E36 when a streaming page labels the season E25 onward.")
     search.add_argument("-l", "--languages", "--langs", "--lang", dest="langs", default="ja", metavar="CODES", help="Comma-separated language codes. Default: ja. Accepts ISO codes (ja,en) or full names (japanese,english). Example: ja,en,es")
     search.add_argument("--title", metavar="TEXT", help="Title override when URL metadata is missing or blocked.")
     search.add_argument("--anilist", type=int, metavar="ID", help="AniList ID override for anime.")
     search.add_argument("--browser", action="store_true", help="Open the URL in your browser first, useful for login/Cloudflare pages.")
-    search.add_argument("--manual-search", nargs="?", const="on-missing", choices=["off", "on-missing", "always"], default="on-missing", metavar="{off,on-missing,always}", help="After automatic providers miss Korean/Chinese subtitles, show community search links and offer to open them. Default: on-missing.")
+    search.add_argument("--manual-search", nargs="?", const="on-missing", choices=["off", "on-missing", "always"], default="on-missing", metavar="{off,on-missing,always}", help="After automatic providers miss Japanese/Korean/Chinese subtitles, show community search links and offer to open them. Default: on-missing.")
     search.add_argument("--no-manual-search", "--no-manual-download", dest="manual_search", action="store_const", const="off", help="Disable community search suggestions after provider misses.")
     search.add_argument("--manual-search-open", choices=["ask", "always", "never"], default="ask", metavar="{ask,always,never}", help="Whether to open manual-search links in your browser. Default: ask.")
     search.add_argument("--no-manual-search-open", dest="manual_search_open", action="store_const", const="never", help="Print manual-search links but never open browser tabs.")
@@ -9985,7 +10335,7 @@ def build_parser() -> argparse.ArgumentParser:
     learning.add_argument("--single-line", "--single", action="store_true", default=False, help="Flatten SRT cues to one text line for cleaner asbplayer display. On by default; this flag is kept as an explicit readability marker.")
     learning.add_argument("--no-single-line", "--preserve-lines", dest="single_line", action="store_false", help="Keep each downloaded SRT's original line breaks (disables the default single-line flattening).")
     learning.add_argument("-single-line", "-single", dest="single_line", action="store_true", help=argparse.SUPPRESS)
-    learning.add_argument("--strip-cc-noise", action="store_true", default=False, help="Remove broadcast closed-caption noise from downloaded SRTs (currently: Japanese continuation arrows ➡). On by default; this flag is kept as an explicit readability marker.")
+    learning.add_argument("--strip-cc-noise", action="store_true", default=False, help="Remove broadcast closed-caption noise from downloaded SRTs (Japanese ➡ continuation arrows and decorative wrappers like 《...》). On by default; this flag is kept as an explicit readability marker.")
     learning.add_argument("--no-strip-cc-noise", dest="strip_cc_noise", action="store_false", help="Keep broadcast closed-caption noise in downloaded SRTs (disables the default ➡ stripping).")
     # Deprecated aliases — kept silently so existing scripts keep working.
     learning.add_argument("--strip-cc-arrows", "--strip-arrows", "-strip-cc-noise", "-strip-cc-arrows", "-strip-arrows", dest="strip_cc_noise", action="store_true", help=argparse.SUPPRESS)
@@ -10222,7 +10572,20 @@ def build_manual_search_suggestions(
         suggestions.append(ManualSearchSuggestion(lang, label, url, note))
 
     for lang in missing_langs:
-        if lang == "ko":
+        if lang == "ja":
+            q = urllib.parse.quote_plus(title)
+            add("ja", "Jimaku web search", f"https://jimaku.cc/search?q={q}",
+                "Japanese anime subtitle community. API lookup is automatic when an AniList match exists; web search can reveal alternate titles/releases.")
+            add("ja", "Kitsunekko", "https://kitsunekko.net/dirlist.php?dir=subtitles%2Fjapanese%2F",
+                "Long-running anime subtitle archive. Browse manually by Japanese/romaji/English title.")
+            add("ja", "Google Japanese subtitle search",
+                _manual_search_google_url(f'{title} 日本語字幕 srt OR ass OR vtt'),
+                "Broad web search using Japanese subtitle keywords and alternate release formats.")
+            if len(terms) > 1:
+                add("ja", "Google alternate-title JP search",
+                    _manual_search_google_url(" OR ".join(f'"{term}"' for term in terms[:3]) + " 日本語字幕"),
+                    "Tries localized/English/romaji titles together.")
+        elif lang == "ko":
             q = title
             add("ko", "GOM Lab", "https://www.gomlab.com/en/subtitle-home",
                 "Korean-focused archive; often SMI. Complete any ad/login step manually.")
@@ -10257,7 +10620,7 @@ def missing_languages_for_manual_search(
     found = {(r.language, r.episode) for r in results if r.status == "found"}
     missing: list[str] = []
     for lang in requested_langs:
-        if lang not in {"ko", "zh"}:
+        if lang not in {"ja", "ko", "zh"}:
             continue
         if any((lang, ep) not in found for ep in episodes):
             missing.append(lang)
@@ -10352,7 +10715,7 @@ def print_missing_subtitle_next_steps(
         more = f" (+{len(eps) - 8} more)" if len(eps) > 8 else ""
         print(f"  - {lang}: missing {len(eps)}/{len(episodes)} episode(s): {shown}{more}")
     print("  Try:")
-    if any(lang in {"ko", "zh", "yue"} for lang in missing_by_lang):
+    if any(lang in {"ja", "ko", "zh", "yue"} for lang in missing_by_lang):
         print("  1. Open community search suggestions with `--manual-search-open always`.")
     else:
         print("  1. Re-run with `--debug-providers` to inspect provider language/source tags.")
@@ -10513,7 +10876,7 @@ BUILTIN_CONFIG_DEFAULTS: dict[str, dict[str, object]] = {
         "languages": "ja",
         "release_source": "auto",
         # Community-search helper after automatic providers miss. The helper
-        # prints likely Korean/Chinese sites and can open browser searches.
+        # prints likely Japanese/Korean/Chinese sites and can open browser searches.
         "manual_search": "on-missing",      # off | on-missing | always
         "manual_search_open": "ask",        # ask | always | never
     },
@@ -10917,7 +11280,7 @@ auto_unload = true                # free model from RAM/VRAM after MT
 
 [modify]
 single_line = true                # asbplayer-friendly one-line cues
-strip_cc_noise = true             # remove broadcast ➡ continuation arrows
+strip_cc_noise = true             # remove broadcast ➡ arrows and 《...》 wrappers
 reading = "ja:hiragana"           # e.g. ja:hiragana, ko:revised, zh:marks
 reading_format = "srt"            # srt | ass | vtt | all
 
@@ -12448,6 +12811,8 @@ Engines:
                            `ollama serve` is a foreground fallback for a
                            separate terminal.
   deepl                    Online translation. Requires DEEPL_API_KEY
+                           After a DeepL run, getsubtitle prints character
+                           usage for the current billing period.
 
 Translation options:
   -s, --season N|all       (translate subcommand) season filter
@@ -12518,7 +12883,7 @@ Operations (run in this order; pick at least one):
                              SAMI Class attributes (KRCC, ENCC, JPCC, ...) map
                              to ko/en/ja/etc.; unknown classes default to ko.
                              Encoding is auto-detected (UTF-8/UTF-16/CP949).
-  --strip-cc-noise         Remove broadcast CC noise (➡ continuation arrows)
+  --strip-cc-noise         Remove broadcast CC noise (➡ arrows, 《...》 wrappers)
                            in place. Idempotent.
   --extract-mkv-subs       Extract embedded text subtitles from MKV/video
                            files with local ffprobe + ffmpeg. Image subtitle
@@ -12724,14 +13089,18 @@ Fetch options:
   -l, --langs CODES        Languages to download. Default: ja
   -s, --season N|all       Season number. If omitted, infer when possible
   -e, --episode N|N-M|all  Episode, range, list, or all
+  --episode-filename-start N
+                           Shift output filenames only. Example: search
+                           Season 3 episodes 1-12 but save as S03E25-S03E36
+                           when the streaming page labels the season E25 onward.
   -o, --output DIR         Output folder. Default: ~/Downloads/GetSubtitle
   --layout MODE            archive, flat, or plex. Default: archive
   --title TEXT             Title override when URL metadata is missing
   --anilist ID             AniList ID override for anime
   --browser                Open URL first for login/Cloudflare pages
   --manual-search MODE     off | on-missing | always. Default: on-missing.
-                           When Korean/Chinese subtitles are missing after
-                           normal providers, print likely community searches.
+                           When Japanese/Korean/Chinese subtitles are missing
+                           after normal providers, print likely community searches.
   --manual-search-open MODE
                            ask | always | never. Default: ask. Opens multiple
                            browser tabs for the manual-search links.
@@ -12850,6 +13219,8 @@ Top-level CLI overrides (layered onto the --config TOML):
   --format X        overrides [output].format
   --season X        overrides [fetch].season
   --episode X       overrides [fetch].episode
+  --episode-filename-start X
+                    overrides [fetch].episode_filename_start
   -l X, --languages X  overrides [fetch].languages
   --subdirectory    overrides [fetch].subdirectory = true
   --dry-run         overrides [output].dry_run = true
@@ -12912,6 +13283,7 @@ Pipeline TOML schema (sections in execution order):
   subdirectory = true              # walk immediate subdirs (PATH only)
   season = "1-2"                   # range OK; also `seasons = ...`
   episode = "all"                  # also `episodes = ...`
+  episode_filename_start = "25"    # optional: search E1 but save as E25
   languages = "japanese,english,korean"
                                    # full names normalize to ja,en,ko;
                                    # alias keys: `langs`, `language`
@@ -12987,6 +13359,7 @@ plus a saveable workflow file before letting you pick a final action.
 You answer each menu by NUMBER (1/2/3…); only free-text fields take typed
 text (languages, paths, URL, title, season/episode). Headings are numbered
 contiguously from what you picked, so a subset run has no gaps.
+Type 'back' at any prompt to return to the previous visible step.
 
 What it asks (only the questions relevant to your step choice appear):
   • Which steps to run — fetch / translate / modify / merge.
@@ -13003,11 +13376,11 @@ What it asks (only the questions relevant to your step choice appear):
       (title search picks among TMDB + AniList candidates, with 'r' to
        re-enter a different title. Path input strips wrapping single/
        double quotes — Finder / GNOME Files / Konsole drag-drop works.)
-  • Languages to collect (comma list: ja,en,ko,es,…).
   • Episode scope (URL/title, TV only): movie / season+episode / all /
       auto. Skipped for movies (TMDB /movie/, AniList format=MOVIE,
       single-episode SPECIAL/OVA/ONA) and when the source filename
       already encodes SxxExx.
+  • Languages to collect (comma list: ja,en,ko,es,…).
   • AI translation engine: skip / argos / ollama / deepl. Only when
       translate is selected.
   • Reading aids — phonetic guides for the original script. Option 1 is
@@ -13069,6 +13442,8 @@ Limitations:
     re-run once the backend lands.
 
 Tips:
+  - Type 'back' / 'prev' / 'previous' at any prompt to revisit the
+    previous visible step.
   - Press 'q' at any prompt to quit; answers are auto-saved to
     ~/.cache/getsubtitle/wizard-draft.toml so you can resume later.
   - Movie filenames are flattened to <Title>/<Title>.<lang>.srt
@@ -13099,7 +13474,7 @@ Experimental providers:
 
 Output / cleanup:
   --layout MODE            archive, flat, plex
-  --strip-cc-noise         Remove broadcast closed-caption noise (currently: ➡)
+  --strip-cc-noise         Remove broadcast closed-caption noise (➡, 《...》)
   --single-line            Flatten SRT cues to one line
 
 Compatibility aliases (still accepted):
@@ -13315,6 +13690,17 @@ class _WizardAbort(Exception):
     """Raised when the user explicitly bails out (Ctrl-C / `q`)."""
 
 
+class _WizardBack(Exception):
+    """Raised when the user asks to return to the previous wizard step."""
+
+
+_WIZARD_BACK_NAV_ACTIVE = False
+
+
+def _wizard_back_nav_active() -> bool:
+    return bool(globals().get("_WIZARD_BACK_NAV_ACTIVE", False))
+
+
 def _wizard_is_interactive() -> bool:
     """True iff both stdin and stdout are a terminal. The wizard cannot
     run in a pipeline because every question is a blocking prompt."""
@@ -13332,7 +13718,10 @@ def _wizard_prompt(question: str, default: str | None = None, *, choices: list[s
     free-form input on top of suggestions)."""
     suffix = ""
     if default is not None:
-        suffix = f" [{default}]"
+        back_hint = " | back/q" if _wizard_back_nav_active() else ""
+        suffix = f" [{default}{back_hint}]"
+    elif _wizard_back_nav_active():
+        suffix = " [back/q]"
     while True:
         try:
             raw = input(f"  {question}{suffix} > ").strip()
@@ -13340,15 +13729,20 @@ def _wizard_prompt(question: str, default: str | None = None, *, choices: list[s
             raise _WizardAbort("stdin closed") from e
         if not raw and default is not None:
             return default
-        if raw.lower() in ("q", "quit", "exit"):
+        low = raw.lower()
+        if low in ("q", "quit", "exit"):
             raise _WizardAbort("user quit")
+        if _wizard_back_nav_active() and low in ("back", "prev", "previous"):
+            raise _WizardBack()
         if raw:
             return raw
-        print("    (empty answer; please enter something, or 'q' to quit)")
+        print("    (empty answer; please enter something, 'back' to go back, or 'q' to quit)")
 
 
 def _wizard_yesno(question: str, default: bool = True) -> bool:
     suffix = "[Y/n]" if default else "[y/N]"
+    if _wizard_back_nav_active():
+        suffix = suffix[:-1] + " | back]"
     while True:
         try:
             ans = input(f"  {question} {suffix} > ").strip().lower()
@@ -13356,6 +13750,8 @@ def _wizard_yesno(question: str, default: bool = True) -> bool:
             raise _WizardAbort("stdin closed") from e
         if ans in ("q", "quit", "exit"):
             raise _WizardAbort("user quit")
+        if _wizard_back_nav_active() and ans in ("back", "prev", "previous"):
+            raise _WizardBack()
         if not ans:
             return default
         if ans in ("y", "yes"):
@@ -13403,6 +13799,7 @@ class _WizardState:
     master: str = ""                       # Q4: "" | lang code | "auto"
     season: str = ""                       # Q5
     episode: str = ""                      # Q5
+    episode_filename_start: str = ""       # optional: first episode number to use in filenames
     mt_engine: str = ""                    # Q6: "" | argos | ollama | deepl
     reading_aids: list[str] = field(default_factory=list)     # Q7: spec entries
     asbplayer: bool = False                # Q8
@@ -13666,6 +14063,7 @@ def _wizard_qcount_before(state: _WizardState, target_label: str) -> int:
     re-asked heading keeps its forward-pass number."""
     skip = {
         "scope":        "fetch" not in state.steps,
+        "filename_numbering": not _wizard_should_ask_filename_numbering(state),
         "translate":    "translate" not in state.steps,
         "reading_aids": "modify" not in state.steps,
     }
@@ -14075,6 +14473,8 @@ def _wizard_q5_scope(state: _WizardState) -> None:
         else:
             print(f"{scope_q} Episode scope already selected: episode {state.episode}")
         return
+    parsed_source = urllib.parse.urlparse(state.source or "")
+    is_crunchyroll = "crunchyroll.com" in parsed_source.netloc.lower()
     print()
     print(f"{_wizard_next_q(state)} What episode scope?")
     print("    1) Movie / single item (no season/episode)")
@@ -14083,13 +14483,17 @@ def _wizard_q5_scope(state: _WizardState) -> None:
     print("    4) Auto — let getsubtitle infer from the URL/title metadata")
     print("       (anime URLs typically resolve to single episodes; movies to a")
     print("        single item; TV without -e usually picks S01E01)")
-    pick = _wizard_prompt("Number", "4").strip()
+    if is_crunchyroll:
+        print()
+        print("    Crunchyroll may display Season 3 as E25-E37, but subtitle")
+        print("    sources usually search that as Season 3 episodes 1-13.")
+    pick = _wizard_prompt("Number", "2" if is_crunchyroll else "4").strip()
     if pick == "1":
         state.season = ""
         state.episode = ""
     elif pick == "2":
-        state.season = _wizard_prompt("Season (e.g. 1 or 1-3)", "1")
-        state.episode = _wizard_prompt("Episode (e.g. 1 or 3-5)", "1")
+        state.season = _wizard_prompt("Season or range (e.g. 1, 2-3, all)", "1")
+        state.episode = _wizard_prompt("Episode or range within each season (e.g. 5, 1-10, all)", "1")
     elif pick == "3":
         state.season = _wizard_prompt("Season (e.g. 1)", "1")
         state.episode = "all"
@@ -14100,9 +14504,58 @@ def _wizard_q5_scope(state: _WizardState) -> None:
         ):
             print("    (Note: -e all on non-anime TV requires a TMDB key. "
                   "Run `getsubtitle --set-key tmdb` later if needed.)")
+    elif pick == "4" and is_crunchyroll:
+        print("    Crunchyroll auto cannot reliably infer the visible season.")
+        print("    Enter the season and episode numbers used by subtitle sources.")
+        state.season = _wizard_prompt("Season or range (e.g. 1, 2-3, all)", "1")
+        state.episode = _wizard_prompt("Episode or range within each season (e.g. 5, 1-10, all)", "1")
     else:
         state.season = ""
         state.episode = ""
+
+
+def _wizard_should_ask_filename_numbering(state: _WizardState) -> bool:
+    if "fetch" not in state.steps:
+        return False
+    if state.source_kind not in ("url", "title"):
+        return False
+    if not state.season or not str(state.season).isdigit():
+        return False
+    if int(state.season) <= 1:
+        return False
+    if not state.episode or state.episode in {"auto"}:
+        return False
+    return True
+
+
+def _wizard_q5_filename_numbering(state: _WizardState) -> None:
+    if not _wizard_should_ask_filename_numbering(state):
+        state.episode_filename_start = ""
+        return
+    print()
+    print(f"{_wizard_next_q(state)} How should episode numbers appear in output filenames?")
+    print(f"    You are searching Season {state.season} episode(s): {state.episode}.")
+    print("    Some streaming pages continue numbering across seasons, while")
+    print("    subtitle sources often restart from episode 1 inside each season.")
+    print()
+    print("    1) Start filenames at E1 for this season")
+    print(f"       Example: S{int(state.season):02d}E01, S{int(state.season):02d}E02, ...")
+    print("    2) Match the episode numbers shown on the streaming page")
+    print(f"       Example: S{int(state.season):02d}E25, S{int(state.season):02d}E26, ...")
+    pick = _wizard_prompt("Number", "1").strip()
+    if pick != "2":
+        state.episode_filename_start = ""
+        return
+    while True:
+        raw = _wizard_prompt("First episode number shown on the page (e.g. 25)")
+        if raw.isdigit() and int(raw) > 0:
+            state.episode_filename_start = raw
+            print(
+                f"    Output filenames will start at "
+                f"S{int(state.season):02d}E{int(raw):02d}."
+            )
+            return
+        print("    Enter a positive number, like 25.")
 
 
 def _wizard_q6_translate(state: _WizardState) -> None:
@@ -14111,7 +14564,7 @@ def _wizard_q6_translate(state: _WizardState) -> None:
     print("    1) Skip — accept the gap (no AI translation)")
     print("    2) Argos — on your computer, low quality (free)")
     print("    3) Ollama — on your computer, good quality (free; slower)")
-    print("    4) DeepL — online, best quality (free tier; needs API key)")
+    print("    4) DeepL — online, better quality (free tier; needs API key)")
     pick = _wizard_prompt("Number", "1").strip()
     state.mt_engine = {"1": "", "2": "argos", "3": "ollama", "4": "deepl"}.get(pick[:1], "")
 
@@ -14291,8 +14744,9 @@ _WIZARD_STEPS: list[tuple[str, "callable"]] = [
     # (~/Downloads/GetSubtitle for URL/title, source's parent for local paths).
     ("steps",         _wizard_q0_steps),
     ("source",        _wizard_q1_source),
-    ("languages",     _wizard_q2_languages),
     ("scope",         _wizard_q5_scope),
+    ("filename_numbering", _wizard_q5_filename_numbering),
+    ("languages",     _wizard_q2_languages),
     ("translate",     _wizard_q6_translate),
     ("reading_aids",  _wizard_q7_reading_aids),
 ]
@@ -14349,6 +14803,62 @@ def _wizard_apply_smart_defaults(state: _WizardState) -> dict[str, str]:
     return notes
 
 
+def _wizard_step_skip(label: str, state: _WizardState) -> bool:
+    skip = {
+        "scope":        "fetch" not in state.steps,
+        "filename_numbering": not _wizard_should_ask_filename_numbering(state),
+        "translate":    "translate" not in state.steps,
+        "reading_aids": "modify" not in state.steps,
+    }
+    return skip.get(label, False)
+
+
+def _wizard_step_prefilled(label: str, state: _WizardState) -> bool:
+    prefilled = {
+        "languages": bool(state.languages),
+        "filename_numbering": bool(state.episode_filename_start),
+        "translate": state.mt_engine != "",
+        "reading_aids": bool(state.reading_aids),
+    }
+    return prefilled.get(label, False)
+
+
+def _wizard_clear_step_answer(state: _WizardState, label: str) -> None:
+    """Clear the answer owned by one wizard step before re-asking it."""
+    if label == "steps":
+        state.steps = {"fetch", "modify", "merge"}
+        state.convert_smi = False
+    elif label == "source":
+        state.source = ""
+        state.source_title = ""
+        state.source_kind = ""
+        state.is_movie = False
+        state.convert_smi = False
+        state.season = ""
+        state.episode = ""
+        state.episode_filename_start = ""
+        state.output = ""
+    elif label == "languages":
+        state.languages = []
+        state.order = []
+        state.master = ""
+        state.reading_aids = []
+        state.format = ""
+    elif label == "scope":
+        state.season = ""
+        state.episode = ""
+        state.episode_filename_start = ""
+    elif label == "filename_numbering":
+        state.episode_filename_start = ""
+    elif label == "translate":
+        state.mt_engine = ""
+    elif label == "reading_aids":
+        state.reading_aids = []
+        state.format = ""
+    if hasattr(state, "_smart_defaults_notes"):
+        state._smart_defaults_notes = {}
+
+
 def _run_wizard(state: _WizardState | None = None) -> tuple[_WizardState, str]:
     """Run Q1-Q11, then loop on Q12 until a final action is chosen.
     Returns (state, final_action). Caller owns dispatching the action.
@@ -14357,29 +14867,52 @@ def _run_wizard(state: _WizardState | None = None) -> tuple[_WizardState, str]:
     matching question — we don't ask Q3 if `state.languages` is already
     populated. The user can still revisit any answer via Q12's edit loop."""
     state = state or _WizardState()
+    previous_back_nav = _wizard_back_nav_active()
+    globals()["_WIZARD_BACK_NAV_ACTIVE"] = True
+    try:
+        return _run_wizard_with_back_nav(state)
+    finally:
+        globals()["_WIZARD_BACK_NAV_ACTIVE"] = previous_back_nav
+
+
+def _run_wizard_with_back_nav(state: _WizardState) -> tuple[_WizardState, str]:
+    """Implementation for _run_wizard while prompt-level back navigation is active."""
     # Reset the contiguous question counter for this forward pass so the
     # printed headings number 1..N with no gaps (see _wizard_next_q).
     state._qcount = 0
-    for label, fn in _WIZARD_STEPS:
+    step_index = 0
+    visible_history: list[str] = []
+    while step_index < len(_WIZARD_STEPS):
+        label, fn = _WIZARD_STEPS[step_index]
+        # Step gating: skip Qs whose verb isn't in state.steps.
+        if _wizard_step_skip(label, state):
+            step_index += 1
+            continue
         # Skip pre-answered questions so resume / setup-profile pre-fill
         # actually saves keystrokes.
-        prefilled = {
-            "languages": bool(state.languages),
-            "translate": state.mt_engine != "",
-            "reading_aids": bool(state.reading_aids),
-        }
-        if prefilled.get(label, False):
+        if _wizard_step_prefilled(label, state):
+            step_index += 1
             continue
-        # Step gating: skip Qs whose verb isn't in state.steps.
-        skip = {
-            "scope":        "fetch" not in state.steps,
-            "translate":    "translate" not in state.steps,
-            "reading_aids": "modify" not in state.steps,
-        }
-        if skip.get(label, False):
+        try:
+            fn(state)
+        except _WizardBack:
+            if not visible_history:
+                print("    Already at the first step.")
+                state._qcount = _wizard_qcount_before(state, label)
+                continue
+            previous_label = visible_history.pop()
+            _wizard_clear_step_answer(state, previous_label)
+            step_index = next(
+                (i for i, (candidate, _fn) in enumerate(_WIZARD_STEPS)
+                 if candidate == previous_label),
+                0,
+            )
+            state._qcount = _wizard_qcount_before(state, previous_label)
+            print("    Going back to the previous step.")
             continue
-        fn(state)
         _wizard_save_draft(state)
+        visible_history.append(label)
+        step_index += 1
     # Five questions the wizard no longer asks (display order, master
     # timing, cleanup preset, output format, output folder) are now
     # filled in here. The returned notes are surfaced in the Q-banner
@@ -14387,7 +14920,49 @@ def _run_wizard(state: _WizardState | None = None) -> tuple[_WizardState, str]:
     state._smart_defaults_notes = _wizard_apply_smart_defaults(state)
     _wizard_save_draft(state)
     while True:
-        action = _wizard_q11_action(state)
+        try:
+            action = _wizard_q11_action(state)
+        except _WizardBack:
+            if not visible_history:
+                print("    Already at the first step.")
+                continue
+            previous_label = visible_history.pop()
+            _wizard_clear_step_answer(state, previous_label)
+            step_index = next(
+                (i for i, (candidate, _fn) in enumerate(_WIZARD_STEPS)
+                 if candidate == previous_label),
+                0,
+            )
+            state._qcount = _wizard_qcount_before(state, previous_label)
+            print("    Going back to the previous step.")
+            while step_index < len(_WIZARD_STEPS):
+                label, fn = _WIZARD_STEPS[step_index]
+                if _wizard_step_skip(label, state) or _wizard_step_prefilled(label, state):
+                    step_index += 1
+                    continue
+                try:
+                    fn(state)
+                except _WizardBack:
+                    if not visible_history:
+                        print("    Already at the first step.")
+                        state._qcount = _wizard_qcount_before(state, label)
+                        continue
+                    previous_label = visible_history.pop()
+                    _wizard_clear_step_answer(state, previous_label)
+                    step_index = next(
+                        (i for i, (candidate, _fn) in enumerate(_WIZARD_STEPS)
+                         if candidate == previous_label),
+                        0,
+                    )
+                    state._qcount = _wizard_qcount_before(state, previous_label)
+                    print("    Going back to the previous step.")
+                    continue
+                _wizard_save_draft(state)
+                visible_history.append(label)
+                step_index += 1
+            state._smart_defaults_notes = _wizard_apply_smart_defaults(state)
+            _wizard_save_draft(state)
+            continue
         if action == "restart":
             # Confirm — 10+ answers is a lot to throw away by mistyping 'd'.
             if not _wizard_yesno(
@@ -14527,6 +15102,8 @@ def _wizard_emit_cli(state: _WizardState) -> list[str]:
             argv += ["--season", state.season]
         if state.source_kind in ("url", "title") and state.episode:
             argv += ["--episode", state.episode]
+        if state.source_kind in ("url", "title") and state.episode_filename_start:
+            argv += ["--episode-filename-start", state.episode_filename_start]
     else:
         argv += ["--source", state.source]
     if state.languages and "fetch" in steps:
@@ -14668,6 +15245,8 @@ def _wizard_emit_toml(state: _WizardState) -> str:
                 lines.append(f'season = "{state.season}"')
             if state.episode:
                 lines.append(f'episode = "{state.episode}"')
+            if state.episode_filename_start:
+                lines.append(f'episode_filename_start = "{state.episode_filename_start}"')
         if state.languages:
             lines.append(f'languages = "{",".join(state.languages)}"')
         if not state.mt_engine and state.source_kind in ("url", "title"):
@@ -14948,8 +15527,8 @@ getsubtitle — interactive workflow builder
 
 I'll ask a few short questions, then show you the equivalent terminal
 command and a reusable workflow file. You can save the workflow for
-later, run it now, or edit a single answer. Press 'q' at any prompt
-to quit, or Ctrl-C to bail.
+later, run it now, or edit a single answer. Type 'back' to return to
+the previous step, 'q' to quit, or Ctrl-C to bail.
 """
 
 
@@ -15212,6 +15791,8 @@ def main(argv: list[str] | None = None) -> int:
             input("Browser opened. After the page loads or you identify the show, press Enter to continue...")
         else:
             print("Browser opened. Continuing without waiting because stdin is not interactive.")
+    if args.episode_filename_start is not None and args.episode_filename_start < 1:
+        raise CliError("--episode-filename-start must be a positive integer.")
     langs = split_csv(args.langs, "ja")
     media = infer_media(args.url)
     # User-supplied -s wins; otherwise keep any season the URL inferred
@@ -15577,6 +16158,7 @@ def main(argv: list[str] | None = None) -> int:
         media=media,
         season=media.season,
         layout=args.layout,
+        episode_filename_start=args.episode_filename_start,
     )
 
     if download_failures:
@@ -15732,6 +16314,8 @@ def main(argv: list[str] | None = None) -> int:
             if released:
                 uniq = sorted(set(released))
                 print(f"Unloaded Ollama model(s) from memory: {', '.join(uniq)}")
+        if args.mt_engine == "deepl" and translator_cache:
+            print_deepl_usage_summary(translator_cache.values())
         restore_mt_model_pair_overrides(pair_model_previous)
 
     generated: list[Path] = []

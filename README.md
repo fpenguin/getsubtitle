@@ -118,7 +118,7 @@ For machine translation, `--mt-source "es:fr|en"` reads as "make
 Spanish from French first, English as fallback". Ollama users can
 pin a per-pair model: `--mt-model-pair ja:ko=qwen3:4b`.
 
-When Korean or Chinese subtitles are missing, fetch prints community
+When Japanese, Korean, or Chinese subtitles are missing, fetch prints community
 search suggestions and can open the likely sources in your browser.
 Toggle with `--manual-search off|on-missing|always`.
 
@@ -366,6 +366,9 @@ GetSubtitle searches public community databases (Jimaku, Wyzie,
 optionally Subdivx and Addic7ed). It does **not** bypass DRM, account
 login, or region locks. Don't redistribute downloaded subtitles in
 violation of their original license.
+
+For local MKV files, GetSubtitle can extract embedded text subtitle
+tracks you already have and use them as translation/merge sources.
 
 ## License
 

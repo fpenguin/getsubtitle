@@ -3,8 +3,8 @@ getsubtitle — interactive workflow builder
 
 I'll ask a few short questions, then show you the equivalent terminal
 command and a reusable workflow file. You can save the workflow for
-later, run it now, or edit a single answer. Press 'q' at any prompt
-to quit, or Ctrl-C to bail.
+later, run it now, or edit a single answer. Type 'back' to return to
+the previous step, 'q' to quit, or Ctrl-C to bail.
 
 
 Q1. What do you want getsubtitle to do?
@@ -16,20 +16,20 @@ Q1. What do you want getsubtitle to do?
     Default: fetch + modify + merge (no AI translation).
     Common shortcuts: '4' for merge-only, '3' for modify-only,
     '2' for AI-translation-only, '3,4' for modify + merge.
-  Numbers (comma-separated), 'a' for all, or Enter for default [1,3,4] > 3
+  Numbers (comma-separated), 'a' for all, or Enter for default [1,3,4 | back/q] > 3
     Selected: modify.
 
 Q2. Folder or file to process.
     Drop a folder of .srt files, a single .srt file, or any path
     your selected step(s) should operate on.
-  Folder or file path > {TMP}/Foo.ja.srt
+  Folder or file path [back/q] > {TMP}/Foo.ja.srt
     Selected episode: movie
     Identified as: local subtitle file: 0 video file(s), 1 subtitle file(s)
 
 Q3. Which subtitle languages do you want to collect?
     List them in the order you want them displayed (top → bottom).
     Examples: ja,en   ja,ko,en,es   japanese,korean,english
-  Languages (comma-separated) [ja,en] > ja
+  Languages (comma-separated) [ja,en | back/q] > ja
 
 Q4. Reading aids (phonetic guides for the original script).
     VTT renders them as ruby above the script; SRT / SMI / ASS
@@ -39,7 +39,7 @@ Q4. Reading aids (phonetic guides for the original script).
     2) Japanese — hiragana readings for kanji   [ja:hiragana]
     3) Japanese — katakana readings for kanji   [ja:katakana]
     4) Japanese — full-sentence romaji   [ja:romaji]
-  Numbers (comma-separated) [1] > 2
+  Numbers (comma-separated) [1 | back/q] > 2
 
 ======================================================================
 Smart defaults filled in for you (edit via 'Edit a single answer'):
@@ -70,7 +70,7 @@ Equivalent workflow file (save as .toml):
     3) Edit a single answer
     4) Start over from beginning
     5) Quit
-  Number [1] > 2
+  Number [1 | back/q] > 2
 
   Save to (relative paths OK) [getsubtitle-workflow.toml] > {TMP}/single-file.toml
 Saved: {TMP}/single-file.toml

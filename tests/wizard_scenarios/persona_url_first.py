@@ -17,10 +17,10 @@ SCENARIO = Scenario(
         "1,3,4",        # fetch + modify + merge
         "2",            # URL source
         "https://www.imdb.com/title/tt28299608/",
-        "ja,en",
         "2",            # Q5 scope: specific season + episode
         "1",            # season 1
         "1",            # episode 1
+        "ja,en",
         "2",            # reading aids: pick #2 = ja:hiragana
         "",             # action menu default — URL → 'b' (save)
         "{TMP}/url-first.toml",

@@ -14,8 +14,8 @@ SCENARIO = Scenario(
         "1,2,3,4",      # steps: all four (so translate Q fires)
         "2",            # Q1 source: URL
         "https://www.imdb.com/title/tt28299608/",  # URL
-        "ja,en",        # languages
         "1",            # Q5 scope: movie/single
+        "ja,en",        # languages
         "1",            # Q6 translate: Skip — accept gap
         "1",            # Q7 reading aids: skip
         "2",            # Q12 action: save (default for URL)

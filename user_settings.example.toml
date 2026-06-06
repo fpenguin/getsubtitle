@@ -90,9 +90,10 @@ languages = "ja"
 # Default: "auto"
 release_source = "auto"
 
-# When automatic providers miss Korean/Chinese subtitles, print likely
-# community search links (GOM/Cineaste for Korean; ASSRT/SubHD/Zimuku for
-# Chinese) and optionally open them in your browser.
+# When automatic providers miss Japanese/Korean/Chinese subtitles, print
+# likely community search links (Jimaku/Kitsunekko for Japanese,
+# GOM/Cineaste for Korean; ASSRT/SubHD/Zimuku for Chinese) and optionally
+# open them in your browser.
 # Choices: "off", "on-missing", "always"
 manual_search = "on-missing"
 
