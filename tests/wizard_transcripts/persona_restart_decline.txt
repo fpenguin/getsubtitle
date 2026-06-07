@@ -31,7 +31,11 @@ Q2. Folder or file to process.
 
 Q3. Which subtitle languages do you want to collect?
     List them in the order you want them displayed (top → bottom).
-    Examples: ja,en   ja,ko,en,es   japanese,korean,english
+
+    Common Picks
+      ja,en : Japanese on top and English below (optional furigana support)
+      ko,en,es : Korean on top, then English and Spanish (optional romanization support)
+      japanese,korean,english,spanish : 2-letter codes and full language names both work
   Languages (comma-separated) [ja,en | b=back | q=quit] > ja,en
 
 Q4. Reading aids (phonetic guides for the original script).
@@ -44,12 +48,36 @@ Q4. Reading aids (phonetic guides for the original script).
     4) Japanese — full-sentence romaji   [ja:romaji]
   Numbers (comma-separated) [1 | b=back | q=quit] > 1
 
+Q5. Final output format.
+    Recommended: SRT — SRT is the safest general-purpose choice.
+
+    1) SRT  — most compatible; best for Plex, Smart TV, tablet apps.
+    2) ASS  — best desktop-player control for layout and font size.
+    3) VTT  — best for browser/asbplayer Japanese ruby; local players vary.
+    4) SMI  — legacy Korean SAMI; font size is usually player-controlled.
+    5) TXT  — plain text without timestamps
+  Final format [1 | b=back | q=quit] >
+
+Q6. Subtitle text size?
+    This output will usually show 2 lines at once.
+    Format: SRT
+    SRT and ASS use calibrated presets from player testing.
+    Calibrated presets: SRT smaller/regular/larger = 12/16/20px;
+    ASS smaller/regular/larger = 46/58/70.
+
+    1) Regular (16px) — recommended
+    2) Smaller (12px)
+    3) Larger (20px)
+    4) Custom — enter exact font size
+  Number [1 | b=back | q=quit] >
+
 ======================================================================
 Here's the plan:
 ======================================================================
   • Use local ja, en files in {TMP}/Show
   • Clean up cues (single line, strip broadcast noise)
   • Stack ja, en into one SRT study file
+  • Use subtitle text size regular (SRT support depends on player)
   • Save to {TMP}/Show
 ======================================================================
 Smart defaults filled in for you (edit via 'Edit a single answer'):
@@ -57,12 +85,11 @@ Smart defaults filled in for you (edit via 'Edit a single answer'):
   Display order  ja, en  (top → bottom on screen)
   Timing master  ja  (first language)
   Cleanup preset on  (single-line cues + strip broadcast noise)
-  Output format  SRT  (SRT — most compatible)
   Output folder  {TMP}/Show  (beside source)
 ======================================================================
 Based on your choice, you can try:
 ======================================================================
-  getsubtitle --source {TMP}/Show --modify --strip-cc-noise --single-line --merge --languages ja,en --format srt --output {TMP}/Show
+  getsubtitle --source {TMP}/Show --modify --strip-cc-noise --single-line --merge --languages ja,en --format srt --font-size regular --output {TMP}/Show
 ======================================================================
 Equivalent workflow file (save as .toml):
 ======================================================================
@@ -74,6 +101,7 @@ Equivalent workflow file (save as .toml):
   languages = "ja,en"
   sync = "auto"
   format = "srt"
+  font_size = "regular"
 
   [output]
   target = "{TMP}/Show"
@@ -94,6 +122,7 @@ Here's the plan:
   • Use local ja, en files in {TMP}/Show
   • Clean up cues (single line, strip broadcast noise)
   • Stack ja, en into one SRT study file
+  • Use subtitle text size regular (SRT support depends on player)
   • Save to {TMP}/Show
 ======================================================================
 Smart defaults filled in for you (edit via 'Edit a single answer'):
@@ -101,12 +130,11 @@ Smart defaults filled in for you (edit via 'Edit a single answer'):
   Display order  ja, en  (top → bottom on screen)
   Timing master  ja  (first language)
   Cleanup preset on  (single-line cues + strip broadcast noise)
-  Output format  SRT  (SRT — most compatible)
   Output folder  {TMP}/Show  (beside source)
 ======================================================================
 Based on your choice, you can try:
 ======================================================================
-  getsubtitle --source {TMP}/Show --modify --strip-cc-noise --single-line --merge --languages ja,en --format srt --output {TMP}/Show
+  getsubtitle --source {TMP}/Show --modify --strip-cc-noise --single-line --merge --languages ja,en --format srt --font-size regular --output {TMP}/Show
 ======================================================================
 Equivalent workflow file (save as .toml):
 ======================================================================
@@ -118,6 +146,7 @@ Equivalent workflow file (save as .toml):
   languages = "ja,en"
   sync = "auto"
   format = "srt"
+  font_size = "regular"
 
   [output]
   target = "{TMP}/Show"

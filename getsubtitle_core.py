@@ -118,6 +118,16 @@ LANGUAGE_ALIASES = {
     "sp": "es",
     "spa": "es",
     "spanish": "es",
+    "castilian": "es",
+    "es-es": "es",
+    "es-la": "es",
+    "es-419": "es",
+    "es-mx": "es",
+    "es-ar": "es",
+    "latam": "es",
+    "latin spanish": "es",
+    "latin american spanish": "es",
+    "mexican spanish": "es",
     # Chinese — `cn` is the country code many users reach for instinctively,
     # so accept it as a synonym for the language code `zh`.
     "cn": "zh",
@@ -170,6 +180,28 @@ LANGUAGE_TAG_VARIANTS: dict[str, tuple[str, ...]] = {
     "de": ("de", "ger", "deu", "german"),
     "pt": ("pt", "por", "portuguese", "pt-br", "pt-pt", "brazilian portuguese"),
 }
+
+
+PROVIDER_LANGUAGE_QUERY_VARIANTS: dict[str, tuple[str, ...]] = {
+    # Keep the public UX simple (`-l es`) while giving provider-side language
+    # filters a few common Spanish dialect/code spellings to try when a direct
+    # lookup misses.
+    "es": ("es", "spa", "es-419", "es-mx", "es-es"),
+}
+
+
+def provider_language_query_variants(language: str, provider: str | None = None) -> list[str]:
+    canonical = LANGUAGE_ALIASES.get((language or "").strip().lower(), (language or "").strip().lower())
+    if provider == "wyzie":
+        return [canonical] if canonical else []
+    variants = [canonical, *PROVIDER_LANGUAGE_QUERY_VARIANTS.get(canonical, ())]
+    out: list[str] = []
+    seen: set[str] = set()
+    for variant in variants:
+        if variant and variant not in seen:
+            out.append(variant)
+            seen.add(variant)
+    return out
 
 
 def lang_matches(target: str, *fields: str | None) -> bool:
@@ -417,6 +449,8 @@ def request_json(url: str, *, headers: dict[str, str] | None = None, data: dict 
         raise CliError(f"HTTP {e.code} from {redact_url(url)}: {body[:500]}") from e
     except urllib.error.URLError as e:
         raise CliError(f"Network error for {redact_url(url)}: {e.reason}") from e
+    except TimeoutError as e:
+        raise CliError(f"Network timeout for {redact_url(url)}") from e
 
 
 # ---------------------------------------------------------------------------
@@ -2244,16 +2278,19 @@ class WyzieProvider:
         # Strategy 2 (fallback): broad call returned 0 for every candidate ID,
         # so try the original per-language call across the same candidate set.
         for media_id in ids:
-            items = self._fetch(self._build_params_for_id(media_id, media, episode, language))
-            if not items:
-                continue
-            subs: list[SubtitleFile] = []
-            for item in items:
-                sub = self._make_subtitle(item, media, media_id, language)
-                if sub is not None:
-                    subs.append(sub)
-            if subs:
-                return subs
+            for query_language in provider_language_query_variants(language, provider=self.name):
+                items = self._fetch(self._build_params_for_id(media_id, media, episode, query_language))
+                if not items:
+                    continue
+                subs: list[SubtitleFile] = []
+                for item in items:
+                    if not lang_matches(language, item.get("language"), item.get("fileName"), item.get("release"), item.get("origin")):
+                        continue
+                    sub = self._make_subtitle(item, media, media_id, language)
+                    if sub is not None:
+                        subs.append(sub)
+                if subs:
+                    return subs
         return []
 
 
@@ -2286,7 +2323,10 @@ class SubDLProvider:
         # SubDL's docs show upper-case ISO-ish tags (EN, FR). Keep the user's
         # canonical code but uppercase it; provider_language is still recorded
         # from the response for diagnostics.
-        return LANGUAGE_ALIASES.get(language.lower(), language.lower()).upper()
+        text = (language or "").strip().lower()
+        if not text or " " in text:
+            text = LANGUAGE_ALIASES.get(text, text)
+        return text.upper()
 
     def _build_params_for_id(self, id_name: str, media_id: str, media: MediaInfo, episode: str, language: str) -> dict[str, str]:
         params: dict[str, str] = {
@@ -2389,18 +2429,19 @@ class SubDLProvider:
         if not ids:
             raise CliError("SubDL needs an IMDb or TMDB ID.")
         for id_name, media_id in ids:
-            items = self._fetch(self._build_params_for_id(id_name, media_id, media, episode, language))
-            if not items:
-                continue
-            subs: list[SubtitleFile] = []
-            for item in self._flatten_unpacked(items, media, episode, language):
-                if not lang_matches(language, item.get("language"), item.get("name"), item.get("release_name")):
+            for query_language in provider_language_query_variants(language, provider=self.name):
+                items = self._fetch(self._build_params_for_id(id_name, media_id, media, episode, query_language))
+                if not items:
                     continue
-                sub = self._make_subtitle(item, media, episode, language)
-                if sub is not None:
-                    subs.append(sub)
-            if subs:
-                return subs
+                subs: list[SubtitleFile] = []
+                for item in self._flatten_unpacked(items, media, episode, language):
+                    if not lang_matches(language, item.get("language"), item.get("name"), item.get("release_name")):
+                        continue
+                    sub = self._make_subtitle(item, media, episode, language)
+                    if sub is not None:
+                        subs.append(sub)
+                if subs:
+                    return subs
         return []
 
 
@@ -3780,13 +3821,107 @@ def subtitle_quality_flags(file: SubtitleFile) -> tuple[bool, bool]:
     return hi, dubbed
 
 
-def choose_best(files: list[SubtitleFile], preferred_source: str | None = None) -> SubtitleFile | None:
+TITLE_MATCH_STOPWORDS = {
+    "a", "an", "and", "as", "at", "de", "del", "der", "die", "das", "el",
+    "en", "for", "la", "las", "le", "les", "los", "of", "on", "or", "the",
+    "to", "un", "una", "und", "y",
+}
+
+
+def _title_match_tokens(text: str | None) -> set[str]:
+    if not text:
+        return set()
+    raw_tokens = re.findall(r"[a-z0-9]+", text.casefold())
+    tokens: set[str] = set()
+    for token in raw_tokens:
+        if len(token) < 3 or token in TITLE_MATCH_STOPWORDS:
+            continue
+        tokens.add(token)
+        if len(token) > 4 and token.endswith("s"):
+            tokens.add(token[:-1])
+    return tokens
+
+
+def subtitle_title_match_score(file: SubtitleFile, media: MediaInfo | None = None) -> int:
+    """Lower is better. Prefer files whose names/releases mention this title.
+
+    Providers occasionally return unrelated files under the right IMDb/TMDB ID
+    or language bucket. This scorer keeps translated/localized titles working
+    via media.title_aliases while avoiding obvious mismatches like a completely
+    different movie filename.
+    """
+    if media is None:
+        return 0
+    title_sets = [
+        _title_match_tokens(title)
+        for title in [media.title, *(media.title_aliases or [])]
+    ]
+    title_sets = [tokens for tokens in title_sets if tokens]
+    if not title_sets:
+        return 0
+    searchable_text = " ".join(
+        str(part)
+        for part in [
+            file.name,
+            file.release or "",
+            file.origin or "",
+        ]
+        if part
+    )
+    file_tokens = _title_match_tokens(searchable_text)
+    if not file_tokens:
+        return 8
+    best_overlap = max((len(tokens & file_tokens) for tokens in title_sets), default=0)
+    if best_overlap:
+        return 0
+    return 9
+
+
+def subtitle_episode_match_score(file: SubtitleFile, media: MediaInfo | None = None, episode: str | None = None) -> int:
+    if media is None:
+        return 0
+    season = str(media.season or "").strip()
+    ep = str(episode or media.episode or "").strip()
+    if not (season.isdigit() and ep.isdigit()):
+        return 0
+    ss = int(season)
+    ee = int(ep)
+    searchable = " ".join(
+        str(part)
+        for part in [file.name, file.release or "", file.origin or ""]
+        if part
+    ).casefold()
+    season_episode_patterns = [
+        rf"\bs0*{ss}e0*{ee}\b",
+        rf"\b0*{ss}x0*{ee}\b",
+        rf"\bseason[ ._-]*0*{ss}[ ._-]*episode[ ._-]*0*{ee}\b",
+    ]
+    if any(re.search(pattern, searchable) for pattern in season_episode_patterns):
+        return 0
+    # If a file explicitly names another season/episode, push it down.
+    if re.search(r"\bs\d+e\d+\b|\b\d+x\d+\b", searchable):
+        return 8
+    return 2
+
+
+def choose_best(
+    files: list[SubtitleFile],
+    preferred_source: str | None = None,
+    *,
+    media: MediaInfo | None = None,
+    episode: str | None = None,
+) -> SubtitleFile | None:
     if not files:
         return None
     preferred = [".srt", ".ass", ".vtt", ".ssa", ".zip"]
     source = preferred_source.lower() if preferred_source else None
+    title_scores = {id(file): subtitle_title_match_score(file, media) for file in files}
+    if media is not None:
+        matched = [file for file in files if title_scores[id(file)] == 0]
+        if matched:
+            files = matched
 
-    def score(file: SubtitleFile) -> tuple[int, int, int, int, int, int, str]:
+    def score(file: SubtitleFile) -> tuple[int, int, int, int, int, int, int, int, str]:
         ext = Path(file.name).suffix.lower()
         searchable = " ".join(
             part
@@ -3802,11 +3937,12 @@ def choose_best(files: list[SubtitleFile], preferred_source: str | None = None) 
         source_score = 0 if source and (source == file.release_source or source in searchable) else 1 if source else 0
         ai_score = 1 if file.ai else 0
         hi, dubbed = subtitle_quality_flags(file)
+        ep_score = subtitle_episode_match_score(file, media, episode)
         hi_score = 1 if hi else 0
         dubbed_score = 1 if dubbed else 0
         ext_score = preferred.index(ext) if ext in preferred else 99
         provider_score = 0 if file.source_provider in {"opensubtitles", "subdl", "podnapisi"} else 1
-        return source_score, ai_score, hi_score, dubbed_score, ext_score, provider_score, file.name.lower()
+        return source_score, title_scores[id(file)], ep_score, ai_score, hi_score, dubbed_score, ext_score, provider_score, file.name.lower()
 
     return sorted(files, key=score)[0]
 
@@ -4269,11 +4405,39 @@ def parse_srt(text: str) -> list[SrtCue]:
     return cues
 
 
-def serialize_srt(cues: list[SrtCue]) -> str:
+def _srt_html_font_size(font_size: int) -> int:
+    """Map our numeric subtitle-size scale to legacy SRT/HTML font sizes.
+
+    SRT has no real font-size field. Some players honor `<font size=N>` with
+    values 1..7, so this is intentionally best-effort and only used when the
+    user explicitly asks for `--font-size`.
+    """
+    # In VLC-style renderers, old HTML sizes 3/4/5 are much smaller than
+    # ASS's numeric font sizes. Start higher so SRT/SMI "regular" visually
+    # lands closer to ASS regular, while still keeping three useful buckets.
+    if font_size <= 24:
+        return 6
+    return 7
+
+
+def _apply_srt_font_size(line: str, font_size: int | str | None) -> str:
+    if font_size is None or not line.strip():
+        return line
+    if isinstance(font_size, str):
+        if font_size == "big":
+            return f"<big>{line}</big>"
+        if font_size == "font7":
+            return f'<font size="7">{line}</font>'
+        if font_size.startswith("px:"):
+            return f'<font size="{html_escape(font_size[3:])}px">{line}</font>'
+    return f'<font size="{int(font_size)}px">{line}</font>'
+
+
+def serialize_srt(cues: list[SrtCue], font_size: int | str | None = None) -> str:
     """Inverse of parse_srt. Always ends with a single trailing newline."""
     blocks: list[str] = []
     for cue in cues:
-        body = "\n".join(cue.text_lines) if cue.text_lines else ""
+        body = "\n".join(_apply_srt_font_size(line, font_size) for line in cue.text_lines) if cue.text_lines else ""
         blocks.append(f"{cue.index}\n{cue.time_line}\n{body}".rstrip())
     return "\n\n".join(blocks) + "\n"
 
@@ -4514,10 +4678,139 @@ def read_cues_from_file(
     )
 
 
-def serialize_vtt(cues: list[SrtCue]) -> str:
+def recommended_font_size_for_lines(line_count: int) -> int:
+    """Readable default for a stacked subtitle with `line_count` visible rows."""
+    if line_count <= 2:
+        return 30
+    if line_count == 3:
+        return 28
+    if line_count == 4:
+        return 24
+    return 22
+
+
+def font_size_options_for_lines(line_count: int) -> tuple[int, int, int]:
+    regular = recommended_font_size_for_lines(line_count)
+    smaller = max(8, round(regular * 0.8))
+    larger = min(96, round(regular * 1.2))
+    return regular, smaller, larger
+
+
+def resolve_font_size(value: str | int | None, line_count: int) -> int | None:
+    """Resolve --font-size / TOML / wizard value to a numeric size.
+
+    None/empty/auto means the serializer decides from the actual cue stack.
+    Named sizes are relative to the expected number of visible rows.
+    """
+    if value is None:
+        return None
+    text = str(value).strip().lower()
+    if not text or text == "auto":
+        return None
+    regular, smaller, larger = font_size_options_for_lines(line_count)
+    aliases = {
+        "regular": regular,
+        "recommended": regular,
+        "medium": regular,
+        "smaller": smaller,
+        "small": smaller,
+        "larger": larger,
+        "large": larger,
+    }
+    if text in aliases:
+        return aliases[text]
+    try:
+        size = int(text)
+    except ValueError as exc:
+        raise CliError(
+            "--font-size must be auto, regular, smaller, larger, or a number like 30."
+        ) from exc
+    if not 8 <= size <= 96:
+        raise CliError("--font-size number must be between 8 and 96.")
+    return size
+
+
+def resolve_font_size_for_format(value: str | int | None, line_count: int, fmt: str) -> int | str | None:
+    """Resolve named sizes with light format calibration.
+
+    ASS has real numeric font sizing and renders larger than SRT/SMI's old
+    HTML-size ceiling in common players. Keep custom numbers literal, but
+    make named ASS sizes smaller so "regular" is visually closer to maxed
+    SRT/SMI regular.
+    """
+    if value is None:
+        return None
+    text = str(value).strip().lower()
+    if not text or text == "auto":
+        return None
+    if fmt.lower() == "srt":
+        aliases = {
+            "smaller": "px:12",
+            "small": "px:12",
+            "regular": "px:16",
+            "recommended": "px:16",
+            "medium": "px:16",
+            "larger": "px:20",
+            "large": "px:20",
+        }
+        if text in aliases:
+            return aliases[text]
+        try:
+            size = int(text)
+        except ValueError as exc:
+            raise CliError(
+                "--font-size must be auto, regular, smaller, larger, or a number like 30."
+            ) from exc
+        if not 8 <= size <= 96:
+            raise CliError("--font-size number must be between 8 and 96.")
+        return f"px:{size}"
+    if fmt.lower() == "smi":
+        # Common players often render explicit SAMI/SRT HTML font hints much
+        # smaller than their player-default subtitle size. Prefer the default
+        # for named presets and custom values.
+        return None
+    if fmt.lower() == "ass" and text in {"regular", "recommended", "medium", "smaller", "small", "larger", "large"}:
+        aliases = {
+            "smaller": 46,
+            "small": 46,
+            "regular": 58,
+            "recommended": 58,
+            "medium": 58,
+            "larger": 70,
+            "large": 70,
+        }
+        return aliases[text]
+    return resolve_font_size(value, line_count)
+
+
+def font_size_for_cues(cues: list[SrtCue], requested: int | None = None) -> int:
+    if requested is not None:
+        return requested
+    max_lines = max((len([line for line in cue.text_lines if line.strip()]) for cue in cues), default=1)
+    return recommended_font_size_for_lines(max_lines)
+
+
+def _vtt_cues_have_ruby(cues: list[SrtCue]) -> bool:
+    return any("<rt" in line for cue in cues for line in cue.text_lines)
+
+
+def serialize_vtt(cues: list[SrtCue], font_size: int | None = None) -> str:
     """Serialize cue stack as WebVTT. Cue text is assumed already escaped or
     intentionally marked up (e.g. ruby HTML)."""
     blocks = ["WEBVTT"]
+    style_lines: list[str] = []
+    if font_size is not None:
+        # Standard WebVTT cue styling. Browsers/asbplayer may honor this;
+        # many local players ignore VTT STYLE blocks and use player settings.
+        style_lines.append(f"::cue {{ font-size: {font_size}px; }}")
+    if _vtt_cues_have_ruby(cues):
+        # Browsers/asbplayer can style the ruby-text tag itself via ::cue(rt).
+        # Local players often ignore this, but when honored it makes furigana
+        # less tiny without inflating the base subtitle line.
+        style_lines.append("::cue(rt) { font-size: 0.85em; }")
+        style_lines.append("::cue(ruby) { ruby-position: over; }")
+    if style_lines:
+        blocks.append("STYLE\n" + "\n".join(style_lines))
     for cue in cues:
         time_line = cue.time_line.replace(",", ".")
         body = "\n".join(cue.text_lines) if cue.text_lines else ""
@@ -4546,19 +4839,12 @@ def _escape_ass_text(text: str) -> str:
     return text.replace("{", r"\{").replace("}", r"\}")
 
 
-def ass_font_size_for_stack(cues: list[SrtCue]) -> int:
-    max_lines = max((len([line for line in cue.text_lines if line.strip()]) for cue in cues), default=1)
-    if max_lines >= 5:
-        return 26
-    if max_lines == 4:
-        return 30
-    if max_lines == 3:
-        return 36
-    return 42
+def ass_font_size_for_stack(cues: list[SrtCue], requested: int | None = None) -> int:
+    return font_size_for_cues(cues, requested)
 
 
-def serialize_ass(cues: list[SrtCue]) -> str:
-    font_size = ass_font_size_for_stack(cues)
+def serialize_ass(cues: list[SrtCue], font_size: int | None = None) -> str:
+    font_size = ass_font_size_for_stack(cues, font_size)
     header = (
         "[Script Info]\n"
         "ScriptType: v4.00+\n"
@@ -4594,14 +4880,21 @@ def _ms_to_smi_time(ms: int) -> str:
     return str(max(0, int(ms)))
 
 
-def serialize_smi(cues: list[SrtCue]) -> str:
+def serialize_smi(cues: list[SrtCue], font_size: int | None = None) -> str:
+    p_attrs = "Class=SUBTTL"
+    css_font_size = ""
+    html_font_size: int | None = None
+    if font_size is not None:
+        p_attrs = f'Class=SUBTTL Style="font-size:{font_size}pt"'
+        css_font_size = f" font-size:{font_size}pt;"
+        html_font_size = _srt_html_font_size(font_size)
     out: list[str] = [
         "<SAMI>",
         "<HEAD>",
         "<STYLE TYPE=\"text/css\">",
         "<!--",
         "P { margin-left:2pt; margin-right:2pt; margin-bottom:1pt; margin-top:1pt;",
-        " font-size:20pt; text-align:center; font-family:Arial, sans-serif; font-weight:normal; color:white; }",
+        f"{css_font_size} text-align:center; font-family:Arial, sans-serif; font-weight:normal; color:white; }}",
         ".SUBTTL { Name:English; lang:en-US; SAMIType:CC; }",
         "-->",
         "</STYLE>",
@@ -4611,8 +4904,12 @@ def serialize_smi(cues: list[SrtCue]) -> str:
     for cue in cues:
         start_ms, end_ms = _parse_time_line_to_ms(cue.time_line)
         text = "<br>".join(html_escape(line) for line in cue.text_lines if line.strip())
-        out.append(f"<SYNC Start={_ms_to_smi_time(start_ms)}><P Class=SUBTTL>{text}</P></SYNC>")
-        out.append(f"<SYNC Start={_ms_to_smi_time(end_ms)}><P Class=SUBTTL>&nbsp;</P></SYNC>")
+        if text and html_font_size is not None:
+            # SAMI players vary wildly: some honor CSS, some inline style,
+            # some old HTML font tags. Emit all three hints when sizing.
+            text = f'<font size="{html_font_size}">{text}</font>'
+        out.append(f"<SYNC Start={_ms_to_smi_time(start_ms)}><P {p_attrs}>{text}</P></SYNC>")
+        out.append(f"<SYNC Start={_ms_to_smi_time(end_ms)}><P {p_attrs}>&nbsp;</P></SYNC>")
     out.extend(["</BODY>", "</SAMI>"])
     return "\n".join(out) + "\n"
 
@@ -7229,6 +7526,7 @@ def build_combine_parser() -> argparse.ArgumentParser:
     p.add_argument("--master", metavar="LANG", help="Override the timing master language (default: first language in -l).")
     p.add_argument("--label-langs", dest="label_langs", action="store_true", default=None, help="Prefix each language's line in a stacked cue with [JA]/[KO]/… so tracks are easy to tell apart.")
     p.add_argument("--no-label-langs", dest="label_langs", action="store_false", help="Never label languages, even when [merge] label_langs = true is set in user_settings.toml.")
+    p.add_argument("--font-size", metavar="SIZE", help="Subtitle text size for merged outputs. Use auto, regular/recommended, smaller, larger, or a number like 30. ASS is reliable. SRT/VTT are best-effort. Calibrated presets: SRT smaller/regular/larger = 12/16/20px; ASS = 46/58/70. SMI uses player default.")
     p.add_argument("--single-line", "--single", dest="preserve_lines", action="store_false", default=argparse.SUPPRESS, help="Flatten each language to one line per cue. This is the default; kept as an explicit readability flag.")
     p.add_argument("--preserve-lines", action="store_true", default=argparse.SUPPRESS, help="Keep each source language's original line breaks. Default: flatten each language to a single line.")
     # Hidden compat aliases for the pre-reading --furigana flag; kept so old
@@ -7339,6 +7637,7 @@ def combine_main(argv: list[str]) -> int:
     langs = split_csv(args.langs, "ja,en")
     if not langs:
         raise CliError("No languages specified. Use -l ja,en or similar.")
+    font_size = resolve_font_size_for_format(args.font_size, len(langs), args.format) if getattr(args, "font_size", None) else None
     # Three-state: --label-langs (True) / --no-label-langs (False) win; when
     # neither is given (None) fall back to user_settings.toml [merge].label_langs.
     if getattr(args, "label_langs", None) is None:
@@ -7580,15 +7879,15 @@ def combine_main(argv: list[str]) -> int:
             combined = add_merged_watermarks(combined)
         dest.parent.mkdir(parents=True, exist_ok=True)
         if args.format == "vtt":
-            body = serialize_vtt(combined)
+            body = serialize_vtt(combined, font_size=font_size)
         elif args.format == "smi":
-            body = serialize_smi(combined)
+            body = serialize_smi(combined, font_size=font_size)
         elif args.format == "ass":
-            body = serialize_ass(combined)
+            body = serialize_ass(combined, font_size=font_size)
         elif args.format == "txt":
             body = serialize_txt(combined)
         else:
-            body = serialize_srt(combined)
+            body = serialize_srt(combined, font_size=font_size)
         dest.write_text(body, encoding="utf-8")
         written.append(dest)
         print(f"  {dest}")
@@ -9267,8 +9566,11 @@ def _pipeline_has_language_option(args: list[str]) -> bool:
 
 
 def _pipeline_url_fetch_output_target(fetch_target: str, fetch_options: list[str], output_root: str) -> str:
-    media = infer_media(fetch_target)
     title = _pipeline_option_value(fetch_options, "--title")
+    try:
+        media = infer_media(fetch_target)
+    except CliError:
+        media = MediaInfo(source_url=fetch_target, provider="unknown", title=title)
     if title:
         media.title = title
     elif media.anilist_id and not media.title:
@@ -10098,6 +10400,7 @@ _PIPELINE_CLI_OVERRIDE_MAP: dict[str, tuple[str, str]] = {
     "--subdirectory": ("fetch", "subdirectory"),  # boolean
     "--output": ("output", "target"),
     "--format": ("output", "format"),
+    "--font-size": ("merge", "font_size"),
     "--dry-run": ("output", "dry_run"),           # boolean
     "--force": ("output", "force"),               # boolean
 }
@@ -10227,6 +10530,7 @@ def _merge_overrides_into_toml(data: dict, overrides: dict, verb_blocks: dict) -
             "--preserve-lines": ("preserve_lines", True),
             "--label-langs": ("label_langs", True),
             "--no-label-langs": ("label_langs", False),
+            "--font-size": ("font_size", None),
         },
     }
     for verb in ("fetch", "translate", "modify", "merge"):
@@ -11106,6 +11410,7 @@ BUILTIN_CONFIG_DEFAULTS: dict[str, dict[str, object]] = {
         "sync": "auto",
         "preserve_lines": False,
         "label_langs": False,
+        "font_size": "auto",
         "priority": [],
         # Inline per-language readings (e.g. 漢字（かんじ）) into the merged
         # cue stack on the matching language line. Defaults to true so the
@@ -11371,6 +11676,14 @@ def validate_user_config(raw: dict) -> dict:
     for bk in ("preserve_lines", "reading", "watermark", "label_langs"):
         if bk in mg:
             mg_out[bk] = _validate_bool(mg[bk], f"merge.{bk}")
+    if "font_size" in mg:
+        val = mg["font_size"]
+        if not isinstance(val, (str, int)):
+            raise CliError("merge.font_size: expected auto, regular, smaller, larger, or a number")
+        # Validate early against a representative 2-line stack; named values
+        # are resolved against the actual merge order later.
+        resolve_font_size(val, 2)
+        mg_out["font_size"] = val
     if "priority" in mg:
         value = mg["priority"]
         if not (isinstance(value, list) and all(isinstance(x, str) for x in value)):
@@ -11477,6 +11790,11 @@ reading_format = "srt"            # srt | ass | vtt | all
 languages = "ja,en"
 sync = "auto"                     # auto | strict | loose
 preserve_lines = false
+font_size = "auto"                # auto | regular | smaller | larger | number
+                                  # Named sizes are format-calibrated; numbers are literal
+                                  # SRT smaller uses player default, regular uses <big>,
+                                  # larger uses 24px, custom numbers use px.
+                                  # SMI regular/larger/custom use player default.
 priority = []                     # e.g. ["ja", "en", "ko"]
 reading = "ja:hiragana"           # inline readings into merged output
 
@@ -12094,6 +12412,7 @@ def _setup_config_text(choice: _SetupChoice) -> str:
         f'languages = "{merge_langs}"',
         'sync = "auto"',
         "preserve_lines = false",
+        'font_size = "auto"',
         f'format = "{fmt}"',
     ]
     if wants_ja_ruby:
@@ -12664,6 +12983,8 @@ def _apply_combine_config_defaults(parser: argparse.ArgumentParser) -> None:
         overrides["preserve_lines"] = True
     if mg.get("watermark") is False:
         overrides["no_watermark"] = True
+    if mg.get("font_size") and str(mg["font_size"]).lower() != "auto":
+        overrides["font_size"] = mg["font_size"]
     out_cfg = cfg.get("output", {})
     if out_cfg.get("force"):
         overrides["force"] = True
@@ -13150,7 +13471,7 @@ copy-paste between this file and any workflow config. In execution order:
                   [translate.ollama_models] — per-pair model overrides +
                                               auto_load / auto_unload flags
   [modify]        single_line, strip_cc_noise, reading, reading_format
-  [merge]         languages, sync, preserve_lines, priority, reading
+  [merge]         languages, sync, preserve_lines, font_size, priority, reading
   [output]        target, layout, open_folder, force, debug_providers
   [experimental]  subdivx, addic7ed
 
@@ -13390,6 +13711,12 @@ Merge options:
   --label-langs            Prefix each language's line with [JA]/[KO]/… so
                            stacked tracks are easy to tell apart. Also
                            [merge] label_langs = true in user_settings.toml.
+  --font-size SIZE         Text size for merged outputs: auto, regular,
+                           smaller, larger, or a number like 30.
+                           ASS is reliable. SRT/VTT are best-effort.
+                           Calibrated presets: SRT smaller/regular/larger =
+                           12/16/20px; ASS = 46/58/70.
+                           SMI uses player default.
   --single-line, --single  Flatten each language to one line. Default behavior
   --preserve-lines         Keep original line breaks within each language
   --reading SPEC      Inline reading aids on the matching language line
@@ -13637,8 +13964,6 @@ revisable via Edit — these are NOT asked as questions):
   • Timing master — the first language.
   • Cleanup preset — single-line cues + strip broadcast noise (on).
       Works in any player (VLC, mpv, IINA, Infuse, asbplayer, Plex web).
-  • Output format — VTT when a ja:hiragana/furigana ruby aid is picked,
-      else SRT (most compatible).
   • Output folder — ~/Downloads/GetSubtitle for URL/title sources;
       beside the source for local paths.
 
@@ -14071,7 +14396,9 @@ class _WizardState:
     reading_aids: list[str] = field(default_factory=list)     # Q7: spec entries
     asbplayer: bool = False                # Q8
     convert_smi: bool = False              # Local modify: convert .smi before cleanup/readings
+    viewing_env: str = ""                  # desktop | browser | tv | unsure
     format: str = ""                       # Q9: srt | vtt | ass
+    font_size: str = ""                    # Merge text size: numeric string, or blank for auto
     output: str = ""                       # Q10
     final_action: str = "run"              # Q12: run | save | restart | quit | edit
     save_path: str = ""                    # Q11 sub-prompt
@@ -14961,6 +15288,7 @@ def _wizard_qcount_before(state: _WizardState, target_label: str) -> int:
         "filename_numbering": not _wizard_should_ask_filename_numbering(state),
         "translate":    "translate" not in state.steps,
         "reading_aids": "modify" not in state.steps,
+        "font_size":    not _wizard_should_ask_font_size(state),
     }
     count = 0
     for lbl, _fn in _WIZARD_STEPS:
@@ -15146,22 +15474,60 @@ def _wizard_q2_languages(state: _WizardState) -> None:
     print()
     print(f"{_wizard_next_q(state)} Which subtitle languages do you want to collect?")
     print("    List them in the order you want them displayed (top → bottom).")
-    print("    Examples: ja,en   ja,ko,en,es   japanese,korean,english")
-    raw = _wizard_prompt("Languages (comma-separated)", "ja,en")
-    parts = [p.strip().lower() for p in raw.split(",") if p.strip()]
-    if not parts:
-        raise CliError("interactive: no languages provided.")
-    # Normalise via existing language alias map. Reject unknown codes early
-    # so the user fixes typos here rather than after a 60-second probe.
-    norm: list[str] = []
-    for p in parts:
-        canon = LANGUAGE_ALIASES.get(p, p)
-        if len(canon) > 3 and canon not in LANGUAGE_ALIASES.values():
-            raise CliError(f"interactive: unrecognised language code {p!r}.")
-        norm.append(canon)
-    # de-dupe preserving order
-    seen: set[str] = set()
-    state.languages = [c for c in norm if not (c in seen or seen.add(c))]
+    print()
+    print("    Common Picks")
+    print("      ja,en : Japanese on top and English below (optional furigana support)")
+    print("      ko,en,es : Korean on top, then English and Spanish (optional romanization support)")
+    print("      japanese,korean,english,spanish : 2-letter codes and full language names both work")
+
+    while True:
+        raw = _wizard_prompt("Languages (comma-separated)", "ja,en")
+        parts = [p.strip().lower() for p in raw.split(",") if p.strip()]
+        if not parts:
+            raise CliError("interactive: no languages provided.")
+        # Normalise via existing language alias map. Reject unknown codes early
+        # so the user fixes typos here rather than after a 60-second probe.
+        norm: list[str] = []
+        for p in parts:
+            canon = LANGUAGE_ALIASES.get(p, p)
+            if len(canon) > 3 and canon not in LANGUAGE_ALIASES.values():
+                raise CliError(f"interactive: unrecognised language code {p!r}.")
+            norm.append(canon)
+        # de-dupe preserving order
+        seen: set[str] = set()
+        state.languages = [c for c in norm if not (c in seen or seen.add(c))]
+        if len(state.languages) < 5:
+            break
+        print()
+        print(f"    You selected {len(state.languages)} languages: {', '.join(state.languages)}")
+        print("    Multi-language subtitle files are usually readable with 2-4 languages.")
+        print("    5+ languages may cover the screen or become hard to read.")
+        print()
+        print("    1) Continue anyway")
+        print(f"    2) Keep only the first 4: {', '.join(state.languages[:4])}")
+        print("    3) Go back and edit languages")
+        pick = _wizard_prompt("Number", "1").strip()
+        if pick == "1":
+            break
+        if pick == "2":
+            state.languages = state.languages[:4]
+            break
+        if pick == "3":
+            continue
+        print("    Invalid selection. Type 1, 2, or 3.")
+
+    if "fetch" in state.steps and "merge" not in state.steps and len(state.languages) >= 2:
+        print()
+        print("    You selected Fetch without Merge. Fetch downloads separate subtitle files.")
+        print("    To choose a final file format/font size and create one multi-language")
+        print("    subtitle file, add the Merge step.")
+        if _wizard_yesno("Add Merge step?", default=True):
+            state.steps.add("merge")
+            label = " + ".join(s for s in _VALID_STEPS if s in state.steps)
+            print(f"    Selected: {label}.")
+        else:
+            print("    Merge skipped; format/font-size questions apply only to merged files.")
+
     reading_capable = [lang for lang in state.languages if lang in {"ja", "ko", "zh", "yue"}]
     if reading_capable and "modify" not in state.steps:
         names = {
@@ -15533,21 +15899,49 @@ def _wizard_q8_asbplayer(state: _WizardState) -> None:
     state.asbplayer = _wizard_yesno("Apply cleanup preset?", default=True)
 
 
+def _wizard_needs_japanese_ruby(state: _WizardState) -> bool:
+    return any(
+        spec.startswith("ja:hiragana") or spec.startswith("ja:furigana")
+        for spec in state.reading_aids
+    )
+
+
+def _wizard_has_non_japanese_reading_aid(state: _WizardState) -> bool:
+    return any(
+        spec.startswith(("ko:", "zh:", "yue:", "th:", "ar:", "hi:", "ru:"))
+        for spec in state.reading_aids
+    )
+
+
+def _wizard_format_recommendation(state: _WizardState) -> tuple[str, str]:
+    line_count = _wizard_expected_stack_line_count(state)
+    needs_ruby = _wizard_needs_japanese_ruby(state)
+    has_other_reading = _wizard_has_non_japanese_reading_aid(state)
+    if needs_ruby:
+        return "vtt", "Browser/asbplayer workflows are the best fit for Japanese ruby."
+    if has_other_reading or line_count >= 3:
+        return "ass", "ASS gives local desktop players the most reliable layout and font sizing."
+    return "srt", "SRT is the safest general-purpose choice."
+
+
 def _wizard_q9_format(state: _WizardState) -> None:
     needs_ruby = any(spec.startswith("ja:hiragana") or spec.startswith("ja:furigana")
                      for spec in state.reading_aids)
-    default = "vtt" if (state.asbplayer and needs_ruby) else "srt"
     print()
-    print("Q11. Final output format.")
-    print("    1) SRT  — most compatible (default if no ruby reading aid)")
-    print("    2) VTT  — best for Japanese ruby in asbplayer/browser study")
-    print("             workflows; local-player ruby support is uneven.")
-    print("    3) SMI")
-    print("    4) ASS  — best local-player choice for stacked Korean/Chinese/Cantonese")
-    print("             readings above the original script.")
-    print("    5) TXT - without timestamp")
-    pick = _wizard_prompt("Number", {"vtt": "2", "srt": "1"}.get(default, "1")).strip()
-    state.format = {"1": "srt", "2": "vtt", "3": "smi", "4": "ass", "5": "txt"}.get(pick[:1], default)
+    print(f"{_wizard_next_q(state)} Final output format.")
+    default, reason = _wizard_format_recommendation(state)
+    default_pick = {"srt": "1", "ass": "2", "vtt": "3", "smi": "4", "txt": "5"}.get(default, "1")
+    print(f"    Recommended: {default.upper()} — {reason}")
+    print()
+    print("    1) SRT  — most compatible; best for Plex, Smart TV, tablet apps.")
+    print("    2) ASS  — best desktop-player control for layout and font size.")
+    print("    3) VTT  — best for browser/asbplayer Japanese ruby; local players vary.")
+    print("    4) SMI  — legacy Korean SAMI; font size is usually player-controlled.")
+    print("    5) TXT  — plain text without timestamps")
+    pick = _wizard_prompt("Final format", default_pick).strip()
+    mapping = {"1": "srt", "2": "ass", "3": "vtt", "4": "smi", "5": "txt"}
+    state.format = mapping.get(pick[:1], default)
+    state.viewing_env = {"srt": "tv", "ass": "desktop", "vtt": "browser", "smi": "legacy", "txt": "text"}.get(state.format, "")
     if needs_ruby and state.format != "vtt":
         print("    Note: hiragana readings render as ruby (above-the-kanji)")
         print("          only in VTT; SRT/SMI/ASS fall back to parenthetical")
@@ -15556,6 +15950,64 @@ def _wizard_q9_format(state: _WizardState) -> None:
         print("    Reminder: in asbplayer, enable Settings > Misc > Subtitles >")
         print("              Subtitle HTML = Render to see ruby. Most other")
         print("              players render VTT ruby out of the box.")
+
+
+def _wizard_expected_stack_line_count(state: _WizardState) -> int:
+    if "merge" not in state.steps:
+        return 1
+    return max(1, len(_wizard_merge_order(state)))
+
+
+def _wizard_should_ask_font_size(state: _WizardState) -> bool:
+    return (
+        "merge" in state.steps
+        and len(state.languages) >= 2
+        and (state.format or "").lower() in {"srt", "ass"}
+    )
+
+
+def _wizard_q_font_size(state: _WizardState) -> None:
+    line_count = _wizard_expected_stack_line_count(state)
+    fmt = (state.format or "srt").lower()
+    regular = resolve_font_size_for_format("regular", line_count, fmt)
+    smaller = resolve_font_size_for_format("smaller", line_count, fmt)
+    larger = resolve_font_size_for_format("larger", line_count, fmt)
+
+    def label(value: int | str | None) -> str:
+        text = str(value or "")
+        return text[3:] + "px" if text.startswith("px:") else text
+
+    custom_default = re.sub(r"\D+", "", label(regular)) or "30"
+    plural = "line" if line_count == 1 else "lines"
+    print()
+    print(f"{_wizard_next_q(state)} Subtitle text size?")
+    print(f"    This output will usually show {line_count} {plural} at once.")
+    print(f"    Format: {fmt.upper()}")
+    print("    SRT and ASS use calibrated presets from player testing.")
+    print("    Calibrated presets: SRT smaller/regular/larger = 12/16/20px;")
+    print("    ASS smaller/regular/larger = 46/58/70.")
+    print()
+    print(f"    1) Regular ({label(regular)}) — recommended")
+    print(f"    2) Smaller ({label(smaller)})")
+    print(f"    3) Larger ({label(larger)})")
+    print("    4) Custom — enter exact font size")
+    pick = _wizard_prompt("Number", "1").strip()
+    if pick == "2":
+        state.font_size = "smaller"
+        return
+    if pick == "3":
+        state.font_size = "larger"
+        return
+    if pick == "4":
+        while True:
+            value = _wizard_prompt("Font size", custom_default).strip()
+            try:
+                state.font_size = str(resolve_font_size(value, line_count))
+                return
+            except CliError as e:
+                print(f"    {e}")
+                continue
+    state.font_size = "regular"
 
 
 def _wizard_q10_output(state: _WizardState) -> None:
@@ -15602,6 +16054,9 @@ def _wizard_plain_plan(state: _WizardState) -> list[str]:
     if "merge" in steps:
         fmt = (state.format or "srt").upper()
         lines.append(f"Stack {langs} into one {fmt} study file")
+        if state.font_size:
+            support_note = "" if fmt == "ASS" else f" ({fmt} support depends on player)"
+            lines.append(f"Use subtitle text size {state.font_size}{support_note}")
     lines.append(f"Save to {state.output or 'the source folder'}")
     return lines
 
@@ -15669,12 +16124,11 @@ def _wizard_q11_action(state: _WizardState) -> str:
 # Question dispatch table keeps the orchestrator readable and the test
 # harness focused — tests can call individual questions via this table.
 _WIZARD_STEPS: list[tuple[str, "callable"]] = [
-    # Streamlined down to a maximum of 7 user-facing questions. Five
+    # Streamlined down to a maximum of 8 user-facing questions. Four
     # questions were removed in favor of smart defaults applied by
     # `_wizard_apply_smart_defaults` before the Q-banner: display order
     # (Q4 already implies it), master timing language (first lang
-    # wins), cleanup preset (always on for learners), output format
-    # (VTT when reading aids, else SRT), output folder
+    # wins), cleanup preset (always on for learners), output folder
     # (~/Downloads/GetSubtitle for URL/title, source's parent for local paths).
     ("steps",         _wizard_q0_steps),
     ("source",        _wizard_q1_source),
@@ -15683,6 +16137,8 @@ _WIZARD_STEPS: list[tuple[str, "callable"]] = [
     ("languages",     _wizard_q2_languages),
     ("translate",     _wizard_q6_translate),
     ("reading_aids",  _wizard_q7_reading_aids),
+    ("format",        _wizard_q9_format),
+    ("font_size",     _wizard_q_font_size),
     ("rename",        _wizard_q_rename),
 ]
 
@@ -15708,21 +16164,6 @@ def _wizard_apply_smart_defaults(state: _WizardState) -> dict[str, str]:
     if state.steps & {"modify", "merge"} and not state.asbplayer:
         state.asbplayer = True
         notes["Cleanup preset"] = "on  (single-line cues + strip broadcast noise)"
-    # Output format: VTT when reading aids are requested (so ruby
-    # renders), else SRT (most compatible).
-    if "merge" in state.steps and not state.format:
-        needs_ruby = any(
-            spec.startswith(("ja:hiragana", "ja:furigana"))
-            for spec in state.reading_aids
-        )
-        state.format = "vtt" if needs_ruby else "srt"
-        notes["Output format"] = (
-            f"{state.format.upper()}  ("
-            + ("VTT renders reading aids as ruby"
-               if needs_ruby
-               else "SRT — most compatible")
-            + ")"
-        )
     # Output folder: URL/title sources land in ~/Downloads/GetSubtitle by
     # default; local-path sources land beside the source file/folder.
     if not state.output:
@@ -15747,6 +16188,8 @@ def _wizard_step_skip(label: str, state: _WizardState) -> bool:
         "filename_numbering": not _wizard_should_ask_filename_numbering(state),
         "translate":    "translate" not in state.steps,
         "reading_aids": "modify" not in state.steps,
+        "format":       "merge" not in state.steps,
+        "font_size":    not _wizard_should_ask_font_size(state),
     }
     return skip.get(label, False)
 
@@ -15757,6 +16200,8 @@ def _wizard_step_prefilled(label: str, state: _WizardState) -> bool:
         "filename_numbering": bool(state.episode_filename_start),
         "translate": state.mt_engine != "",
         "reading_aids": bool(state.reading_aids),
+        "format": bool(state.format),
+        "font_size": bool(state.font_size),
     }
     return prefilled.get(label, False)
 
@@ -15766,6 +16211,7 @@ def _wizard_clear_step_answer(state: _WizardState, label: str) -> None:
     if label == "steps":
         state.steps = {"fetch", "modify", "merge"}
         state.convert_smi = False
+        state.font_size = ""
     elif label == "source":
         state.source = ""
         state.source_title = ""
@@ -15782,6 +16228,8 @@ def _wizard_clear_step_answer(state: _WizardState, label: str) -> None:
         state.master = ""
         state.reading_aids = []
         state.format = ""
+        state.font_size = ""
+        state.viewing_env = ""
     elif label == "scope":
         state.season = ""
         state.episode = ""
@@ -15793,8 +16241,31 @@ def _wizard_clear_step_answer(state: _WizardState, label: str) -> None:
     elif label == "reading_aids":
         state.reading_aids = []
         state.format = ""
+        state.font_size = ""
+        state.viewing_env = ""
+    elif label == "format":
+        state.viewing_env = ""
+        state.format = ""
+        state.font_size = ""
+    elif label == "font_size":
+        state.font_size = ""
     if hasattr(state, "_smart_defaults_notes"):
         state._smart_defaults_notes = {}
+
+
+def _wizard_pop_previous_visible_label(visible_history: list[str], current_label: str | None = None) -> str | None:
+    """Return the step to revisit when the user types `b`.
+
+    A re-entered step can already be at the top of `visible_history`. In that
+    case, popping only one label re-asks the same question instead of going
+    back. Drop current-label entries first, then return the actual previous
+    visible step.
+    """
+    while current_label and visible_history and visible_history[-1] == current_label:
+        visible_history.pop()
+    if not visible_history:
+        return None
+    return visible_history.pop()
 
 
 def _run_wizard(state: _WizardState | None = None) -> tuple[_WizardState, str]:
@@ -15834,11 +16305,11 @@ def _run_wizard_with_back_nav(state: _WizardState) -> tuple[_WizardState, str]:
         try:
             fn(state)
         except _WizardBack:
-            if not visible_history:
+            previous_label = _wizard_pop_previous_visible_label(visible_history, label)
+            if previous_label is None:
                 print("    Already at the first step.")
                 state._qcount = _wizard_qcount_before(state, label)
                 continue
-            previous_label = visible_history.pop()
             _wizard_clear_step_answer(state, previous_label)
             step_index = next(
                 (i for i, (candidate, _fn) in enumerate(_WIZARD_STEPS)
@@ -15864,10 +16335,10 @@ def _run_wizard_with_back_nav(state: _WizardState) -> tuple[_WizardState, str]:
         try:
             action = _wizard_q11_action(state)
         except _WizardBack:
-            if not visible_history:
+            previous_label = _wizard_pop_previous_visible_label(visible_history)
+            if previous_label is None:
                 print("    Already at the first step.")
                 continue
-            previous_label = visible_history.pop()
             _wizard_clear_step_answer(state, previous_label)
             step_index = next(
                 (i for i, (candidate, _fn) in enumerate(_WIZARD_STEPS)
@@ -15884,11 +16355,11 @@ def _run_wizard_with_back_nav(state: _WizardState) -> tuple[_WizardState, str]:
                 try:
                     fn(state)
                 except _WizardBack:
-                    if not visible_history:
+                    previous_label = _wizard_pop_previous_visible_label(visible_history, label)
+                    if previous_label is None:
                         print("    Already at the first step.")
                         state._qcount = _wizard_qcount_before(state, label)
                         continue
-                    previous_label = visible_history.pop()
                     _wizard_clear_step_answer(state, previous_label)
                     step_index = next(
                         (i for i, (candidate, _fn) in enumerate(_WIZARD_STEPS)
@@ -15930,6 +16401,7 @@ def _run_wizard_with_back_nav(state: _WizardState) -> tuple[_WizardState, str]:
             ("reading_aids", state.reading_aids),
             ("asbplayer", state.asbplayer),
             ("format", state.format),
+            ("font_size", state.font_size),
             ("output", state.output),
         ]
         for i, (label, value) in enumerate(visible_labels, start=3):
@@ -16014,6 +16486,8 @@ def _wizard_emit_cli(state: _WizardState) -> list[str]:
             argv += ["--master", state.master]
         if state.format:
             argv += ["--format", state.format]
+        if state.font_size:
+            argv += ["--font-size", state.font_size]
         if state.output:
             argv += ["--output", state.output]
         return argv
@@ -16081,6 +16555,8 @@ def _wizard_emit_cli(state: _WizardState) -> list[str]:
             argv += ["--master", state.master]
         if state.format:
             argv += ["--format", state.format]
+        if state.font_size:
+            argv += ["--font-size", state.font_size]
     if state.output:
         argv += ["--output", state.output]
     return argv
@@ -16145,8 +16621,8 @@ def _wizard_open_folder_target(state: _WizardState) -> Path | None:
 
 
 def _wizard_merge_order(state: _WizardState) -> list[str]:
-    order = list(state.order)
-    for lang in list(state.order):
+    order = list(state.order or state.languages)
+    for lang in list(order):
         modes = [
             spec.split(":", 1)[1]
             for spec in state.reading_aids
@@ -16237,6 +16713,8 @@ def _wizard_emit_toml(state: _WizardState) -> str:
         lines.append('sync = "auto"')
         if state.format:
             lines.append(f'format = "{state.format}"')
+        if state.font_size:
+            lines.append(f'font_size = "{state.font_size}"')
         lines.append("")
     # [output]. For local-only workflows, target carries the input folder
     # used by modify/merge/translate. This mirrors `--source PATH` in the
@@ -16488,7 +16966,7 @@ def interactive_main(argv: list[str] | None = None) -> int:
     if setup_profile is not None:
         use_setup_profile = _wizard_yesno(
             "Found your setup profile. Pre-fill Q2 (languages) / Q6 (MT engine) / "
-            "Q7 (reading aids) / Q9 (format) from it?",
+            "Q7 (reading aids) / format from it?",
             default=True,
         )
 
@@ -16512,6 +16990,7 @@ def interactive_main(argv: list[str] | None = None) -> int:
                 s.startswith("ja:") for s in state.reading_aids
             ):
                 state.format = "vtt"
+                state.viewing_env = "browser"
                 state.asbplayer = True
             print(
                 f"  Loaded: languages={','.join(state.languages)}, "
@@ -16947,7 +17426,7 @@ def main(argv: list[str] | None = None) -> int:
             continue
         if args.debug_providers:
             debug_records.append(provider_debug_record(provider.name, ep, lang, files))
-        best = choose_best(files, preferred_release_source)
+        best = choose_best(files, preferred_release_source, media=media, episode=ep)
         if best:
             if not media.title and best.media_title:
                 media.title = best.media_title
@@ -16980,7 +17459,7 @@ def main(argv: list[str] | None = None) -> int:
                 continue
             if args.debug_providers:
                 debug_records.append(provider_debug_record("subdl", ep, lang, sd_files))
-            best = choose_best(sd_files, preferred_release_source)
+            best = choose_best(sd_files, preferred_release_source, media=media, episode=ep)
             if not best:
                 if not any(r.language == lang and r.episode == ep for r in search_results):
                     search_results.append(SearchResult(lang, ep, "subdl", "missing"))
@@ -17021,7 +17500,7 @@ def main(argv: list[str] | None = None) -> int:
                     continue
                 if args.debug_providers:
                     debug_records.append(provider_debug_record("subdivx", ep, "es", sd_files))
-                best = choose_best(sd_files, preferred_release_source)
+                best = choose_best(sd_files, preferred_release_source, media=media, episode=ep)
                 if not best:
                     continue
                 # Replace existing missing/error result if any; otherwise append.
@@ -17058,7 +17537,7 @@ def main(argv: list[str] | None = None) -> int:
                     continue
                 if args.debug_providers:
                     debug_records.append(provider_debug_record("addic7ed", ep, "ko", a7_files, error=a7_diag if a7_diag and not a7_files else None))
-                best = choose_best(a7_files, preferred_release_source)
+                best = choose_best(a7_files, preferred_release_source, media=media, episode=ep)
                 if not best:
                     continue
                 replaced = False

@@ -242,6 +242,13 @@ sync = "auto"
 # line per language. Default: false.
 preserve_lines = false
 
+# Text size for merged outputs. "auto" chooses a readable size from the
+# number of stacked rows; other values: regular, smaller, larger, or a
+# number like "30". ASS is reliable. SRT/VTT are best-effort. Calibrated
+# presets: SRT smaller/regular/larger = 12/16/20px; ASS = 46/58/70.
+# SMI uses player default.
+font_size = "auto"
+
 # Master-language priority list. When merging cues from multiple
 # languages, ONE language is the "timing master" — its cue boundaries
 # define when each combined cue starts/ends; the others align to it via

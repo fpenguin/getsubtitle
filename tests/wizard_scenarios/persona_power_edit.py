@@ -20,6 +20,8 @@ SCENARIO = Scenario(
         "{TMP}/Show",
         "ja,en",
         "1",            # reading aids — skip
+        "",             # final format → recommended SRT
+        "",             # font size → Regular
         "3",            # action: edit
         "1",            # redo Q1 step picker
         "3",            # change to modify-only

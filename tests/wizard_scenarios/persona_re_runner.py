@@ -19,6 +19,8 @@ SCENARIO = Scenario(
         "1",
         "ja,en",
         "1",            # reading aids — skip
+        "",             # final format → recommended SRT
+        "",             # font size → Regular
         "2",            # action: save (URL default)
         "{TMP}/saved.toml",
         "n",            # decline open folder

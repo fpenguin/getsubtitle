@@ -23,6 +23,8 @@ SCENARIO = Scenario(
         "{TMP}/Show",  # Q2 path (single branch — no a/b/c when fetch absent)
         "ja,en",      # Q4 languages
         "1",          # Q7 reading aids — skip
+        "",           # final format → recommended SRT
+        "",           # font size → Regular
         "5",          # Q12 — quit
     ],
     expect_state={"steps": {"modify", "merge"}},

@@ -9,10 +9,26 @@ Until the app is marketing-ready for v1.0, use pre-1.0 release steps:
 
 - **v0.9.1+**: small feature, docs, source, and UX batches that do not
   change the core workflow.
-- **v0.9.4.1**: very small follow-ups, help text, tests, and bug fixes.
+- **v0.9.x.1**: very small follow-ups, help text, tests, and bug fixes.
 - **v1.0**: the marketing-ready milestone.
 - **v2.0**: a later larger behavior milestone, aimed at an AI-based
   subtitle sync engine.
+
+## v0.9.6.1 — what's new
+
+- **Interactive wizard polish.** Language selection now warns when a merged
+  file is likely to become too crowded, fetch-only multi-language runs can
+  opt into merge before format questions, and back-navigation no longer gets
+  stuck on the format step.
+- **Format-aware text sizing.** Merged SRT and ASS outputs expose
+  smaller/regular/larger presets calibrated from local playback tests; VTT
+  and SMI remain mostly player-controlled and are described that way.
+- **Better Spanish lookups.** Spanish aliases accept regional spellings such
+  as `spanish`, `es-mx`, and `latin american spanish`, while provider queries
+  avoid invalid Wyzie language variants.
+- **Safer subtitle choice.** Fetch ranking now prefers subtitle filenames that
+  match the requested title and episode, reducing false-positive downloads
+  from similarly named media.
 
 ## v0.9.6 — what's new
 
@@ -123,7 +139,7 @@ vs original-file rename.
     - Master timing — first language wins (CLI override: `--master`).
     - Cleanup preset — always on (single-line cues + strip broadcast
       noise; works in every player).
-    - Output format — VTT when reading aids are picked, SRT otherwise.
+    - Output format — guided by viewing environment and reading-aid needs.
     - Output folder — `~/Downloads/GetSubtitle` for URL/title sources;
       beside the source folder/file for local paths.
   A typical movie-with-furigana run goes from 12 → 5 questions.
@@ -403,7 +419,7 @@ vs original-file rename.
 
 ### Tests
 
-- 611 automated tests covering URL parsing, provider response shapes, TMDB / AniList resolution, SAMI parsing, VTT/ASS input parsing, MT helpers + auto_load/auto_unload, merge with format hints, the wizard scenario harness, rename mode, the named pipeline registry, pipeline orchestration, `--config` CLI overrides, config validation, source smoke diagnostics, help system, and dispatch routing.
+- 625 automated tests covering URL parsing, provider response shapes, TMDB / AniList resolution, SAMI parsing, VTT/ASS input parsing, MT helpers + auto_load/auto_unload, merge with format hints and font-size styling, the wizard scenario harness, rename mode, the named pipeline registry, pipeline orchestration, `--config` CLI overrides, config validation, source smoke diagnostics, help system, and dispatch routing.
 
 ## Planned (post-v0.9.x)
 

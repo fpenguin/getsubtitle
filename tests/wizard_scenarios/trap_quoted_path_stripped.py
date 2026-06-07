@@ -16,6 +16,8 @@ SCENARIO = Scenario(
         "'{TMP}/Foo Bar'",      # quoted folder path (Finder drag-drop shape)
         "ja,en",                # languages
         "1",                    # reading aids — skip
+        "",                     # final format → recommended SRT
+        "",                     # font size → Regular
         "5",                    # quit
     ],
     expect_state={"steps": {"modify", "merge"}},

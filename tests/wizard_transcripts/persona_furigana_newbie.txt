@@ -31,7 +31,11 @@ Q2. Folder or file to process.
 
 Q3. Which subtitle languages do you want to collect?
     List them in the order you want them displayed (top → bottom).
-    Examples: ja,en   ja,ko,en,es   japanese,korean,english
+
+    Common Picks
+      ja,en : Japanese on top and English below (optional furigana support)
+      ko,en,es : Korean on top, then English and Spanish (optional romanization support)
+      japanese,korean,english,spanish : 2-letter codes and full language names both work
   Languages (comma-separated) [ja,en | b=back | q=quit] > ja,en
 
 Q4. Reading aids (phonetic guides for the original script).
@@ -43,6 +47,16 @@ Q4. Reading aids (phonetic guides for the original script).
     3) Japanese — katakana readings for kanji   [ja:katakana]
     4) Japanese — full-sentence romaji   [ja:romaji]
   Numbers (comma-separated) [1 | b=back | q=quit] > 2
+
+Q5. Final output format.
+    Recommended: VTT — Browser/asbplayer workflows are the best fit for Japanese ruby.
+
+    1) SRT  — most compatible; best for Plex, Smart TV, tablet apps.
+    2) ASS  — best desktop-player control for layout and font size.
+    3) VTT  — best for browser/asbplayer Japanese ruby; local players vary.
+    4) SMI  — legacy Korean SAMI; font size is usually player-controlled.
+    5) TXT  — plain text without timestamps
+  Final format [3 | b=back | q=quit] >
 
 ======================================================================
 Here's the plan:
@@ -57,7 +71,6 @@ Smart defaults filled in for you (edit via 'Edit a single answer'):
   Display order  ja, en  (top → bottom on screen)
   Timing master  ja  (first language)
   Cleanup preset on  (single-line cues + strip broadcast noise)
-  Output format  VTT  (VTT renders reading aids as ruby)
   Output folder  {TMP}/Show  (beside source)
 ======================================================================
 Based on your choice, you can try:

@@ -26,6 +26,8 @@ SCENARIO = Scenario(
         "",             # languages → 'ja,en'
         "",             # missing language action → skip AI translation
         "",             # reading aids → 1 (skip)
+        "",             # final format → recommended SRT
+        "",             # font size → Regular
         "",             # action menu → 'a' (run) for path source
         "",             # open folder → Y
     ],

@@ -20,6 +20,8 @@ SCENARIO = Scenario(
         "ja,en",
         "4",            # translate engine: DeepL
         "1",            # reading aids — skip
+        "",             # final format → recommended SRT
+        "",             # font size → Regular
         "1",            # action: run (so probe fires)
         "y",            # accept 'Run setup now to fix these?'
         "n",            # at the per-gap prompt: don't actually run --set-key now

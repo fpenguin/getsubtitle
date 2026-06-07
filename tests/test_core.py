@@ -276,6 +276,9 @@ def test_infer_from_netflix_url_skips_generic_scraped_titles():
 def test_language_aliases():
     assert MODULE["split_csv"]("ja,ko,en,sp", "ja") == ["ja", "ko", "en", "es"]
     assert MODULE["split_csv"]("japanese,korean,english,spanish", "ja") == ["ja", "ko", "en", "es"]
+    assert MODULE["split_csv"]("es-mx", "ja") == ["es"]
+    assert MODULE["split_csv"]("latin american spanish", "ja") == ["es"]
+    assert MODULE["split_csv"]("castilian", "ja") == ["es"]
 
 
 def test_choose_best_prefers_source_and_srt():
@@ -286,6 +289,24 @@ def test_choose_best_prefers_source_and_srt():
         subtitle("wyzie", "en", "movie.netflix.en.srt", "u", release_source="netflix"),
     ]
     assert MODULE["choose_best"](files, "netflix").name == "movie.netflix.en.srt"
+
+
+def test_choose_best_prefers_matching_title_over_alphabetical_false_positive():
+    subtitle = MODULE["SubtitleFile"]
+    media = MODULE["MediaInfo"](
+        source_url="https://www.themoviedb.org/tv/456",
+        provider="tmdb",
+        title="The Simpsons",
+        tmdb_id="456",
+        season="1",
+        episode="1",
+    )
+    files = [
+        subtitle("wyzie", "en", "(2010) Montevideo, bog te video - Prica prva by www.yubraca.net.srt", "u", provider_language="en", source_provider="charlie", media_title="The Simpsons"),
+        subtitle("wyzie", "en", "simpsons_1CD1_engl.srt", "u", provider_language="en", source_provider="charlie", media_title="The Simpsons"),
+        subtitle("wyzie", "en", "The.Simpsons.s01e01.DVDRip.XviD-SChiZO.srt", "u", provider_language="en", source_provider="charlie", media_title="The Simpsons"),
+    ]
+    assert MODULE["choose_best"](files, media=media, episode="1").name == "The.Simpsons.s01e01.DVDRip.XviD-SChiZO.srt"
 
 
 def test_tmdb_id_from_url():
@@ -485,6 +506,12 @@ def test_lang_matches_accepts_iso_variants():
     # English/Japanese sanity
     assert m("en", "English")
     assert m("ja", "jpn")
+
+
+def test_provider_language_query_variants_include_spanish_regional_codes():
+    assert MODULE["provider_language_query_variants"]("es") == ["es", "spa", "es-419", "es-mx", "es-es"]
+    assert MODULE["provider_language_query_variants"]("spanish") == ["es", "spa", "es-419", "es-mx", "es-es"]
+    assert MODULE["provider_language_query_variants"]("spanish", provider="wyzie") == ["es"]
 
 
 def test_lang_matches_rejects_other_languages():
@@ -2212,7 +2239,108 @@ def test_serialize_ass_scales_font_for_four_line_study_stack():
     body = MODULE["serialize_ass"](cues)
     assert "PlayResX: 1920" in body
     assert "PlayResY: 1080" in body
-    assert "Style: Default,Arial,30," in body
+    assert "Style: Default,Arial,24," in body
+
+
+def test_font_size_recommendations_and_aliases():
+    assert MODULE["recommended_font_size_for_lines"](2) == 30
+    assert MODULE["font_size_options_for_lines"](2) == (30, 24, 36)
+    assert MODULE["recommended_font_size_for_lines"](4) == 24
+    assert MODULE["resolve_font_size"]("regular", 2) == 30
+    assert MODULE["resolve_font_size"]("smaller", 2) == 24
+    assert MODULE["resolve_font_size"]("larger", 2) == 36
+    assert MODULE["resolve_font_size"]("42", 2) == 42
+    assert MODULE["resolve_font_size"]("auto", 2) is None
+    assert MODULE["resolve_font_size_for_format"]("smaller", 2, "ass") == 46
+    assert MODULE["resolve_font_size_for_format"]("regular", 2, "ass") == 58
+    assert MODULE["resolve_font_size_for_format"]("larger", 2, "ass") == 70
+    assert MODULE["resolve_font_size_for_format"]("30", 2, "ass") == 30
+    assert MODULE["resolve_font_size_for_format"]("smaller", 2, "srt") == "px:12"
+    assert MODULE["resolve_font_size_for_format"]("regular", 2, "srt") == "px:16"
+    assert MODULE["resolve_font_size_for_format"]("larger", 2, "srt") == "px:20"
+    assert MODULE["resolve_font_size_for_format"]("42", 2, "srt") == "px:42"
+    assert MODULE["resolve_font_size_for_format"]("regular", 2, "smi") is None
+    assert MODULE["resolve_font_size_for_format"]("larger", 2, "smi") is None
+    assert MODULE["resolve_font_size_for_format"]("smaller", 2, "smi") is None
+    assert MODULE["resolve_font_size_for_format"]("30", 2, "smi") is None
+    assert MODULE["_srt_html_font_size"](24) == 6
+    assert MODULE["_srt_html_font_size"](30) == 7
+    assert MODULE["_srt_html_font_size"](36) == 7
+
+
+def test_serializers_apply_requested_font_size_to_all_formats():
+    cue = MODULE["SrtCue"](
+        index="1",
+        time_line="00:00:01,000 --> 00:00:03,000",
+        text_lines=["こんにちは", "Hello"],
+    )
+    cues = [cue]
+    assert "<big>こんにちは</big>" in MODULE["serialize_srt"](cues, font_size="big")
+    assert '<font size="7">こんにちは</font>' in MODULE["serialize_srt"](cues, font_size="font7")
+    assert '<font size="42px">こんにちは</font>' in MODULE["serialize_srt"](cues, font_size="px:42")
+    vtt = MODULE["serialize_vtt"](cues, font_size=30)
+    assert "STYLE\n::cue { font-size: 30px; }" in vtt
+    assert "Style: Default,Arial,30," in MODULE["serialize_ass"](cues, font_size=30)
+    smi = MODULE["serialize_smi"](cues, font_size=30)
+    assert "font-size:30pt" in smi
+    assert 'Style="font-size:30pt"' in smi
+    assert '<font size="7">こんにちは<br>Hello</font>' in smi
+
+
+def test_serialize_smi_omits_font_hints_when_unset():
+    cue = MODULE["SrtCue"](
+        index="1",
+        time_line="00:00:01,000 --> 00:00:03,000",
+        text_lines=["こんにちは", "Hello"],
+    )
+    smi = MODULE["serialize_smi"]([cue])
+    assert "font-size:" not in smi
+    assert "Style=" not in smi
+    assert "<font" not in smi
+    assert "こんにちは<br>Hello" in smi
+
+
+def test_serialize_vtt_adds_ruby_text_style_for_ruby_cues():
+    cue = MODULE["SrtCue"](
+        index="1",
+        time_line="00:00:01,000 --> 00:00:03,000",
+        text_lines=["<ruby>日本語<rt>にほんご</rt></ruby>"],
+    )
+    vtt = MODULE["serialize_vtt"]([cue])
+    assert "::cue(rt) { font-size: 0.85em; }" in vtt
+    assert "::cue(ruby) { ruby-position: over; }" in vtt
+
+
+def test_merge_font_size_toml_and_inline_overrides():
+    argv, _ = MODULE["_toml_to_pipeline_argv"]({
+        "merge": {"languages": "ja,en", "font_size": "larger"},
+    })
+    assert "--font-size" in argv
+    assert "larger" in argv
+    ov, _residual, vb = MODULE["_extract_cli_overrides"](["--merge", "--font-size", "36"])
+    data = MODULE["_merge_overrides_into_toml"]({"merge": {"languages": "ja,en"}}, ov, vb)
+    assert data["merge"]["font_size"] == "36"
+
+
+def test_combine_main_writes_vtt_font_size(tmp_path):
+    (tmp_path / "Show.S01E01.ja.srt").write_text(
+        "1\n00:00:01,000 --> 00:00:03,000\nこんにちは\n", encoding="utf-8"
+    )
+    (tmp_path / "Show.S01E01.en.srt").write_text(
+        "1\n00:00:01,000 --> 00:00:03,000\nHello\n", encoding="utf-8"
+    )
+    rc = MODULE["combine_main"]([
+        str(tmp_path),
+        "-l", "ja,en",
+        "--format", "vtt",
+        "--font-size", "larger",
+        "--force",
+        "--no-watermark",
+        "--no-open-folder-prompt",
+    ])
+    assert rc == 0
+    body = (tmp_path / "Show.S01E01.ja-en.vtt").read_text(encoding="utf-8")
+    assert "STYLE\n::cue { font-size: 36px; }" in body
 
 
 def test_multi_variant_master_default_prefers_base_over_pseudo():
@@ -9045,6 +9173,70 @@ def test_wizard_languages_can_decline_modify_reading_aids():
         fn_g["_wizard_yesno"] = saved_yesno
 
 
+def test_wizard_languages_warns_and_can_trim_five_language_stack():
+    import contextlib
+    import io
+    s = MODULE["_WizardState"](steps={"modify", "merge"})
+    fn_g = MODULE["_wizard_q2_languages"].__globals__
+    saved_prompt = fn_g["_wizard_prompt"]
+    answers = iter(["ja,ko,en,es,fr", "2"])
+    try:
+        fn_g["_wizard_prompt"] = lambda _q, _d=None: next(answers)
+        with contextlib.redirect_stdout(io.StringIO()) as buf:
+            MODULE["_wizard_q2_languages"](s)
+        out = buf.getvalue()
+        assert s.languages == ["ja", "ko", "en", "es"]
+        assert "You selected 5 languages" in out
+        assert "Keep only the first 4" in out
+    finally:
+        fn_g["_wizard_prompt"] = saved_prompt
+
+
+def test_wizard_fetch_only_multiple_languages_can_add_merge_for_format_questions():
+    import contextlib
+    import io
+    s = MODULE["_WizardState"](steps={"fetch"})
+    fn_g = MODULE["_wizard_q2_languages"].__globals__
+    saved_prompt = fn_g["_wizard_prompt"]
+    saved_yesno = fn_g["_wizard_yesno"]
+    try:
+        fn_g["_wizard_prompt"] = lambda _q, _d=None: "en,es"
+        fn_g["_wizard_yesno"] = lambda _q, default=True: True
+        with contextlib.redirect_stdout(io.StringIO()) as buf:
+            MODULE["_wizard_q2_languages"](s)
+        out = buf.getvalue()
+        assert s.languages == ["en", "es"]
+        assert s.steps == {"fetch", "merge"}
+        assert "Fetch without Merge" in out
+        assert not MODULE["_wizard_step_skip"]("format", s)
+        s.format = "ass"
+        assert MODULE["_wizard_should_ask_font_size"](s)
+    finally:
+        fn_g["_wizard_prompt"] = saved_prompt
+        fn_g["_wizard_yesno"] = saved_yesno
+
+
+def test_wizard_fetch_only_multiple_languages_can_decline_merge():
+    import contextlib
+    import io
+    s = MODULE["_WizardState"](steps={"fetch"})
+    fn_g = MODULE["_wizard_q2_languages"].__globals__
+    saved_prompt = fn_g["_wizard_prompt"]
+    saved_yesno = fn_g["_wizard_yesno"]
+    try:
+        fn_g["_wizard_prompt"] = lambda _q, _d=None: "en,es"
+        fn_g["_wizard_yesno"] = lambda _q, default=True: False
+        with contextlib.redirect_stdout(io.StringIO()) as buf:
+            MODULE["_wizard_q2_languages"](s)
+        out = buf.getvalue()
+        assert s.languages == ["en", "es"]
+        assert s.steps == {"fetch"}
+        assert "format/font-size questions apply only to merged files" in out
+    finally:
+        fn_g["_wizard_prompt"] = saved_prompt
+        fn_g["_wizard_yesno"] = saved_yesno
+
+
 def test_wizard_local_missing_languages_can_add_fetch_on_spot():
     import contextlib
     import io
@@ -9455,26 +9647,27 @@ def test_wizard_intro_has_no_jargon():
     assert "pipeline" not in intro
 
 
-# ─── v0.8 wizard streamlined to ≤7 Qs ─────────────────────────────
+# ─── v0.9 wizard streamlined to ≤8 Qs ─────────────────────────────
 
 
-def test_wizard_dispatch_table_has_at_most_seven_question_steps():
-    """The user-facing dispatch table caps at 7 entries (Q1-Q7). Five
+def test_wizard_dispatch_table_has_at_most_nine_question_steps():
+    """The user-facing dispatch table caps at 9 entries. Four
     earlier questions (display order, master timing, cleanup preset,
-    output format, output folder) are now filled in by
-    _wizard_apply_smart_defaults instead of asked."""
+    output folder) are now filled in by
+    _wizard_apply_smart_defaults instead of asked; font size is explicit."""
     steps = MODULE["_WIZARD_STEPS"]
     pipeline_steps = [s for s in steps if s[0] != "rename"]
-    assert len(pipeline_steps) <= 7, f"too many wizard steps: {[s[0] for s in pipeline_steps]}"
-    # The five removed steps must not be present.
+    assert len(pipeline_steps) <= 9, f"too many wizard steps: {[s[0] for s in pipeline_steps]}"
+    # The removed steps must not be present.
     labels = {s[0] for s in steps}
-    for removed in ("order", "master", "asbplayer", "format", "output"):
+    for removed in ("order", "master", "asbplayer", "output"):
         assert removed not in labels, f"{removed!r} should have been removed"
+    assert "format" in labels
 
 
 def test_wizard_apply_smart_defaults_fills_missing_answers():
     """_wizard_apply_smart_defaults populates display order, master,
-    cleanup preset, output format, and output folder when the user
+    cleanup preset, and output folder when the user
     didn't answer them, and returns a human-readable note dict."""
     s = MODULE["_WizardState"](
         source="https://www.themoviedb.org/movie/8392",
@@ -9487,18 +9680,17 @@ def test_wizard_apply_smart_defaults_fills_missing_answers():
     assert s.order == ["ja", "en"]
     assert s.master == ""  # blank = first wins downstream
     assert s.asbplayer is True
-    assert s.format == "vtt"  # reading aid -> ruby-capable format
+    assert s.format == ""  # format is now chosen by the environment-guided step
     assert s.output == "~/Downloads/GetSubtitle"
-    # All five notes appear in the banner-friendly summary.
+    # All smart-default notes appear in the banner-friendly summary.
     assert "Display order" in notes
     assert "Timing master" in notes
     assert "Cleanup preset" in notes
-    assert "Output format" in notes
     assert "Output folder" in notes
 
 
-def test_wizard_smart_defaults_pick_srt_without_reading_aids():
-    """No reading aid → SRT (most compatible) is the auto-format."""
+def test_wizard_smart_defaults_do_not_pick_output_format():
+    """Output format is chosen by the environment-guided format step."""
     s = MODULE["_WizardState"](
         source="https://www.themoviedb.org/movie/8392",
         source_kind="url",
@@ -9506,7 +9698,14 @@ def test_wizard_smart_defaults_pick_srt_without_reading_aids():
         reading_aids=[],
     )
     MODULE["_wizard_apply_smart_defaults"](s)
-    assert s.format == "srt"
+    assert s.format == ""
+
+
+def test_wizard_back_history_skips_current_reentered_step():
+    history = ["steps", "source", "languages", "translate", "format"]
+    previous = MODULE["_wizard_pop_previous_visible_label"](history, "format")
+    assert previous == "translate"
+    assert history == ["steps", "source", "languages"]
 
 
 def test_wizard_smart_defaults_local_path_output_lands_beside_source():
@@ -9602,7 +9801,7 @@ def test_wizard_q11_banner_surfaces_smart_defaults():
     assert "Smart defaults filled in for you" in out
     assert "Display order" in out
     assert "Cleanup preset" in out
-    assert "Output format" in out
+    assert "Output format" not in out
 
 
 def test_wizard_default_full_pipeline_still_emits_fetch_modify_merge():
@@ -9737,13 +9936,12 @@ def test_wizard_q8_preset_description_is_short():
 
 
 def test_wizard_q9_format_describes_vtt_and_ass_player_fit():
-    """Q11 should steer VTT toward asbplayer/browser ruby and ASS toward
-    local stacked reading-aid playback."""
+    """Format choice should steer by viewing environment and player fit."""
     import io, contextlib
     fn_g = MODULE["_wizard_q9_format"].__globals__
     saved_input = fn_g.get("input")
     try:
-        fn_g["input"] = lambda *a, **k: "1"
+        fn_g["input"] = lambda *a, **k: "3"
         s = MODULE["_WizardState"](reading_aids=[], asbplayer=False)
         buf = io.StringIO()
         with contextlib.redirect_stdout(buf):
@@ -9752,10 +9950,39 @@ def test_wizard_q9_format_describes_vtt_and_ass_player_fit():
         if saved_input is not None:
             fn_g["input"] = saved_input
     out = buf.getvalue()
-    assert "asbplayer/browser" in out
-    assert "local-player ruby support is uneven" in out
+    assert s.format == "vtt"
+    assert s.viewing_env == "browser"
+    assert "Final output format" in out
+    assert "Recommended:" in out
+    assert "browser/asbplayer" in out
     assert "ASS" in out
-    assert "Korean/Chinese" in out
+    assert "font size" in out
+
+
+def test_wizard_font_size_labels_follow_selected_format():
+    import io, contextlib
+    fn_g = MODULE["_wizard_q_font_size"].__globals__
+    saved_input = fn_g.get("input")
+    try:
+        fn_g["input"] = lambda *a, **k: "1"
+        s = MODULE["_WizardState"](
+            steps={"merge"},
+            languages=["en", "es"],
+            order=["en", "es"],
+            format="ass",
+        )
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            MODULE["_wizard_q_font_size"](s)
+    finally:
+        if saved_input is not None:
+            fn_g["input"] = saved_input
+    out = buf.getvalue()
+    assert "Regular (58)" in out
+    assert "Smaller (46)" in out
+    assert "Larger (70)" in out
+    assert "Regular (30)" not in out
+    assert s.font_size == "regular"
 
 
 def test_wizard_reading_aid_labels_format_agnostic():

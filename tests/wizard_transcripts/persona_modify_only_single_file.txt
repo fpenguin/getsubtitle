@@ -32,7 +32,11 @@ Q2. Folder or file to process.
 
 Q3. Which subtitle languages do you want to collect?
     List them in the order you want them displayed (top → bottom).
-    Examples: ja,en   ja,ko,en,es   japanese,korean,english
+
+    Common Picks
+      ja,en : Japanese on top and English below (optional furigana support)
+      ko,en,es : Korean on top, then English and Spanish (optional romanization support)
+      japanese,korean,english,spanish : 2-letter codes and full language names both work
   Languages (comma-separated) [ja,en | b=back | q=quit] > ja
 
 Q4. Reading aids (phonetic guides for the original script).

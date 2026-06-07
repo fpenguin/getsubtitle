@@ -20,6 +20,8 @@ SCENARIO = Scenario(
         "{TMP}/Show",   # path
         "ja,en",
         "1",            # reading aids — skip
+        "",             # final format → recommended SRT
+        "",             # font size → Regular
         "1",            # action: run
         "y",            # open folder? yes
     ],

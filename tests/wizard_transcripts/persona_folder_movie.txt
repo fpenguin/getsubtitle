@@ -31,7 +31,11 @@ Q2. Folder or file to process.
 
 Q3. Which subtitle languages do you want to collect?
     List them in the order you want them displayed (top → bottom).
-    Examples: ja,en   ja,ko,en,es   japanese,korean,english
+
+    Common Picks
+      ja,en : Japanese on top and English below (optional furigana support)
+      ko,en,es : Korean on top, then English and Spanish (optional romanization support)
+      japanese,korean,english,spanish : 2-letter codes and full language names both work
   Languages (comma-separated) [ja,en | b=back | q=quit] > ja,en
 
     Japanese furigana reading aids are available, but Modify is not selected.
@@ -39,11 +43,35 @@ Q3. Which subtitle languages do you want to collect?
   Add Modify step for reading aids? [Y/n | b=back | q=quit] > n
     Reading aids skipped for this workflow.
 
+Q4. Final output format.
+    Recommended: SRT — SRT is the safest general-purpose choice.
+
+    1) SRT  — most compatible; best for Plex, Smart TV, tablet apps.
+    2) ASS  — best desktop-player control for layout and font size.
+    3) VTT  — best for browser/asbplayer Japanese ruby; local players vary.
+    4) SMI  — legacy Korean SAMI; font size is usually player-controlled.
+    5) TXT  — plain text without timestamps
+  Final format [1 | b=back | q=quit] >
+
+Q5. Subtitle text size?
+    This output will usually show 2 lines at once.
+    Format: SRT
+    SRT and ASS use calibrated presets from player testing.
+    Calibrated presets: SRT smaller/regular/larger = 12/16/20px;
+    ASS smaller/regular/larger = 46/58/70.
+
+    1) Regular (16px) — recommended
+    2) Smaller (12px)
+    3) Larger (20px)
+    4) Custom — enter exact font size
+  Number [1 | b=back | q=quit] >
+
 ======================================================================
 Here's the plan:
 ======================================================================
   • Use local ja, en files in {TMP}/Totoro
   • Stack ja, en into one SRT study file
+  • Use subtitle text size regular (SRT support depends on player)
   • Save to {TMP}/Totoro
 ======================================================================
 Smart defaults filled in for you (edit via 'Edit a single answer'):
@@ -51,12 +79,11 @@ Smart defaults filled in for you (edit via 'Edit a single answer'):
   Display order  ja, en  (top → bottom on screen)
   Timing master  ja  (first language)
   Cleanup preset on  (single-line cues + strip broadcast noise)
-  Output format  SRT  (SRT — most compatible)
   Output folder  {TMP}/Totoro  (beside source)
 ======================================================================
 Based on your choice, you can try:
 ======================================================================
-  getsubtitle merge {TMP}/Totoro --languages ja,en --format srt --output {TMP}/Totoro
+  getsubtitle merge {TMP}/Totoro --languages ja,en --format srt --font-size regular --output {TMP}/Totoro
 ======================================================================
 Equivalent workflow file (save as .toml):
 ======================================================================
@@ -64,6 +91,7 @@ Equivalent workflow file (save as .toml):
   languages = "ja,en"
   sync = "auto"
   format = "srt"
+  font_size = "regular"
 
   [output]
   target = "{TMP}/Totoro"
@@ -81,7 +109,7 @@ Equivalent workflow file (save as .toml):
 Saved: {TMP}/totoro.toml
 
 Your totoro.toml runs the same workflow as this command:
-  # getsubtitle merge {TMP}/Totoro --languages ja,en --format srt --output {TMP}/Totoro
+  # getsubtitle merge {TMP}/Totoro --languages ja,en --format srt --font-size regular --output {TMP}/Totoro
 
 Run it later with:
   getsubtitle --config {TMP}/totoro.toml
