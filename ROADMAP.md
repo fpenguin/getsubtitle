@@ -14,6 +14,18 @@ Until the app is marketing-ready for v1.0, use pre-1.0 release steps:
 - **v2.0**: a later larger behavior milestone, aimed at an AI-based
   subtitle sync engine.
 
+## v0.9.6.2 — what's new
+
+- **Wizard save-path guardrails.** Saved workflow filenames now reject
+  accidental menu answers such as `b`, `y`, or `0`, require `.toml`, and
+  auto-append `.toml` for friendly names like `fena`.
+- **Wizard preflight coverage.** Local workflows now warn before Run when
+  no local subtitles are present, requested languages are only partially
+  covered, or selected merge outputs already exist.
+- **UX audit artifacts.** Added harness-backed wizard structure,
+  representative transcripts, and metadata files for copywriting and
+  beginner-flow reviews.
+
 ## v0.9.6.1 — what's new
 
 - **Interactive wizard polish.** Language selection now warns when a merged
@@ -59,6 +71,81 @@ old -> new filenames, checks collisions, and defaults to copy-and-apply
 so originals stay untouched. The preview asks whether to apply now, keep
 editing, discard the current change, or cancel; apply now then asks copy
 vs original-file rename.
+
+## Planned: interactive wizard UX v2
+
+The latest CODEX and Claude audits agree on the main direction: the wizard
+should fail earlier, stay scoped to the user's selected episodes, and end
+with an outcome a beginner can understand without reading hundreds of log
+lines. Treat this as a pre-v1.0 quality track.
+
+### Phase A: correctness-flavored UX
+
+- **Translation readiness preflight.** After the user chooses an MT engine,
+  check whether the chosen engine can actually translate the requested
+  language pairs before the workflow starts. Argos must verify installed
+  language packages / pivot paths, not just that `argostranslate` imports.
+  If a pair is missing, offer explicit choices: install with confirmation,
+  switch engine, or continue without translation. Do not run installers
+  silently. **Implemented for Argos direct/pivot package checks; DeepL key
+  checks already block before run.**
+- **Episode scope enforcement.** If the user chooses `S01E05-E10`, every
+  downstream step (`translate`, `modify`, `merge`) must receive that same
+  season/episode filter. Existing subtitle files outside the selected range
+  should be ignored by default, with a warning/choice only when the user is
+  intentionally processing a mixed folder. **CLI/TOML propagation to
+  downstream steps is implemented; mixed-folder warning remains planned.**
+- **Outcome-oriented translation wording.** Reword the MT question from
+  "If a language is missing, what should we do?" to "Fill missing
+  subtitles?" with short numeric choices for skip, Argos, Ollama, and DeepL.
+  **Implemented.**
+
+### Phase B: clarity wins
+
+- **Plain review screen first.** Keep the current human-readable plan as the
+  primary review surface. Move raw CLI / TOML detail behind an explicit
+  "show exact command and workflow file" action if the screen becomes too
+  crowded, while keeping power-user access one keypress away.
+- **Reading-aid examples.** Show detected languages and one short preview
+  per shipped reading-aid option, e.g. Korean Revised Romanization and Yale
+  examples. Deferred backends should say that previews land with the backend.
+- **Episode prompt wording.** For TV sources, consider replacing "What
+  episode scope?" with user-centered choices: single episode, episode range,
+  whole season, or auto-detect. Keep movie auto-skip behavior.
+
+### Phase C: workflow summary and broader preflight
+
+- **Interactive final summary.** Add an interactive-only workflow summary
+  that reports requested episodes/languages, downloaded files, missing
+  subtitles, translation blockers, reading-aid outputs, merge results, and
+  next-step commands. `Nothing to write.` is not enough after a long wizard
+  run. **Implemented with a wizard-only structured summary printed after Run.**
+- **Structured summary collector.** Prefer passing an optional collector into
+  fetch/translate/modify/merge over scraping stdout. Normal CLI behavior
+  should remain unchanged when no collector is supplied. **Implemented as an
+  active interactive collector that records counts at existing plan/write
+  points; normal CLI output is unchanged.**
+- **End-to-end preflight.** Add a bounded preflight before Run for writable
+  output folder, configured provider/API keys, known MT blockers, and
+  possibly fast coverage estimates. Network checks must time out quickly and
+  degrade to warnings instead of freezing the wizard. **Implemented for output
+  folder writability, provider key readiness, and known MT blockers; fast
+  coverage estimates remain planned.**
+
+### Design decisions from the audits
+
+- CODEX and Claude both rank translation preflight and episode scoping as
+  correctness issues, not mere wording polish.
+- Claude puts the final summary in Phase A; CODEX agrees it is important,
+  but recommends shipping it after the preflight/scope fixes unless a small
+  structured collector can land safely.
+- For Argos, use the same direct/pivot-path logic as runtime translation so
+  preflight and actual translation do not disagree. If the wizard cannot
+  know the exact source language yet, probe conservative likely pairs and
+  explain the uncertainty.
+- Per-pair "skip only the missing translations" should wait until the wizard
+  has explicit per-target MT state. Until then, the safe choices are switch
+  engine, disable translation, or install the missing packs.
 
 ## v0.9.5 — what's new
 
@@ -419,7 +506,7 @@ vs original-file rename.
 
 ### Tests
 
-- 625 automated tests covering URL parsing, provider response shapes, TMDB / AniList resolution, SAMI parsing, VTT/ASS input parsing, MT helpers + auto_load/auto_unload, merge with format hints and font-size styling, the wizard scenario harness, rename mode, the named pipeline registry, pipeline orchestration, `--config` CLI overrides, config validation, source smoke diagnostics, help system, and dispatch routing.
+- 649 automated tests covering URL parsing, provider response shapes, TMDB / AniList resolution, SAMI parsing, VTT/ASS input parsing, MT helpers + auto_load/auto_unload, Argos direct/pivot package preflight, wizard run summaries, output/provider/coverage preflight, workflow save-path guardrails, merge with format hints and font-size styling, the wizard scenario harness, rename mode, the named pipeline registry, pipeline orchestration, `--config` CLI overrides, config validation, source smoke diagnostics, help system, and dispatch routing.
 
 ## Planned (post-v0.9.x)
 

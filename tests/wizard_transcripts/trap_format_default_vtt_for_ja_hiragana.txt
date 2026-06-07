@@ -23,11 +23,12 @@ Q1. What would you like to do?
     1) Fetch      Download subtitles from a URL or title
     2) Translate  Fill missing languages with AI
     3) Modify     Clean up cues, add reading aids (furigana, hangul, pinyin, ...)
-    4) Merge      Combine multiple languages into one study file
+    4) Merge      Create one multi-language subtitle file
     5) Rename     Batch rename subtitle files
 
     Common picks:
-      1,3,4   download + modify + merge existing subtitles
+      1-4     full workflow: download, translate, clean up, merge
+      1,3,4   download + clean up + merge (no AI translation)
       5       rename titles, prefixes, change numbering
     Default: 1-4 — fetch, translate, modify, then merge.
 
@@ -37,8 +38,8 @@ Q1. What would you like to do?
 ------------------------------------------------------------------------------------------------
 Q2. Folder or file to process.                                      Progress [◼◼◼◼◼◻◻◻◻◻◻◻◻] 38%
 
-    Drop a folder of .srt files, a single .srt file, or any path
-    your selected step(s) should operate on.
+    Drop a folder of subtitle files, a single subtitle/video file,
+    or any local path your selected step(s) should operate on.
 
   Folder or file path [b=back | q=quit] > {TMP}/Show
     Identified as: local subtitle folder: 0 video file(s), 2 subtitle file(s)
@@ -58,7 +59,7 @@ Q3. Which subtitle languages do you want to collect?                Progress [�
 ------------------------------------------------------------------------------------------------
 Q4. Reading aids (phonetic guides for the original script).         Progress [◼◼◼◼◼◼◼◼◼◼◼◻◻] 88%
 
-    Example: 漢字（かんじ）
+    Example output: 漢字（かんじ）
     Pick any combination by number, or '1' to skip.
     1) No reading aid (skip)
     2) Japanese — hiragana readings for kanji   [ja:hiragana]

@@ -30,7 +30,7 @@ SCENARIO = Scenario(
     expect_stdout_contains=[
         # Description text precedes the menu.
         "Reading aids (phonetic guides for the original script)",
-        "Example: 漢字（かんじ）",
+        "Example output: 漢字（かんじ）",
         "Output format  VTT — best for browser / asbplayer Japanese ruby",
         "1) No reading aid (skip)",
         "Japanese — hiragana readings for kanji",

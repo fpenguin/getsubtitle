@@ -10,6 +10,21 @@ build/
 .DS_Store
 test-furi.*/
 
+# Local scratch/test outputs. Keep reusable fixtures under tests/fixtures
+# and marketing images under examples/ tracked explicitly.
+scratch/
+tmp/
+tmp-*/
+test-output/
+test-outputs/
+
+# Accidental root-level wizard save filenames from prompt answers.
+# Keep this root-only so normal numbered fixtures in subfolders still show up.
+/[0-9]
+/b
+/y
+/*,*.toml
+
 # Local secrets and machine-specific config
 .env
 .env.*
@@ -23,6 +38,23 @@ getsubtitle.json
 user_settings.toml
 !user_settings.example.toml
 
+# Local workflow drafts generated while testing the interactive wizard.
+getsubtitle-workflow*.toml
+*-workflow.toml
+*.draft.toml
+*.scratch.toml
+/Ja2KoVTT.toml
+/fena.toml
+/jpko.toml
+
+# Local README comparison drafts.
+/README-old.md
+/README-revised.md
+
+# Local UX/review planning notes.
+/WIZARD_UX_CODEX_REVIEW.md
+
 # AI-agent briefing kept locally; contains absolute paths for this machine.
+.claude/
 HANDOFF.md
 CLAUDE.md

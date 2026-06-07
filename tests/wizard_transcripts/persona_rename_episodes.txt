@@ -23,11 +23,12 @@ Q1. What would you like to do?
     1) Fetch      Download subtitles from a URL or title
     2) Translate  Fill missing languages with AI
     3) Modify     Clean up cues, add reading aids (furigana, hangul, pinyin, ...)
-    4) Merge      Combine multiple languages into one study file
+    4) Merge      Create one multi-language subtitle file
     5) Rename     Batch rename subtitle files
 
     Common picks:
-      1,3,4   download + modify + merge existing subtitles
+      1-4     full workflow: download, translate, clean up, merge
+      1,3,4   download + clean up + merge (no AI translation)
       5       rename titles, prefixes, change numbering
     Default: 1-4 — fetch, translate, modify, then merge.
 

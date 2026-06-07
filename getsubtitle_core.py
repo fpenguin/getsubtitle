@@ -14234,7 +14234,8 @@ What it asks (only the questions relevant to your step choice appear):
       The translation question still defaults to "Skip", so pressing Enter
       through setup does not silently start AI translation.
       Common picks:
-        '1,3,4' → download + modify + merge existing subtitles
+        '1-4'   → full workflow: download, translate, clean up, merge
+        '1,3,4' → download + clean up + merge (no AI translation)
         '5'     → rename titles, prefixes, or numbering
       Rename is a separate maintenance workflow; choosing it with other
       steps runs rename only so files are not fetched/modified by accident.
@@ -15721,11 +15722,12 @@ def _wizard_q0_steps(state: _WizardState) -> None:
     print("    1) Fetch      Download subtitles from a URL or title")
     print("    2) Translate  Fill missing languages with AI")
     print("    3) Modify     Clean up cues, add reading aids (furigana, hangul, pinyin, ...)")
-    print("    4) Merge      Combine multiple languages into one study file")
+    print("    4) Merge      Create one multi-language subtitle file")
     print("    5) Rename     Batch rename subtitle files")
     print()
     print("    Common picks:")
-    print("      1,3,4   download + modify + merge existing subtitles")
+    print("      1-4     full workflow: download, translate, clean up, merge")
+    print("      1,3,4   download + clean up + merge (no AI translation)")
     print("      5       rename titles, prefixes, change numbering")
     print("    Default: 1-4 — fetch, translate, modify, then merge.")
     while True:
@@ -15764,8 +15766,8 @@ def _wizard_q1_source(state: _WizardState) -> None:
             print("    Drop a season folder or one subtitle file.")
         else:
             print(_wizard_next_q(state, "Folder or file to process."))
-            print("    Drop a folder of .srt files, a single .srt file, or any path")
-            print("    your selected step(s) should operate on.")
+            print("    Drop a folder of subtitle files, a single subtitle/video file,")
+            print("    or any local path your selected step(s) should operate on.")
         while True:
             src = _wizard_prompt("Folder or file path")
             try:
@@ -16326,7 +16328,7 @@ def _wizard_q6_translate(state: _WizardState) -> None:
     print(_wizard_next_q(state, "Fill missing subtitles?"))
     while True:
         print("    1) Skip (use only what's downloaded)")
-        print("    2) Translate with Argos (local, low quality)")
+        print("    2) Translate with Argos (local, basic quality)")
         print("    3) Translate with Ollama (local, good quality; slower)")
         print("    4) Translate with DeepL (online, better quality; needs API key)")
         pick = _wizard_read_choice("Number", ["1", "2", "3", "4"], "1")
@@ -16364,7 +16366,7 @@ def _wizard_q7_reading_aids(state: _WizardState) -> None:
         "zh": "漢字 (pīnyīn)",
         "yue": "漢字 (jyutping)",
     }.get(primary, "original (reading)")
-    print(f"    Example: {example}")
+    print(f"    Example output: {example}")
     print("    Pick any combination by number, or '1' to skip.")
     # 'No reading aid' is the explicit first choice + default. The aid
     # entries shift to indices 2..n+1 so users see the no-op at the top
@@ -17333,6 +17335,53 @@ def _wizard_emit_toml(state: _WizardState) -> str:
     return "\n".join(lines).rstrip() + "\n"
 
 
+_WIZARD_SAVE_ANSWER_NAMES = {
+    "b", "back", "prev", "previous",
+    "q", "quit", "exit",
+    "y", "yes", "n", "no",
+    *{str(i) for i in range(10)},
+}
+
+
+def _wizard_strip_wrapping_quotes(value: str) -> str:
+    cleaned = value.strip()
+    if len(cleaned) >= 2 and cleaned[0] == cleaned[-1] and cleaned[0] in ("'", '"'):
+        return cleaned[1:-1].strip()
+    return cleaned
+
+
+def _wizard_normalize_save_path(raw_path: str) -> tuple[str, Path]:
+    """Return a display path and filesystem path for saved workflow TOML.
+
+    The prompt is easy to answer with a menu key by accident (`b`, `y`, `0`).
+    Reject those before writing files, and make friendly names like `fena`
+    become `fena.toml`.
+    """
+    cleaned = _wizard_strip_wrapping_quotes(raw_path)
+    if not cleaned:
+        raise CliError("Enter a workflow filename like getsubtitle-workflow.toml.")
+
+    raw = Path(cleaned)
+    name = raw.name.strip()
+    if not name:
+        raise CliError("Enter a workflow filename like getsubtitle-workflow.toml.")
+    if raw.suffix == "" and name.lower() in _WIZARD_SAVE_ANSWER_NAMES:
+        raise CliError(
+            f"{name!r} looks like a menu answer, not a filename. "
+            "Enter a TOML filename like fena.toml."
+        )
+    if raw.suffix == "" and "," in name:
+        raise CliError(
+            f"{name!r} looks like a language list, not a filename. "
+            "Enter a TOML filename like ja-en-workflow.toml."
+        )
+    if raw.suffix and raw.suffix.lower() != ".toml":
+        raise CliError("Workflow files must end in .toml.")
+    if raw.suffix == "":
+        raw = raw.with_name(name + ".toml")
+    return str(raw), raw.expanduser()
+
+
 def _wizard_print_saved_workflow_next_steps(path_raw: str, path: Path, cli_string: str) -> None:
     """Explain how to re-run and reuse a saved workflow TOML."""
     config_arg = shlex.quote(path_raw)
@@ -17537,6 +17586,24 @@ def _wizard_coverage_preflight(state: _WizardState) -> list[tuple[str, str, str]
                 f"Coverage estimate: {len(complete)}/{len(selected_keys)} episode(s) have all requested languages",
                 f"Fast scan checked {scanned_count} subtitle candidate(s).",
             ))
+        existing_outputs = _wizard_existing_merge_outputs(
+            rows,
+            selected_keys,
+            requested,
+            state,
+        )
+        if existing_outputs:
+            examples = "; ".join(
+                f"{_episode_label_se(*key)} -> {path.name}"
+                for key, path in existing_outputs[:4]
+            )
+            if len(existing_outputs) > 4:
+                examples += f"; and {len(existing_outputs) - 4} more"
+            notes.append((
+                "warn",
+                f"Existing output files detected for {len(existing_outputs)}/{len(selected_keys)} selected episode(s)",
+                examples + ". Choose a different output folder, remove old files, or run from CLI with --force.",
+            ))
     elif "translate" in state.steps:
         source_langs = sorted({lang for key in selected_keys for lang in grouped.get(key, set())})
         if not source_langs:
@@ -17546,6 +17613,33 @@ def _wizard_coverage_preflight(state: _WizardState) -> list[tuple[str, str, str]
                 "Add at least one source-language SRT before running translate.",
             ))
     return notes
+
+
+def _wizard_existing_merge_outputs(
+    rows: list[tuple[Path, int, int, str, bool, str]],
+    selected_keys: list[tuple[int, int]],
+    requested: list[str],
+    state: _WizardState,
+) -> list[tuple[tuple[int, int], Path]]:
+    if "merge" not in state.steps or len(requested) < 2 or not state.output:
+        return []
+    output = Path(state.output).expanduser()
+    master = (state.master or requested[0]).lower()
+    if master not in requested:
+        master = requested[0]
+    by_episode_lang: dict[tuple[int, int, str], Path] = {}
+    for path, season, episode, lang, _is_mt, _fmt in rows:
+        by_episode_lang.setdefault((season, episode, lang), path)
+    existing: list[tuple[tuple[int, int], Path]] = []
+    fmt = (state.format or "srt").lower()
+    for season, episode in selected_keys:
+        master_path = by_episode_lang.get((season, episode, master))
+        if master_path is None:
+            continue
+        dest = output / combined_output_path(master_path, requested, fmt=fmt)
+        if dest.exists():
+            existing.append(((season, episode), dest))
+    return existing
 
 
 def _wizard_probe_dependencies(state: _WizardState) -> list[tuple[str, str, str]]:
@@ -17935,7 +18029,11 @@ def interactive_main(argv: list[str] | None = None) -> int:
             # pick a different name instead of dropping out of the wizard.
             while True:
                 path_raw = _wizard_prompt("Save to (relative paths OK)", default_name)
-                path = Path(path_raw).expanduser()
+                try:
+                    path_raw, path = _wizard_normalize_save_path(path_raw)
+                except CliError as e:
+                    print(f"  {e}")
+                    continue
                 if path.exists():
                     if not _wizard_yesno(f"{path} exists. Overwrite?", default=False):
                         print("  Pick a different filename, or 'q' to cancel.")

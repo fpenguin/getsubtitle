@@ -242,11 +242,15 @@ sync = "auto"
 # line per language. Default: false.
 preserve_lines = false
 
+# Prefix each merged line with [JA] / [KO] / ... so a crowded stack is
+# easier to scan. Default: false.
+label_langs = false
+
 # Text size for merged outputs. "auto" chooses a readable size from the
 # number of stacked rows; other values: regular, smaller, larger, or a
-# number like "30". ASS is reliable. SRT/VTT are best-effort. Calibrated
-# presets: SRT smaller/regular/larger = 12/16/20px; ASS = 46/58/70.
-# SMI uses player default.
+# number like "30". SRT and ASS have calibrated presets from player tests:
+# SRT smaller/regular/larger = 12/16/20px; ASS = 46/58/70. VTT and SMI are
+# mostly controlled by the player, so font-size hints may be ignored.
 font_size = "auto"
 
 # Master-language priority list. When merging cues from multiple
@@ -266,6 +270,10 @@ priority = []
 # merged output. Uses the SPEC from [modify].reading. Turn off if you
 # don't want readings in the stacked file. Default: true.
 reading = true
+
+# Add a short GetSubtitle credit/disclaimer cue at the beginning and end of
+# merged study files. Default: true. Use --no-watermark per run to skip it.
+watermark = true
 
 
 # ─── [output] ─── where files go and global format defaults ────────────

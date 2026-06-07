@@ -32,42 +32,20 @@ Q1. What would you like to do?
       5       rename titles, prefixes, change numbering
     Default: 1-4 — fetch, translate, modify, then merge.
 
-  Numbers or ranges, or Enter for default [1-4 | q=quit] > 1,3,4
-    Selected: fetch + modify + merge.
+  Numbers or ranges, or Enter for default [1-4 | q=quit] > 3,4
+    Selected: modify + merge.
 
 ------------------------------------------------------------------------------------------------
-Q2. What should getsubtitle work on?                                Progress [◼◼◼◻◻◻◻◻◻◻◻◻◻] 25%
+Q2. Folder or file to process.                                      Progress [◼◼◼◼◼◻◻◻◻◻◻◻◻] 38%
 
-    1) A movie/show title (The Simpsons, Totoro, The Matrix, …)
-    2) A streaming/catalog URL (IMDb, AniList, Netflix, Crunchyroll, …)
-    3) A folder or file on disk (your Plex/Movies, ~/Downloads, …)
+    Drop a folder of subtitle files, a single subtitle/video file,
+    or any local path your selected step(s) should operate on.
 
-  Number [3 | b=back | q=quit] > 2
-
-------------------------------------------------------------------------------------------------
-Q3. Enter the URL.                                                  Progress [◼◼◼◼◼◻◻◻◻◻◻◻◻] 42%
-
-  URL [b=back | q=quit] > https://www.imdb.com/title/tt28299608/
-    Identified as: IMDb title URL
+  Folder or file path [b=back | q=quit] > {TMP}/Show
+    Identified as: local subtitle folder: 0 video file(s), 3 subtitle file(s)
 
 ------------------------------------------------------------------------------------------------
-Q4. What episode scope?                                             Progress [◼◼◼◼◼◼◼◼◻◻◻◻◻] 58%
-
-    1) Movie / single item (no season/episode)
-    2) A specific season + episode (or range)
-    3) Whole season, every episode (-e all)
-    4) Auto — let getsubtitle infer from the URL/title metadata
-       (anime URLs typically resolve to single episodes; movies to a
-        single item; TV without -e usually picks S01E01)
-
-  Number [4 | b=back | q=quit] > 2
-
-  Season or range (e.g. 1, 2-3, all) [1 | b=back | q=quit] > 1
-
-  Episode or range within each season (e.g. 5, 1-10, all) [1 | b=back | q=quit] > 1
-
-------------------------------------------------------------------------------------------------
-Q5. Which subtitle languages do you want to collect?                Progress [◼◼◼◼◼◼◼◼◼◼◻◻◻] 75%
+Q3. Which subtitle languages do you want to collect?                Progress [◼◼◼◼◼◼◼◼◻◻◻◻◻] 62%
 
     List them in the order you want them displayed (top → bottom).
 
@@ -79,7 +57,7 @@ Q5. Which subtitle languages do you want to collect?                Progress [�
   Languages (comma-separated) [ja,en | b=back | q=quit] > ja,en
 
 ------------------------------------------------------------------------------------------------
-Q6. Reading aids (phonetic guides for the original script).         Progress [◼◼◼◼◼◼◼◼◼◼◼◼◻] 92%
+Q4. Reading aids (phonetic guides for the original script).         Progress [◼◼◼◼◼◼◼◼◼◼◼◻◻] 88%
 
     Example output: 漢字（かんじ）
     Pick any combination by number, or '1' to skip.
@@ -96,11 +74,11 @@ Q6. Reading aids (phonetic guides for the original script).         Progress [�
 ======================================================================
 Here's the plan:
 ======================================================================
-  • Fetch ja, en for https://www.imdb.com/title/tt28299608/  (season 1, episode 1)
+  • Use local ja, en files in {TMP}/Show
   • Clean up cues (single line, strip broadcast noise)
   • Stack ja, en into one SRT file  →  *.ja-en.srt
   • Use subtitle text size regular (SRT support depends on player)
-  • Save to ~/Downloads/GetSubtitle
+  • Save to {TMP}/Show
 ======================================================================
 Smart defaults filled in for you (edit via 'Edit a single answer'):
 ======================================================================
@@ -109,7 +87,7 @@ Smart defaults filled in for you (edit via 'Edit a single answer'):
   Cleanup preset on  (single-line cues + strip broadcast noise)
   Output format  SRT — plays almost everywhere (Plex, TVs, phones).  Edit to pick SRT / ASS / VTT / SMI / TXT.
   Text size      regular  (calibrated; edit to change)
-  Output folder  ~/Downloads/GetSubtitle
+  Output folder  {TMP}/Show  (beside source)
 ======================================================================
 
     1) Run it now
@@ -119,23 +97,29 @@ Smart defaults filled in for you (edit via 'Edit a single answer'):
     5) Quit
     6) Show the exact command & workflow file
 
-  Number [2 | b=back | q=quit] > 2
+  Number [1 | b=back | q=quit] > 1
+
+Preflight check — 1 item(s) to know about:
+  • Coverage estimate: 1/2 episode(s) already have all requested languages
+      Why: Optional — the run works, but may fail or look worse without it.
+      Fix: S01E02 missing en
+
+Running:
+  getsubtitle --source {TMP}/Show --modify --strip-cc-noise --single-line --merge --languages ja,en --format srt --font-size regular --output {TMP}/Show
 
 
-  Save to (relative paths OK) [getsubtitle-workflow.toml] > {TMP}/saved.toml
-Saved: {TMP}/saved.toml
+======================================================================
+Workflow summary
+======================================================================
+Result: completed
+Source: {TMP}/Show
+Scope: auto / not specified
+Languages requested: ja, en
+Output folder: {TMP}/Show
+Preflight warnings: 1
 
-Your saved.toml runs the same workflow as this command:
-  # getsubtitle --fetch https://www.imdb.com/title/tt28299608/ --season 1 --episode 1 --languages ja,en --no-engine --modify --season 1 --episode 1 --strip-cc-noise --single-line --merge --languages ja,en --season 1 --episode 1 --format srt --font-size regular --output ~/Downloads/GetSubtitle
-
-Run it later with:
-  getsubtitle --config {TMP}/saved.toml
-
-You can recycle this TOML and override saved settings with extra CLI flags.
-For example, reuse the same language, reading-aid, translation, and merge
-choices on another show or season:
-  getsubtitle --config {TMP}/saved.toml --source 'https://www.imdb.com/title/tt1234567/' --season 3 --episode all --output "$HOME/Downloads/GetSubtitle/TV Show/Season 03"
-
-CLI flags win over matching TOML settings, so the file can stay as a reusable template.
-
-  Open folder containing saved.toml? [Y/n] > n
+Next:
+  Merge later with: getsubtitle merge {TMP}/Show -l ja,en
+  Re-run this workflow command after any setup fixes:
+    getsubtitle --source {TMP}/Show --modify --strip-cc-noise --single-line --merge --languages ja,en --format srt --font-size regular --output {TMP}/Show
+  Open folder? [Y/n] > n

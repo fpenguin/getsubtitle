@@ -8310,6 +8310,45 @@ def test_wizard_save_refuses_overwrite_without_confirm():
         assert after == before, "save logic must not overwrite when user says no"
 
 
+def test_wizard_save_path_normalizes_friendly_name_to_toml():
+    display, path = MODULE["_wizard_normalize_save_path"]("'fena workflow'")
+    assert display == "fena workflow.toml"
+    assert path == Path("fena workflow.toml")
+
+    display2, path2 = MODULE["_wizard_normalize_save_path"]("~/workflows/jpko")
+    assert display2 == "~/workflows/jpko.toml"
+    assert str(path2).endswith("/workflows/jpko.toml")
+
+
+def test_wizard_save_path_rejects_menu_answer_filenames():
+    bad = ["b", "back", "q", "quit", "y", "n", "0", "3", "4"]
+    for raw in bad:
+        try:
+            MODULE["_wizard_normalize_save_path"](raw)
+        except MODULE["CliError"] as e:
+            assert "looks like a menu answer" in str(e)
+        else:
+            raise AssertionError(f"{raw!r} should not be accepted as a workflow filename")
+
+
+def test_wizard_save_path_rejects_language_list_filenames():
+    try:
+        MODULE["_wizard_normalize_save_path"]("ja,en")
+    except MODULE["CliError"] as e:
+        assert "looks like a language list" in str(e)
+    else:
+        raise AssertionError("ja,en should not be accepted as a workflow filename")
+
+
+def test_wizard_save_path_rejects_non_toml_extension():
+    try:
+        MODULE["_wizard_normalize_save_path"]("workflow.txt")
+    except MODULE["CliError"] as e:
+        assert "must end in .toml" in str(e)
+    else:
+        raise AssertionError("workflow.txt should not be accepted as a workflow filename")
+
+
 def test_wizard_saved_workflow_next_steps_mentions_cli_overrides():
     import contextlib
     import io
@@ -8615,6 +8654,38 @@ def test_wizard_coverage_preflight_warns_about_partial_local_merge_set(tmp_path)
     partial = [n for n in notes if "already have all requested languages" in n[1]]
     assert partial and partial[0][0] == "warn"
     assert "S01E02 missing en" in partial[0][2]
+
+
+def test_wizard_coverage_preflight_warns_about_existing_merge_outputs(tmp_path):
+    (tmp_path / "Show - S01E01.ja.srt").write_text(
+        "1\n00:00:01,000 --> 00:00:02,000\nこんにちは\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "Show - S01E01.en.srt").write_text(
+        "1\n00:00:01,000 --> 00:00:02,000\nHello\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "Show - S01E01.ja-en.srt").write_text(
+        "1\n00:00:01,000 --> 00:00:02,000\nこんにちは\nHello\n",
+        encoding="utf-8",
+    )
+    state = _wizard_state(
+        source=str(tmp_path),
+        source_kind="path",
+        languages=["ja", "en"],
+        order=["ja", "en"],
+        season="1",
+        episode="1",
+        mt_engine="",
+        reading_aids=[],
+        format="srt",
+        output=str(tmp_path),
+        steps={"modify", "merge"},
+    )
+    notes = MODULE["_wizard_coverage_preflight"](state)
+    existing = [n for n in notes if "Existing output files detected" in n[1]]
+    assert existing and existing[0][0] == "warn"
+    assert "Show - S01E01.ja-en.srt" in existing[0][2]
 
 
 def test_format_failure_what_why_how():
