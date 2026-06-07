@@ -8808,6 +8808,42 @@ def test_wizard_rename_can_keep_changes_then_change_another_field(tmp_path, monk
     assert (tmp_path / "MF Ghost - S03E26.ja.combined.vtt").exists()
 
 
+def test_wizard_rename_discard_does_not_lock_field(tmp_path, monkeypatch):
+    # Regression (B4): discarding a previewed change must NOT mark the field
+    # as handled — the user can retry the same field with a different value.
+    original = tmp_path / "Show - S01E01.ja.srt"
+    original.write_text("1\n", encoding="utf-8")
+    answers = iter([
+        "1",          # variation: the only group
+        "1",          # component: Title
+        "WrongName",  # new title (will be discarded)
+        "3",          # discard this change and choose another field
+        "1",          # component: Title AGAIN — must still be allowed
+        "RightName",  # new title (the keeper)
+        "1",          # looks good, apply now
+        "1",          # copy and apply (keep originals)
+        "y",          # confirm
+    ])
+    monkeypatch.setitem(MODULE["_wizard_prompt"].__globals__, "input", lambda *a, **k: next(answers))
+    state = MODULE["_WizardState"](steps={"rename"}, source=str(tmp_path), source_kind="path")
+    MODULE["_wizard_q_rename"](state)
+    assert (tmp_path / "RightName - S01E01.ja.srt").exists()
+    assert original.exists()  # copy mode keeps the original
+
+
+def test_wizard_rename_empty_folder_lists_what_it_found(tmp_path, monkeypatch, capsys):
+    # CODEX critique #8: a folder of validly-named-but-unmatched subtitles
+    # should show what was found, not just one expected-shape line.
+    (tmp_path / "random_fansub_01.srt").write_text("1\n", encoding="utf-8")
+    (tmp_path / "Show S01E01 ja.srt").write_text("1\n", encoding="utf-8")
+    monkeypatch.setitem(MODULE["_wizard_prompt"].__globals__, "input", lambda *a, **k: "")
+    state = MODULE["_WizardState"](steps={"rename"}, source=str(tmp_path), source_kind="path")
+    MODULE["_wizard_q_rename"](state)
+    out = capsys.readouterr().out
+    assert "Found 2 subtitle file(s)" in out
+    assert "random_fansub_01.srt" in out
+
+
 def test_wizard_next_q_numbers_contiguously():
     """`_wizard_next_q` hands out gap-free labels from a per-pass counter
     so trimmed flows never show Q1 -> Q2 -> Q4 jumps. The reset lives in

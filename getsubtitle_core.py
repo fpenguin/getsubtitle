@@ -14490,6 +14490,10 @@ def _wizard_rename_change_details(component: str, sample: _RenameParts) -> tuple
             "modifiers": "New modifiers (dot-separated; empty removes modifiers)",
             "extension": "New extension (without dot)",
         }[component]
+        if component == "extension":
+            print("    This only changes the filename — it does NOT convert the")
+            print("    subtitle format. For real conversion use `getsubtitle modify")
+            print("    --convert smi-to-srt` (and similar).")
         value = _wizard_prompt(prompt, "")
         if component != "modifiers" and not value.strip():
             print("Empty value; rename cancelled.")
@@ -14548,6 +14552,21 @@ def _wizard_q_rename(state: _WizardState) -> None:
     if not parts:
         print("No renameable subtitle filenames found.")
         print("Expected shape: Title - S03E01.ja.furigana-hiragana.vtt")
+        # Show what we DID find so a folder of validly-named-but-different
+        # files doesn't look like an empty/broken folder.
+        if source.is_dir():
+            found = [
+                p.name for p in sorted(source.iterdir())
+                if p.is_file() and p.suffix.lower() in _RENAME_SUBTITLE_EXTS
+            ]
+            if found:
+                print()
+                print(f"Found {len(found)} subtitle file(s), but none match that shape:")
+                for name in found[:5]:
+                    print(f"    {name}")
+                if len(found) > 5:
+                    print(f"    ... and {len(found) - 5} more")
+                print("Tip: rename needs ' - ' before SxxExx, e.g. 'Show - S01E01.ja.srt'.")
         return
     # Surface subtitle files we could not parse so the user isn't surprised
     # that some files in the folder are left untouched.
