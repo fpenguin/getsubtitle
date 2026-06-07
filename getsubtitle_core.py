@@ -7526,7 +7526,7 @@ def build_combine_parser() -> argparse.ArgumentParser:
     p.add_argument("--master", metavar="LANG", help="Override the timing master language (default: first language in -l).")
     p.add_argument("--label-langs", dest="label_langs", action="store_true", default=None, help="Prefix each language's line in a stacked cue with [JA]/[KO]/… so tracks are easy to tell apart.")
     p.add_argument("--no-label-langs", dest="label_langs", action="store_false", help="Never label languages, even when [merge] label_langs = true is set in user_settings.toml.")
-    p.add_argument("--font-size", metavar="SIZE", help="Subtitle text size for merged outputs. Use auto, regular/recommended, smaller, larger, or a number like 30. ASS is reliable. SRT/VTT are best-effort. Calibrated presets: SRT smaller/regular/larger = 12/16/20px; ASS = 46/58/70. SMI uses player default.")
+    p.add_argument("--font-size", metavar="SIZE", help="Subtitle text size for merged outputs. Use auto, regular/recommended, smaller, larger, or a number like 30. SRT and ASS have calibrated presets from player tests: SRT smaller/regular/larger = 12/16/20px; ASS = 46/58/70. VTT and SMI are mostly player-controlled.")
     p.add_argument("--single-line", "--single", dest="preserve_lines", action="store_false", default=argparse.SUPPRESS, help="Flatten each language to one line per cue. This is the default; kept as an explicit readability flag.")
     p.add_argument("--preserve-lines", action="store_true", default=argparse.SUPPRESS, help="Keep each source language's original line breaks. Default: flatten each language to a single line.")
     # Hidden compat aliases for the pre-reading --furigana flag; kept so old
@@ -11790,13 +11790,13 @@ reading_format = "srt"            # srt | ass | vtt | all
 languages = "ja,en"
 sync = "auto"                     # auto | strict | loose
 preserve_lines = false
+label_langs = false               # prefix merged lines with [JA] / [KO] / ...
 font_size = "auto"                # auto | regular | smaller | larger | number
-                                  # Named sizes are format-calibrated; numbers are literal
-                                  # SRT smaller uses player default, regular uses <big>,
-                                  # larger uses 24px, custom numbers use px.
-                                  # SMI regular/larger/custom use player default.
+                                  # SRT presets = 12/16/20px; ASS = 46/58/70.
+                                  # VTT/SMI font size is mostly player-controlled.
 priority = []                     # e.g. ["ja", "en", "ko"]
 reading = "ja:hiragana"           # inline readings into merged output
+watermark = true                  # add GetSubtitle credit/disclaimer cues
 
 [output]
 target = "~/Downloads/GetSubtitle"
@@ -13471,7 +13471,8 @@ copy-paste between this file and any workflow config. In execution order:
                   [translate.ollama_models] — per-pair model overrides +
                                               auto_load / auto_unload flags
   [modify]        single_line, strip_cc_noise, reading, reading_format
-  [merge]         languages, sync, preserve_lines, font_size, priority, reading
+  [merge]         languages, sync, preserve_lines, label_langs, font_size,
+                  priority, reading, watermark
   [output]        target, layout, open_folder, force, debug_providers
   [experimental]  subdivx, addic7ed
 
@@ -13711,12 +13712,13 @@ Merge options:
   --label-langs            Prefix each language's line with [JA]/[KO]/… so
                            stacked tracks are easy to tell apart. Also
                            [merge] label_langs = true in user_settings.toml.
+  --no-label-langs         Disable labels even when user_settings enables them.
   --font-size SIZE         Text size for merged outputs: auto, regular,
                            smaller, larger, or a number like 30.
-                           ASS is reliable. SRT/VTT are best-effort.
-                           Calibrated presets: SRT smaller/regular/larger =
-                           12/16/20px; ASS = 46/58/70.
-                           SMI uses player default.
+                           SRT and ASS have calibrated presets:
+                           SRT smaller/regular/larger = 12/16/20px;
+                           ASS = 46/58/70. VTT and SMI are mostly
+                           player-controlled.
   --single-line, --single  Flatten each language to one line. Default behavior
   --preserve-lines         Keep original line breaks within each language
   --reading SPEC      Inline reading aids on the matching language line
@@ -13950,6 +13952,11 @@ What it asks (only the questions relevant to your step choice appear):
         th:royal-thai / ar:ala-lc / etc.                backend coming
       The header example adapts to your primary script
       (漢字（かんじ） for ja, 한글 (hangeul) for ko, 漢字 (pīnyīn) for zh).
+  • Final output format — SRT / ASS / VTT / SMI / TXT, with a recommendation
+      based on your reading-aid choice and likely viewing environment.
+  • Subtitle text size — only for merged SRT/ASS outputs. Presets are
+      calibrated from local playback tests; VTT/SMI are mostly controlled
+      by the player, so the wizard skips font-size for those formats.
   • Rename mode — groups matching subtitle filenames by variation
       (for example `Title - S03E**.ja.srt`), lets you choose one group
       or all groups, previews every old → new filename, checks for
@@ -15525,25 +15532,24 @@ def _wizard_q2_languages(state: _WizardState) -> None:
         # de-dupe preserving order
         seen: set[str] = set()
         state.languages = [c for c in norm if not (c in seen or seen.add(c))]
-        if len(state.languages) < 5:
+        if len(state.languages) < 4:
             break
         print()
         print(f"    You selected {len(state.languages)} languages: {', '.join(state.languages)}")
-        print("    Multi-language subtitle files are usually readable with 2-4 languages.")
-        print("    5+ languages may cover the screen or become hard to read.")
+        print("    Stacked subtitles read most comfortably with 2-3 languages.")
+        print("    4+ can cover a small screen or get hard to read.")
         print()
         print("    1) Continue anyway")
-        print(f"    2) Keep only the first 4: {', '.join(state.languages[:4])}")
+        print(f"    2) Keep only the first 3: {', '.join(state.languages[:3])}")
         print("    3) Go back and edit languages")
-        pick = _wizard_prompt("Number", "1").strip()
+        pick = _wizard_read_choice("Number", ["1", "2", "3"], "1")
         if pick == "1":
             break
         if pick == "2":
-            state.languages = state.languages[:4]
+            state.languages = state.languages[:3]
             break
-        if pick == "3":
-            continue
-        print("    Invalid selection. Type 1, 2, or 3.")
+        # pick == "3": loop back and re-ask languages
+        continue
 
     if "fetch" in state.steps and "merge" not in state.steps and len(state.languages) >= 2:
         print()
@@ -15567,13 +15573,13 @@ def _wizard_q2_languages(state: _WizardState) -> None:
         }
         label = ", ".join(names[lang] for lang in reading_capable)
         print()
-        print(f"    {label} reading aids are available, but Modify is not selected.")
-        print("    Add the Modify step so I can ask which reading aids you want?")
-        if _wizard_yesno("Add Modify step for reading aids?", default=True):
+        print(f"    {label} reading aids need the Modify step (not selected yet).")
+        if _wizard_yesno(f"Add Modify so I can offer {label} reading aids?", default=True):
             state.steps.add("modify")
-            print("    Selected: fetch + modify.")
+            picked = " + ".join(s for s in _VALID_STEPS if s in state.steps)
+            print(f"    Selected: {picked}.")
         else:
-            print("    Reading aids skipped for this workflow.")
+            print("    No reading aids this run.")
     _wizard_offer_fetch_for_missing_local_languages(state)
 
 
@@ -17124,7 +17130,14 @@ def interactive_main(argv: list[str] | None = None) -> int:
             # post-run prompt below. Without this the user sees the prompt
             # twice (merge_main asks, then the wizard asks again).
             dispatch_argv = _wizard_emit_cli(run_state)[1:]
-            if "--no-open-folder-prompt" not in dispatch_argv:
+            # Only verbs that prompt "Open folder?" accept this flag — merge
+            # (combine) and the fetch / URL flow. A PATH-form modify-only or
+            # translate-only dispatch would REJECT it (argparse error), so only
+            # inject when the run includes a folder-opening verb. Pipeline-form
+            # runs are safe either way because split_pipeline_argv lifts the
+            # flag into the shared block, never into modify/translate.
+            opens_folder = bool(run_state.steps & {"merge", "fetch"})
+            if opens_folder and "--no-open-folder-prompt" not in dispatch_argv:
                 dispatch_argv.append("--no-open-folder-prompt")
             rc = main(dispatch_argv)
             # Post-run cleanup + folder opener. Skipped silently on a

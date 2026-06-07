@@ -38,10 +38,9 @@ Q3. Which subtitle languages do you want to collect?
       japanese,korean,english,spanish : 2-letter codes and full language names both work
   Languages (comma-separated) [ja,en | b=back | q=quit] > ja,en
 
-    Japanese furigana reading aids are available, but Modify is not selected.
-    Add the Modify step so I can ask which reading aids you want?
-  Add Modify step for reading aids? [Y/n | b=back | q=quit] > n
-    Reading aids skipped for this workflow.
+    Japanese furigana reading aids need the Modify step (not selected yet).
+  Add Modify so I can offer Japanese furigana reading aids? [Y/n | b=back | q=quit] > n
+    No reading aids this run.
 
 Q4. Final output format.
     Recommended: SRT — SRT is the safest general-purpose choice.
