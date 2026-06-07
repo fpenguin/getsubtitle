@@ -7,7 +7,7 @@ later, run it now, or edit a single answer. Type 'b' to go back,
 'q' to quit, or Ctrl-C to bail.
 
 
-Q1. What do you want getsubtitle to do?
+Q1 of ~6. What do you want getsubtitle to do?
     1) Fetch     — download subtitles from a URL or title
     2) Translate — fill any missing language with AI translation
     3) Modify    — clean up cues, add reading aids (furigana/hangul/pinyin/…)
@@ -23,13 +23,13 @@ Q1. What do you want getsubtitle to do?
   Numbers or ranges, or Enter for default [1-4 | q=quit] > 3,4
     Selected: modify + merge.
 
-Q2. Folder or file to process.
+Q2 of ~4. Folder or file to process.
     Drop a folder of .srt files, a single .srt file, or any path
     your selected step(s) should operate on.
   Folder or file path [b=back | q=quit] > {TMP}/Foo
     Identified as: local subtitle folder: 0 video file(s), 1 subtitle file(s)
 
-Q3. Which subtitle languages do you want to collect?
+Q3 of ~4. Which subtitle languages do you want to collect?
     List them in the order you want them displayed (top → bottom).
 
     Common Picks
@@ -47,7 +47,7 @@ Q3. Which subtitle languages do you want to collect?
     Tip: restart with `getsubtitle -i`, choose Fetch, and use a
     catalog URL/title so getsubtitle can look online for missing tracks.
 
-Q4. Reading aids (phonetic guides for the original script).
+Q4 of ~4. Reading aids (phonetic guides for the original script).
     VTT renders them as ruby above the script; SRT / SMI / ASS
     show them as parenthetical 漢字（かんじ） form.
     Pick any combination by number, or '1' to skip.
@@ -57,35 +57,12 @@ Q4. Reading aids (phonetic guides for the original script).
     4) Japanese — full-sentence romaji   [ja:romaji]
   Numbers (comma-separated) [1 | b=back | q=quit] > 1
 
-Q5. Final output format.
-    Recommended: SRT — SRT is the safest general-purpose choice.
-
-    1) SRT  — most compatible; best for Plex, Smart TV, tablet apps.
-    2) ASS  — best desktop-player control for layout and font size.
-    3) VTT  — best for browser/asbplayer Japanese ruby; local players vary.
-    4) SMI  — legacy Korean SAMI; font size is usually player-controlled.
-    5) TXT  — plain text without timestamps
-  Final format [1 | b=back | q=quit] >
-
-Q6. Subtitle text size?
-    This output will usually show 2 lines at once.
-    Format: SRT
-    SRT and ASS use calibrated presets from player testing.
-    Calibrated presets: SRT smaller/regular/larger = 12/16/20px;
-    ASS smaller/regular/larger = 46/58/70.
-
-    1) Regular (16px) — recommended
-    2) Smaller (12px)
-    3) Larger (20px)
-    4) Custom — enter exact font size
-  Number [1 | b=back | q=quit] >
-
 ======================================================================
 Here's the plan:
 ======================================================================
   • Use local ja, en files in {TMP}/Foo
   • Clean up cues (single line, strip broadcast noise)
-  • Stack ja, en into one SRT study file
+  • Stack ja, en into one SRT file  →  *.ja-en.srt
   • Use subtitle text size regular (SRT support depends on player)
   • Save to {TMP}/Foo
 ======================================================================
@@ -94,27 +71,9 @@ Smart defaults filled in for you (edit via 'Edit a single answer'):
   Display order  ja, en  (top → bottom on screen)
   Timing master  ja  (first language)
   Cleanup preset on  (single-line cues + strip broadcast noise)
+  Output format  SRT  (recommended — SRT is the safest general-purpose choice.)
+  Text size      regular  (calibrated; edit to change)
   Output folder  {TMP}/Foo  (beside source)
-======================================================================
-Based on your choice, you can try:
-======================================================================
-  getsubtitle --source {TMP}/Foo --modify --strip-cc-noise --single-line --merge --languages ja,en --format srt --font-size regular --output {TMP}/Foo
-======================================================================
-Equivalent workflow file (save as .toml):
-======================================================================
-  [modify]
-  single_line = true
-  strip_cc_noise = true
-
-  [merge]
-  languages = "ja,en"
-  sync = "auto"
-  format = "srt"
-  font_size = "regular"
-
-  [output]
-  target = "{TMP}/Foo"
-  layout = "archive"
 ======================================================================
 
     1) Run it now
@@ -122,5 +81,6 @@ Equivalent workflow file (save as .toml):
     3) Edit a single answer
     4) Start over from beginning
     5) Quit
+    6) Show the exact command & workflow file
   Number [1 | b=back | q=quit] > 5
 Quit.

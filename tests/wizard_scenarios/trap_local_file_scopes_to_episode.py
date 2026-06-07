@@ -22,8 +22,6 @@ SCENARIO = Scenario(
         "{TMP}/Show/Show.S02E05.1080p.WEB-DL.mp4",  # specific video file
         "ja,en",                                # languages
         "1",                                    # reading aids — skip
-        "",                                     # final format → recommended SRT
-        "",                                     # font size → Regular
         "5",                                    # quit
     ],
     expect_state={

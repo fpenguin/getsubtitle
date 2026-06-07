@@ -20,8 +20,6 @@ SCENARIO = Scenario(
         "ja,en",
         "n",            # decline fetch on missing langs → see restart hint
         "1",            # reading aids — skip
-        "",             # final format → recommended SRT
-        "",             # font size → Regular
         "5",            # quit
     ],
     expect_state={

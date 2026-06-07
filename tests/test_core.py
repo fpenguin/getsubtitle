@@ -8726,7 +8726,8 @@ def test_wizard_q11_banner_uses_fixed_70_char_rule():
     fn_g = MODULE["_wizard_q11_action"].__globals__
     saved_input = fn_g.get("input")
     try:
-        fn_g["input"] = lambda *a, **k: "1"
+        _seq = iter(["6", "1"])  # 6 = show exact command/workflow, then run
+        fn_g["input"] = lambda *a, **k: next(_seq, "1")
         with contextlib.redirect_stdout(buf):
             MODULE["_wizard_q11_action"](s)
     finally:
@@ -8737,9 +8738,9 @@ def test_wizard_q11_banner_uses_fixed_70_char_rule():
     assert rule in out
     # No oversize rule.
     assert "=" * 80 not in out
-    # CLI + workflow preview both rendered (v0.7.1 reworded the label).
+    # CLI + workflow preview appear once option 6 is chosen.
     assert cli in out
-    assert "workflow file" in out
+    assert "Workflow file" in out
     assert "About to run" not in out
 
 
@@ -9175,10 +9176,11 @@ def test_wizard_next_q_numbers_contiguously():
     s = MODULE["_WizardState"]()
     s._qcount = 0
     labels = [MODULE["_wizard_next_q"](s) for _ in range(4)]
-    assert labels == ["Q1.", "Q2.", "Q3.", "Q4."]
-    # Re-priming the counter (as the edit loop does) continues from there.
+    # Format is "Q{n} of ~{total}." — the running number must increment 1..4.
+    assert [l.split(" of ", 1)[0] for l in labels] == ["Q1", "Q2", "Q3", "Q4"]
+    assert all(" of ~" in l and l.endswith(".") for l in labels)
     s._qcount = 1
-    assert MODULE["_wizard_next_q"](s) == "Q2."
+    assert MODULE["_wizard_next_q"](s).startswith("Q2 of ~")
 
 
 def test_wizard_qcount_before_honors_step_gating():
@@ -9248,13 +9250,14 @@ def test_wizard_languages_warns_and_can_trim_five_language_stack():
     saved_prompt = fn_g["_wizard_prompt"]
     answers = iter(["ja,ko,en,es,fr", "2"])
     try:
-        fn_g["_wizard_prompt"] = lambda _q, _d=None: next(answers)
+        fn_g["_wizard_prompt"] = lambda _q, _d=None, **_kwargs: next(answers)
         with contextlib.redirect_stdout(io.StringIO()) as buf:
             MODULE["_wizard_q2_languages"](s)
         out = buf.getvalue()
-        assert s.languages == ["ja", "ko", "en", "es"]
+        assert s.languages == ["ja", "ko", "en"]
         assert "You selected 5 languages" in out
-        assert "Keep only the first 4" in out
+        assert "4+ can cover a small screen" in out
+        assert "Keep only the first 3" in out
     finally:
         fn_g["_wizard_prompt"] = saved_prompt
 
@@ -9275,9 +9278,11 @@ def test_wizard_fetch_only_multiple_languages_can_add_merge_for_format_questions
         assert s.languages == ["en", "es"]
         assert s.steps == {"fetch", "merge"}
         assert "Fetch without Merge" in out
-        assert not MODULE["_wizard_step_skip"]("format", s)
-        s.format = "ass"
-        assert MODULE["_wizard_should_ask_font_size"](s)
+        # Format/text size are smart-defaulted now (not asked); adding Merge
+        # makes them apply, and _wizard_apply_smart_defaults fills them in.
+        notes = MODULE["_wizard_apply_smart_defaults"](s)
+        assert s.format
+        assert "Output format" in notes
     finally:
         fn_g["_wizard_prompt"] = saved_prompt
         fn_g["_wizard_yesno"] = saved_yesno
@@ -9747,8 +9752,9 @@ def test_wizard_apply_smart_defaults_fills_missing_answers():
     assert s.order == ["ja", "en"]
     assert s.master == ""  # blank = first wins downstream
     assert s.asbplayer is True
-    assert s.format == ""  # format is now chosen by the environment-guided step
+    assert s.format == "vtt"  # ja:hiragana -> recommended VTT, smart-defaulted
     assert s.output == "~/Downloads/GetSubtitle"
+    assert "Output format" in notes
     # All smart-default notes appear in the banner-friendly summary.
     assert "Display order" in notes
     assert "Timing master" in notes
@@ -9756,16 +9762,18 @@ def test_wizard_apply_smart_defaults_fills_missing_answers():
     assert "Output folder" in notes
 
 
-def test_wizard_smart_defaults_do_not_pick_output_format():
-    """Output format is chosen by the environment-guided format step."""
+def test_wizard_smart_defaults_pick_recommended_output_format():
+    """Output format is now smart-defaulted to the recommended choice
+    (shown in the banner, editable). ja,en with no reading aids -> SRT."""
     s = MODULE["_WizardState"](
         source="https://www.themoviedb.org/movie/8392",
         source_kind="url",
         languages=["ja", "en"],
         reading_aids=[],
     )
-    MODULE["_wizard_apply_smart_defaults"](s)
-    assert s.format == ""
+    notes = MODULE["_wizard_apply_smart_defaults"](s)
+    assert s.format == "srt"
+    assert "Output format" in notes
 
 
 def test_wizard_back_history_skips_current_reentered_step():
@@ -9868,7 +9876,7 @@ def test_wizard_q11_banner_surfaces_smart_defaults():
     assert "Smart defaults filled in for you" in out
     assert "Display order" in out
     assert "Cleanup preset" in out
-    assert "Output format" not in out
+    assert "Output format" in out  # format is now a surfaced smart default
 
 
 def test_wizard_default_full_pipeline_still_emits_fetch_modify_merge():

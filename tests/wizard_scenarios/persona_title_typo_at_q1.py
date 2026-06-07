@@ -25,8 +25,6 @@ SCENARIO = Scenario(
         "ja,en",    # languages
         "1",        # missing-language action — skip
         "1",        # reading aids — skip
-        "",         # final format → recommended SRT
-        "",         # font size → Regular
         "2",        # save action
         "{TMP}/totoro-typo.toml",
         "n",        # decline open folder

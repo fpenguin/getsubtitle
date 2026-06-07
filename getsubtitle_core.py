@@ -15295,7 +15295,27 @@ def _wizard_next_q(state: _WizardState) -> str:
     after the source/languages questions have already been numbered)."""
     n = getattr(state, "_qcount", 0) + 1
     state._qcount = n
-    return f"Q{n}."
+    total = _wizard_estimate_total_questions(state)
+    return f"Q{n} of ~{total}."
+
+
+def _wizard_estimate_total_questions(state: _WizardState) -> int:
+    """Rough count of questions for the current step selection, for the
+    'Q n of ~M' breadcrumb. Approximate ('~') because the flow is dynamic —
+    the local-language preflight can add fetch mid-run. Mirrors the gating
+    in `_wizard_step_skip`: format/text-size are smart-defaulted (not asked)."""
+    if "rename" in state.steps:
+        return 2  # steps + source (rename runs its own sub-flow after)
+    n = 1  # steps
+    n += 2 if "fetch" in state.steps else 1  # source kind+entry, or one path
+    if "fetch" in state.steps:
+        n += 1  # episode scope
+    n += 1  # languages
+    if "translate" in state.steps:
+        n += 1
+    if "modify" in state.steps:
+        n += 1  # reading aids
+    return n
 
 
 def _wizard_step_headings(label: str, state: _WizardState) -> int:
@@ -16065,7 +16085,7 @@ def _wizard_plain_plan(state: _WizardState) -> list[str]:
     the user sees the intent at a glance instead of decoding the full CLI
     flag string."""
     langs = ", ".join(state.languages)
-    src = state.source_title or state.source or "your files"
+    src = state.source_title or _wizard_short_path(state.source) or "your files"
     steps = state.steps
     if "rename" in steps:
         return [f"Rename subtitle files in {src}"]
@@ -16088,12 +16108,31 @@ def _wizard_plain_plan(state: _WizardState) -> list[str]:
             lines.append("Clean up cues (single line, strip broadcast noise)")
     if "merge" in steps:
         fmt = (state.format or "srt").upper()
-        lines.append(f"Stack {langs} into one {fmt} study file")
+        ext = (state.format or "srt").lower()
+        suffix = "-".join(state.order or state.languages)
+        lines.append(f"Stack {langs} into one {fmt} file  →  *.{suffix}.{ext}")
         if state.font_size:
             support_note = "" if fmt == "ASS" else f" ({fmt} support depends on player)"
             lines.append(f"Use subtitle text size {state.font_size}{support_note}")
-    lines.append(f"Save to {state.output or 'the source folder'}")
+    out = _wizard_short_path(state.output) if state.output else "the source folder"
+    lines.append(f"Save to {out}")
     return lines
+
+
+def _wizard_short_path(p: str) -> str:
+    """Abbreviate a path for human-facing display by collapsing the home
+    directory to '~' (the common case: ~/Downloads/…). The exact command
+    keeps the full path; this is only for the readable plan/banner. We do
+    NOT middle-ellipsize — a chopped path is un-copyable and ambiguous."""
+    if not p:
+        return p
+    try:
+        home = str(Path.home())
+        if p.startswith(home):
+            return "~" + p[len(home):]
+    except Exception:
+        pass
+    return p
 
 
 def _wizard_q11_action(state: _WizardState) -> str:
@@ -16123,15 +16162,6 @@ def _wizard_q11_action(state: _WizardState) -> str:
         for k, v in notes.items():
             print(f"  {k:14} {v}")
     print(rule)
-    print("Based on your choice, you can try:")
-    print(rule)
-    print("  " + cli_string)
-    print(rule)
-    print("Equivalent workflow file (save as .toml):")
-    print(rule)
-    for line in toml_str.splitlines():
-        print("  " + line)
-    print(rule)
     # Consistency check: reading aid wants VTT ruby but format is something else.
     needs_ruby = any(
         spec.startswith("ja:hiragana") or spec.startswith("ja:furigana")
@@ -16140,18 +16170,35 @@ def _wizard_q11_action(state: _WizardState) -> str:
     if needs_ruby and state.format and state.format != "vtt":
         print(f"  Note: ja:hiragana looks best as VTT ruby; format is {state.format!r}.")
         print("        SRT/SMI/ASS will fall back to parenthetical 漢字（かんじ） form.")
-    print()
     # Default-action heuristic: save-first is safer when "run" would start a
     # long network job (URL/title sources). For local paths, run-first is fine.
     default_pick = "2" if state.source_kind in ("url", "title") else "1"
-    print("    1) Run it now")
-    print("    2) Save as a reusable workflow file")
-    print("    3) Edit a single answer")
-    print("    4) Start over from beginning")
-    print("    5) Quit")
     mapping = {"1": "run", "2": "save", "3": "edit", "4": "restart", "5": "quit"}
-    pick = _wizard_read_choice("Number", ["1", "2", "3", "4", "5"], default_pick)
-    return mapping[pick]
+    # The exact CLI command and TOML are kept behind option 6 so the default
+    # view stays a short plain-language plan instead of a wall of flag soup.
+    while True:
+        print()
+        print("    1) Run it now")
+        print("    2) Save as a reusable workflow file")
+        print("    3) Edit a single answer")
+        print("    4) Start over from beginning")
+        print("    5) Quit")
+        print("    6) Show the exact command & workflow file")
+        pick = _wizard_read_choice("Number", ["1", "2", "3", "4", "5", "6"], default_pick)
+        if pick == "6":
+            print()
+            print(rule)
+            print("Exact command:")
+            print(rule)
+            print("  " + cli_string)
+            print(rule)
+            print("Workflow file (save as .toml):")
+            print(rule)
+            for line in toml_str.splitlines():
+                print("  " + line)
+            print(rule)
+            continue
+        return mapping[pick]
 
 
 # ─── Orchestrator ──────────────────────────────────────────────────────
@@ -16199,6 +16246,25 @@ def _wizard_apply_smart_defaults(state: _WizardState) -> dict[str, str]:
     if state.steps & {"modify", "merge"} and not state.asbplayer:
         state.asbplayer = True
         notes["Cleanup preset"] = "on  (single-line cues + strip broadcast noise)"
+    # Output format: pick the recommended format (browser ruby → VTT,
+    # stacked readings / 3+ lines → ASS, else SRT). Shown here and editable.
+    if "merge" in state.steps and not state.format:
+        fmt, reason = _wizard_format_recommendation(state)
+        state.format = fmt
+        state.viewing_env = {
+            "srt": "tv", "ass": "desktop", "vtt": "browser",
+            "smi": "legacy", "txt": "text",
+        }.get(fmt, "")
+        notes["Output format"] = f"{fmt.upper()}  (recommended — {reason})"
+    # Text size: calibrated 'regular' preset for the size-aware formats.
+    if (
+        "merge" in state.steps
+        and not state.font_size
+        and (state.format or "").lower() in {"srt", "ass"}
+        and len(state.languages) >= 2
+    ):
+        state.font_size = "regular"
+        notes["Text size"] = "regular  (calibrated; edit to change)"
     # Output folder: URL/title sources land in ~/Downloads/GetSubtitle by
     # default; local-path sources land beside the source file/folder.
     if not state.output:
@@ -16223,8 +16289,11 @@ def _wizard_step_skip(label: str, state: _WizardState) -> bool:
         "filename_numbering": not _wizard_should_ask_filename_numbering(state),
         "translate":    "translate" not in state.steps,
         "reading_aids": "modify" not in state.steps,
-        "format":       "merge" not in state.steps,
-        "font_size":    not _wizard_should_ask_font_size(state),
+        # Format + text size are smart-defaulted (recommendation shown in the
+        # banner) and only asked when the user edits them. Keeps the forward
+        # flow short while still letting users customize via 'Edit'.
+        "format":       True,
+        "font_size":    True,
     }
     return skip.get(label, False)
 
@@ -16422,39 +16491,50 @@ def _run_wizard_with_back_nav(state: _WizardState) -> tuple[_WizardState, str]:
         if action != "edit":
             state.final_action = action
             return state, action
-        # Edit flow: list answers, jump to specific question.
+        # Edit flow: each entry maps a shown answer DIRECTLY to the function
+        # that re-asks it. (The old visible->index math was misaligned with
+        # _WIZARD_STEPS, so editing one answer could re-run a different
+        # question; format/text-size were unreachable entirely.)
+        edit_targets: list[tuple[str, str, object]] = [
+            ("steps", " + ".join(s for s in _VALID_STEPS if s in state.steps), _wizard_q0_steps),
+            ("source", f"{state.source_kind or 'path'} — {state.source}", _wizard_q1_source),
+            ("languages", ", ".join(state.languages) or "(none)", _wizard_q2_languages),
+        ]
+        if state.source_kind in ("url", "title"):
+            scope_val = (f"S{state.season} E{state.episode}"
+                         if (state.season or state.episode) else "auto")
+            edit_targets.append(("scope", scope_val, _wizard_q5_scope))
+        if "translate" in state.steps:
+            edit_targets.append(("AI translation", state.mt_engine or "skip", _wizard_q6_translate))
+        if "modify" in state.steps:
+            edit_targets.append(("reading aids", ", ".join(state.reading_aids) or "none", _wizard_q7_reading_aids))
+        if "merge" in state.steps:
+            edit_targets.append(("output format", (state.format or "").upper() or "(auto)", _wizard_q9_format))
+            edit_targets.append(("text size", state.font_size or "regular", _wizard_q_font_size))
+        edit_targets.append(("output folder", state.output or "(default)", _wizard_q10_output))
         print()
         print("Your answers so far:")
-        print(f"  Q1. source type: {state.source_kind!r}")
-        print(f"  Q2. source: {state.source!r}")
-        visible_labels = [
-            ("languages", state.languages),
-            ("order", state.order),
-            ("master", state.master),
-            ("scope", {"season": state.season, "episode": state.episode}),
-            ("translate", state.mt_engine),
-            ("reading_aids", state.reading_aids),
-            ("asbplayer", state.asbplayer),
-            ("format", state.format),
-            ("font_size", state.font_size),
-            ("output", state.output),
-        ]
-        for i, (label, value) in enumerate(visible_labels, start=3):
-            print(f"  Q{i}. {label}: {value!r}")
-        pick = _wizard_prompt("Question number to redo (1-11), or 'done'", "done").lower()
-        if pick.isdigit():
-            visible = int(pick)
-            idx = 0 if visible in (1, 2) else visible - 2
-            if 0 <= idx < len(_WIZARD_STEPS):
-                edit_label = _WIZARD_STEPS[idx][0]
-                if edit_label == "scope":
-                    state.season = ""
-                    state.episode = ""
-                # Prime the counter so the re-asked heading keeps the
-                # number it had during the forward pass.
-                state._qcount = _wizard_qcount_before(state, edit_label)
-                _WIZARD_STEPS[idx][1](state)
-                _wizard_save_draft(state)
+        for i, (label, value, _fn) in enumerate(edit_targets, start=1):
+            print(f"  {i}) {label}: {value}")
+        valid = [str(i) for i in range(1, len(edit_targets) + 1)]
+        pick = _wizard_prompt(
+            f"Number to change (1-{len(edit_targets)}), or 'done'", "done"
+        ).strip().lower()
+        if pick in valid:
+            label, _value, fn = edit_targets[int(pick) - 1]
+            if label == "scope":
+                state.season = ""
+                state.episode = ""
+            elif label == "output format":
+                state.format = ""          # clear so the recommendation re-asks
+            elif label == "text size":
+                state.font_size = ""
+            state._qcount = 0
+            fn(state)
+            # Re-apply smart defaults — editing reading aids changes the
+            # recommended format; editing format changes the text-size offer.
+            state._smart_defaults_notes = _wizard_apply_smart_defaults(state)
+            _wizard_save_draft(state)
 
 
 # ─── Emitters: CLI command + TOML workflow ────────────────────────────

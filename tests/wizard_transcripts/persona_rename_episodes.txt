@@ -7,7 +7,7 @@ later, run it now, or edit a single answer. Type 'b' to go back,
 'q' to quit, or Ctrl-C to bail.
 
 
-Q1. What do you want getsubtitle to do?
+Q1 of ~6. What do you want getsubtitle to do?
     1) Fetch     — download subtitles from a URL or title
     2) Translate — fill any missing language with AI translation
     3) Modify    — clean up cues, add reading aids (furigana/hangul/pinyin/…)
@@ -23,7 +23,7 @@ Q1. What do you want getsubtitle to do?
   Numbers or ranges, or Enter for default [1-4 | q=quit] > 5
     Selected: rename.
 
-Q2. Folder or file to rename.
+Q2 of ~2. Folder or file to rename.
     Drop a season folder or one subtitle file.
   Folder or file path [b=back | q=quit] > {TMP}/Show
     Identified as: local subtitle folder: 0 video file(s), 5 subtitle file(s)

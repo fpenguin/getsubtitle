@@ -21,8 +21,6 @@ SCENARIO = Scenario(
         "25",           # first episode shown on the page
         "ja,ko",
         "1",            # reading aids — skip
-        "",             # final format → recommended SRT
-        "",             # font size → Regular
         "2",            # save workflow
         "{TMP}/mfghost-s3.toml",
         "n",            # decline open folder

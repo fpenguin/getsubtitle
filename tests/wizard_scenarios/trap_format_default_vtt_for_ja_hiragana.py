@@ -22,7 +22,6 @@ SCENARIO = Scenario(
         "{TMP}/Show",
         "ja,en",
         "2",            # reading aids: pick #2 = ja:hiragana
-        "",             # final format → recommended VTT (font size skipped)
         "2",            # action: save
         "{TMP}/vtt-ja.toml",
         "n",            # decline open folder

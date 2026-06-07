@@ -19,15 +19,14 @@ SCENARIO = Scenario(
         "1",
         "ja,en",
         "1",            # reading aids — skip
-        "",             # final format → recommended SRT
-        "",             # font size → Regular
         "2",            # action: save (URL default)
         "{TMP}/saved.toml",
         "n",            # decline open folder
     ],
     expect_state={"steps": {"fetch", "modify", "merge"}},
     expect_stdout_contains=[
-        "Equivalent workflow file (save as .toml):",
+        # The exact command/TOML now live behind action 6; the Save flow's
+        # reuse guidance is what a saver actually sees.
         "getsubtitle --config",
         "Run it later with:",
         "You can recycle this TOML",

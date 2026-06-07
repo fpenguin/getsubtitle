@@ -22,7 +22,6 @@ SCENARIO = Scenario(
         "1",            # episode 1
         "ja,en",
         "2",            # reading aids: pick #2 = ja:hiragana
-        "",             # final format → recommended VTT (font size skipped)
         "",             # action menu default — URL → 'b' (save)
         "{TMP}/url-first.toml",
         "n",            # decline open folder

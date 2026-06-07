@@ -20,8 +20,6 @@ SCENARIO = Scenario(
         "ja,en",
         "3",            # translate engine: Ollama
         "1",            # reading aids — skip
-        "",             # final format → recommended SRT
-        "",             # font size → Regular
         "1",            # action: run
         "y",            # accept 'Run setup now to fix these?'
         # _wizard_run_setup prints a "Manual step" hint for the Ollama

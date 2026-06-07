@@ -24,8 +24,6 @@ SCENARIO = Scenario(
         "{TMP}/Show",
         "ko,en",
         "2",              # reading aids: #2 = ko:revised (menu filtered to Korean)
-        "",               # final format → recommended ASS
-        "",               # font size → Regular
         "2",              # save
         "{TMP}/korean.toml",
         "n",              # decline open folder
