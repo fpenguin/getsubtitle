@@ -7338,6 +7338,9 @@ def combine_main(argv: list[str]) -> int:
     langs = split_csv(args.langs, "ja,en")
     if not langs:
         raise CliError("No languages specified. Use -l ja,en or similar.")
+    # user_settings.toml [merge].label_langs default; the CLI flag ORs on top.
+    if not getattr(args, "label_langs", False):
+        args.label_langs = _combine_label_langs_from_config()
     # Multi-variant merge: identify pseudo-lang codes (ja-hiragana,
     # ko-revised, zh-marks, …) so the scanner knows to look for the
     # `.{base}.{infix}-{mode}.{ext}` reading-aid side files. Pseudo-langs
@@ -10220,6 +10223,7 @@ def _merge_overrides_into_toml(data: dict, overrides: dict, verb_blocks: dict) -
             "--format": ("format", None),
             "--force": ("force", True),
             "--preserve-lines": ("preserve_lines", True),
+            "--label-langs": ("label_langs", True),
         },
     }
     for verb in ("fetch", "translate", "modify", "merge"):
@@ -10274,11 +10278,16 @@ def _pipeline_registry_dir() -> Path:
 
 def _pipeline_registry_path(name: str) -> Path:
     safe = name.strip()
-    bad = not safe or safe.startswith(".") or any(c in safe for c in '/\\<>:"|?*')
+    bad = (
+        not safe
+        or safe.startswith(".")
+        or safe.startswith("-")          # would collide with run's own flags
+        or any(c in safe for c in '/\\<>:"|?*')
+    )
     if bad:
         raise CliError(
             f"Invalid pipeline name {name!r}. Use letters, numbers, dashes "
-            "(no slashes or dots)."
+            "(no slashes, and not starting with '.' or '-')."
         )
     return _pipeline_registry_dir() / f"{safe}.toml"
 
@@ -10293,6 +10302,9 @@ def run_main(argv: list[str]) -> int:
         getsubtitle run --list
         getsubtitle run --remove anime
     """
+    if argv and argv[0] in ("--help", "-h", "help"):
+        sys.stdout.write(HELP_TOPICS["run"])
+        return 0
     if not argv or argv[0] in ("--list", "list"):
         reg = _pipeline_registry_dir()
         names = sorted(p.stem for p in reg.glob("*.toml")) if reg.is_dir() else []
@@ -11090,6 +11102,7 @@ BUILTIN_CONFIG_DEFAULTS: dict[str, dict[str, object]] = {
         "languages": "ja,en",
         "sync": "auto",
         "preserve_lines": False,
+        "label_langs": False,
         "priority": [],
         # Inline per-language readings (e.g. 漢字（かんじ）) into the merged
         # cue stack on the matching language line. Defaults to true so the
@@ -11352,7 +11365,7 @@ def validate_user_config(raw: dict) -> dict:
         mg_out["languages"] = _validate_lang_list(mg["langs"], "merge.langs")
     if "sync" in mg:
         mg_out["sync"] = _validate_enum(mg["sync"], "merge.sync", {"auto", "strict", "loose"})
-    for bk in ("preserve_lines", "reading", "watermark"):
+    for bk in ("preserve_lines", "reading", "watermark", "label_langs"):
         if bk in mg:
             mg_out[bk] = _validate_bool(mg[bk], f"merge.{bk}")
     if "priority" in mg:
@@ -12680,6 +12693,16 @@ def _combine_master_from_config(langs: list[str]) -> str | None:
     return None
 
 
+def _combine_label_langs_from_config() -> bool:
+    """user_settings.toml [merge].label_langs default for the merge
+    subcommand (the CLI --label-langs flag still wins / ORs on top)."""
+    try:
+        cfg = load_user_config()
+    except CliError:
+        return False
+    return bool(cfg.get("merge", {}).get("label_langs", False))
+
+
 HELP_MAIN = """\
 getsubtitle — Find and prepare subtitles for language learning.
 
@@ -13173,6 +13196,29 @@ Checks:
 It does not download subtitles or contact subtitle providers. Use
 `getsubtitle sources --check` for provider-source diagnostics.
 """,
+    "run": """\
+Save and run workflows by short name.
+
+A named pipeline registry lives beside user_settings.toml. Save any
+workflow TOML under a short name, then run it without typing the path.
+
+Usage:
+  getsubtitle run --save NAME path/to/workflow.toml   # register it
+  getsubtitle run NAME                                 # run it
+  getsubtitle run NAME --source URL --output DIR       # run with overrides
+  getsubtitle run --list                               # list saved names
+  getsubtitle run --remove NAME                         # delete one
+  getsubtitle run --help                                # this page
+
+Notes:
+  - NAME must be letters / numbers / dashes — no slashes, no leading
+    dot or dash (those collide with run's own flags).
+  - Overrides after NAME are the same top-level flags --config accepts
+    (--source, --output, --format, --season, --episode, -l, --dry-run,
+    --force). CLI flags win over the saved file.
+  - The TOML is copied into the registry, so editing the original later
+    does not change the saved pipeline. Re-save to update it.
+""",
     "fetch": """\
 Fetch subtitles for a URL or for folder(s) on disk.
 
@@ -13338,6 +13384,9 @@ Merge options:
                            stacked reading aids.
   --sync MODE              auto, strict, or loose. Default: auto
   --master LANG            Timing master. Default: first language in -l
+  --label-langs            Prefix each language's line with [JA]/[KO]/… so
+                           stacked tracks are easy to tell apart. Also
+                           [merge] label_langs = true in user_settings.toml.
   --single-line, --single  Flatten each language to one line. Default behavior
   --preserve-lines         Keep original line breaks within each language
   --reading SPEC      Inline reading aids on the matching language line
@@ -14413,7 +14462,17 @@ def _rename_transform_parts(
 
 
 def _rename_plan_for_parts(parts: list[_RenameParts]) -> list[tuple[Path, Path]]:
-    plan = [(part.path, part.path.with_name(part.render())) for part in parts]
+    plan: list[tuple[Path, Path]] = []
+    for part in parts:
+        new_name = part.render()
+        try:
+            dst = part.path.with_name(new_name)
+        except ValueError as exc:
+            # Defense in depth: turn a raw ValueError ("Invalid name") into a
+            # clean CliError. The wizard validates input before this, but a
+            # programmatic caller shouldn't get a traceback either.
+            raise CliError(f"Cannot rename to {new_name!r}: invalid filename.") from exc
+        plan.append((part.path, dst))
     return [(src, dst) for src, dst in plan if src != dst]
 
 
@@ -14482,6 +14541,16 @@ def _rename_copy_plan(plan: list[tuple[Path, Path]]) -> None:
         shutil.copy2(src, dst)
 
 
+_RENAME_UNSAFE_CHARS = set('/\\\x00')
+
+
+def _rename_value_is_safe(value: str) -> bool:
+    """True when `value` is safe to put inside a filename component — no
+    path separators or NUL, which would otherwise make Path.with_name raise
+    a raw ValueError mid-rename."""
+    return not (set(value) & _RENAME_UNSAFE_CHARS)
+
+
 def _wizard_rename_change_details(component: str, sample: _RenameParts) -> tuple[str, str]:
     if component in {"title", "language", "modifiers", "extension"}:
         prompt = {
@@ -14497,6 +14566,9 @@ def _wizard_rename_change_details(component: str, sample: _RenameParts) -> tuple
         value = _wizard_prompt(prompt, "")
         if component != "modifiers" and not value.strip():
             print("Empty value; rename cancelled.")
+            return "", ""
+        if not _rename_value_is_safe(value):
+            print("    That can't go in a filename (no '/' or '\\'); rename cancelled.")
             return "", ""
         return value, ""
 
@@ -14517,6 +14589,9 @@ def _wizard_rename_change_details(component: str, sample: _RenameParts) -> tuple
                     "New prefix",
                     sample.season_prefix if component == "season" else sample.episode_prefix,
                 )
+                if not _rename_value_is_safe(new_prefix):
+                    print("    That can't go in a filename (no '/' or '\\'); rename cancelled.")
+                    return "", ""
                 return "", f"prefix:{new_prefix}"
             if action_pick == "2" and component == "season":
                 new_number = _wizard_prompt("New season number", str(int(sample.season)))
