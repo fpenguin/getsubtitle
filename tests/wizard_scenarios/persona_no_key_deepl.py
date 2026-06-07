@@ -32,8 +32,10 @@ SCENARIO = Scenario(
         "DeepL API key",
         # _wizard_run_setup prints the suggested fix once setup begins.
         "getsubtitle --set-key deepl",
-        "Dependency check — issues found:",
-        "Not running yet, because this workflow would fail before it starts.",
+        # v0.9.6.1+ preflight uses a standardised What / Why / How layout.
+        "Preflight check —",
+        "Why: Required — the run would fail before it starts.",
+        "Still blocked — the run would fail before it starts:",
     ],
     # We declined the per-gap --set-key invocation, so set_api_keys
     # must NOT have been called; if it were, the wizard would have

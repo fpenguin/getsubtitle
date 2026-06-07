@@ -35,7 +35,7 @@ SCENARIO = Scenario(
         # The setup walker re-prints the suggested fix verbatim.
         "Start Ollama: https://ollama.com",
         "(Manual step — re-launch the wizard once done.)",
-        "Not running yet, because this workflow would fail before it starts.",
+        "Still blocked — the run would fail before it starts:",
     ],
     expect_main_call_count=0,
 )

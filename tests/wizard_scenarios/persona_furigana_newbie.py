@@ -3,9 +3,8 @@ first time.
 
 Before the menu of options, the prompt MUST describe what reading
 aids are (so the newcomer doesn't blindly hit Enter on a feature
-they wanted). The format-rendering note (VTT ruby vs parenthetical
-in SRT/SMI/ASS) must also be present so the user understands why
-the wizard later picks VTT."""
+they wanted). Format-rendering tradeoffs belong in the output-format
+recommendation, not in this question."""
 
 from wizard_harness import Scenario
 
@@ -31,7 +30,8 @@ SCENARIO = Scenario(
     expect_stdout_contains=[
         # Description text precedes the menu.
         "Reading aids (phonetic guides for the original script)",
-        "VTT renders them as ruby above the script",
+        "Example: 漢字（かんじ）",
+        "Output format  VTT — best for browser / asbplayer Japanese ruby",
         "1) No reading aid (skip)",
         "Japanese — hiragana readings for kanji",
     ],

@@ -1,51 +1,73 @@
+  ____      _   ____        _     _   _ _   _
 
-getsubtitle — interactive workflow builder
+ / ___| ___| |_/ ___| _   _| |__ | |_| |_| |_| ___
 
-I'll ask a few short questions, then show you the equivalent terminal
-command and a reusable workflow file. You can save the workflow for
-later, run it now, or edit a single answer. Type 'b' to go back,
-'q' to quit, or Ctrl-C to bail.
+| |  _ / _ \ __\___ \| | | | '_ \| __| | __| |/ _ \
 
+| |_| |  __/ |_ ___) | |_| | |_) | |_| | |_| |  __/
 
-Q1 of ~6. What do you want getsubtitle to do?
-    1) Fetch     — download subtitles from a URL or title
-    2) Translate — fill any missing language with AI translation
-    3) Modify    — clean up cues, add reading aids (furigana/hangul/pinyin/…)
-    4) Merge     — stack multiple languages into one study file
-    5) Rename    — batch-rename existing subtitle filenames
+ \____|\___|\__|____/ \__,_|_.__/ \__|_|\__|_|\___|
 
-    Default: 1-4 — fetch, translate, modify, then merge.
+GetSubtitle — Workflow Builder
+
+Answer a few questions to generate a command and reusable workflow.
+
+Commands:
+  Enter  Accept default
+  b      Back
+  q      Quit
+  Ctrl-C Cancel
+
+Q1. What would you like to do?
+
+    1) Fetch      Download subtitles from a URL or title
+    2) Translate  Fill missing languages with AI
+    3) Modify     Clean up cues, add reading aids (furigana, hangul, pinyin, ...)
+    4) Merge      Combine multiple languages into one study file
+    5) Rename     Batch rename subtitle files
+
     Common picks:
-      1-4     full subtitle workflow
       1,3,4   download + modify + merge existing subtitles
       5       rename titles, prefixes, change numbering
+    Default: 1-4 — fetch, translate, modify, then merge.
 
   Numbers or ranges, or Enter for default [1-4 | q=quit] > 3,4
     Selected: modify + merge.
 
-Q2 of ~4. Folder or file to process.
+------------------------------------------------------------------------------------------------
+Q2. Folder or file to process.                                      Progress [◼◼◼◼◼◻◻◻◻◻◻◻◻] 38%
+
     Drop a folder of .srt files, a single .srt file, or any path
     your selected step(s) should operate on.
+
   Folder or file path [b=back | q=quit] > {TMP}/Show
     Identified as: local subtitle folder: 0 video file(s), 2 subtitle file(s)
 
-Q3 of ~4. Which subtitle languages do you want to collect?
+------------------------------------------------------------------------------------------------
+Q3. Which subtitle languages do you want to collect?                Progress [◼◼◼◼◼◼◼◼◻◻◻◻◻] 62%
+
     List them in the order you want them displayed (top → bottom).
 
     Common Picks
       ja,en : Japanese on top and English below (optional furigana support)
       ko,en,es : Korean on top, then English and Spanish (optional romanization support)
       japanese,korean,english,spanish : 2-letter codes and full language names both work
+
   Languages (comma-separated) [ja,en | b=back | q=quit] > ja,en
 
-Q4 of ~4. Reading aids (phonetic guides for the original script).
-    VTT renders them as ruby above the script; SRT / SMI / ASS
-    show them as parenthetical 漢字（かんじ） form.
+------------------------------------------------------------------------------------------------
+Q4. Reading aids (phonetic guides for the original script).         Progress [◼◼◼◼◼◼◼◼◼◼◼◻◻] 88%
+
+    Example: 漢字（かんじ）
     Pick any combination by number, or '1' to skip.
     1) No reading aid (skip)
     2) Japanese — hiragana readings for kanji   [ja:hiragana]
+       Preview: 勉強する → べんきょうする
     3) Japanese — katakana readings for kanji   [ja:katakana]
+       Preview: 勉強する → ベンキョウする
     4) Japanese — full-sentence romaji   [ja:romaji]
+       Preview: 今日は日本語を練習したい → kyou wa nihongo wo renshuu shitai
+
   Numbers (comma-separated) [1 | b=back | q=quit] > 1
 
 ======================================================================
@@ -62,7 +84,7 @@ Smart defaults filled in for you (edit via 'Edit a single answer'):
   Display order  ja, en  (top → bottom on screen)
   Timing master  ja  (first language)
   Cleanup preset on  (single-line cues + strip broadcast noise)
-  Output format  SRT  (recommended — SRT is the safest general-purpose choice.)
+  Output format  SRT — plays almost everywhere (Plex, TVs, phones).  Edit to pick SRT / ASS / VTT / SMI / TXT.
   Text size      regular  (calibrated; edit to change)
   Output folder  {TMP}/Show  (beside source)
 ======================================================================
@@ -73,5 +95,6 @@ Smart defaults filled in for you (edit via 'Edit a single answer'):
     4) Start over from beginning
     5) Quit
     6) Show the exact command & workflow file
+
   Number [1 | b=back | q=quit] > 5
 Quit.

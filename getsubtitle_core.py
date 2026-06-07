@@ -2963,6 +2963,42 @@ class ArgosTranslator(_BaseTranslator):
         return out
 
 
+def _argos_translation_path_available(installed_languages: list[object], source_lang: str, target_lang: str) -> bool:
+    """Return True when Argos can translate source_lang -> target_lang.
+
+    Mirrors ArgosTranslator.translate_batch(): prefer a direct installed
+    package, then allow an English pivot for non-English pairs.
+    """
+    src = next((lng for lng in installed_languages if getattr(lng, "code", None) == source_lang), None)
+    tgt = next((lng for lng in installed_languages if getattr(lng, "code", None) == target_lang), None)
+    if not src or not tgt:
+        return False
+    try:
+        if src.get_translation(tgt):
+            return True
+    except Exception:
+        pass
+    if source_lang == "en" or target_lang == "en":
+        return False
+    english = next((lng for lng in installed_languages if getattr(lng, "code", None) == "en"), None)
+    if not english:
+        return False
+    try:
+        first = src.get_translation(english)
+        second = english.get_translation(tgt)
+    except Exception:
+        return False
+    return bool(first and second)
+
+
+def _argos_packages_for_pair(source_lang: str, target_lang: str) -> list[str]:
+    if source_lang == target_lang:
+        return []
+    if source_lang == "en" or target_lang == "en":
+        return [f"translate-{source_lang}_{target_lang}"]
+    return [f"translate-{source_lang}_en", f"translate-en_{target_lang}"]
+
+
 LANGUAGE_DISPLAY_NAMES = {
     "ja": "Japanese",
     "ko": "Korean",
@@ -7864,6 +7900,13 @@ def combine_main(argv: list[str]) -> int:
         print(f"\nSkipped: {len(skipped)}")
         for key, reason in skipped:
             print(f"  {_episode_label_se(*key)}: {reason}")
+    _wizard_summary_add(
+        "merge",
+        scanned=scanned_count,
+        planned=len(plan),
+        skipped=len(skipped),
+        missing=[f"{_episode_label_se(*key)}: {reason}" for key, reason in skipped],
+    )
 
     if args.dry_run:
         return 0 if plan else 1
@@ -7893,6 +7936,7 @@ def combine_main(argv: list[str]) -> int:
         print(f"  {dest}")
 
     print(f"\nWrote {len(written)} combined file(s).")
+    _wizard_summary_add("merge", written=len(written), outputs=written)
     should_open = args.open_folder
     if not should_open and not args.no_open_folder_prompt and sys.stdin.isatty():
         answer = input("\nOpen folder? [Y/n] ").strip().lower()
@@ -8115,6 +8159,13 @@ def translate_main(argv: list[str]) -> int:
                 preview = eps[:6]
                 more = f" (+{len(eps) - len(preview)} more)" if len(eps) > len(preview) else ""
                 print(f"  {len(eps)} episodes [{', '.join(preview)}{more}]: {reason}")
+    _wizard_summary_add(
+        "translate",
+        scanned=len(scanned),
+        planned=len(plan),
+        skipped=len(skipped),
+        missing=[f"{_episode_label_se(*key)}: {reason}" for key, reason in skipped],
+    )
 
     if args.dry_run:
         return 0 if plan else 1
@@ -8199,6 +8250,16 @@ def translate_main(argv: list[str]) -> int:
                     print(f"      - {t}")
                 if len(tasks) > len(preview):
                     print(f"      - ... and {len(tasks) - len(preview)} more")
+    _wizard_summary_add(
+        "translate",
+        written=len(written),
+        outputs=[path for path, _elapsed in written],
+        failures=[
+            f"{task}: {msg}"
+            for msg, tasks in grouped_failures.items()
+            for task in tasks
+        ],
+    )
 
     # Auto-unload Ollama models from memory after the batch, if enabled.
     # Default is true (set in BUILTIN_CONFIG_DEFAULTS) so the user's GPU/RAM
@@ -8864,6 +8925,30 @@ def modify_main(argv: list[str]) -> int:
             if extract_skipped else ""
         )
         print(f"Subtitle files extracted from video: {len(extract_written)}{skipped_note}")
+    generated_outputs = [
+        *furigana_generated,
+        *korean_generated,
+        *chinese_generated,
+        *cantonese_generated,
+        *convert_written,
+        *extract_written,
+    ]
+    scanned_total = len(scanned) + len(convert_files) + len(video_files)
+    planned_total = len(scanned) + len(convert_files) + len(extract_plan)
+    skipped_total = len(convert_skipped) + len(extract_skipped)
+    _wizard_summary_add(
+        "modify",
+        scanned=scanned_total,
+        planned=planned_total,
+        written=touched_in_place + len(generated_outputs),
+        skipped=skipped_total,
+        outputs=generated_outputs,
+        failures=[
+            f"{', '.join(files[:3])}{'...' if len(files) > 3 else ''}: {msg}"
+            for msg, files in grouped_errors.items()
+        ],
+        notes=[f"in-place rewrites changed {touched_in_place} file(s)"] if touched_in_place else [],
+    )
     return 0
 
 
@@ -9218,6 +9303,12 @@ def fetch_main(argv: list[str]) -> int:
 
     print()
     print(f"Processed {total_targets} target(s).")
+    _wizard_summary_add(
+        "fetch",
+        planned=total_targets,
+        written=0,
+        notes=[f"processed {total_targets} path target(s)"],
+    )
     return rc_total
 
 
@@ -10897,11 +10988,15 @@ class _StatusLine:
         sys.stderr.flush()
 
 
+PROGRESS_BAR_WIDTH = 13
+
+
 def progress_bar(current: int, total: int, label: str, detail: str = "", *, transient: bool = False) -> None:
     total = max(total, 1)
-    width = 24
+    width = PROGRESS_BAR_WIDTH
     filled = round(width * current / total)
-    bar = "#" * filled + "-" * (width - filled)
+    filled = min(width, max(0, filled))
+    bar = "◼" * filled + "◻" * (width - filled)
     suffix = f" {detail}" if detail else ""
     line = f"[{bar}] {current}/{total} {label}{suffix}"
     if transient and sys.stdout.isatty():
@@ -11019,6 +11114,221 @@ def print_planned_downloads(planned: list[tuple[str, str, SubtitleFile]]) -> Non
         if len(items) <= 4:
             for ep, sub in sorted(items, key=lambda item: episode_sort_key(item[0])):
                 print(f"    - {episode_label(ep)}: {sub.name}")
+
+
+@dataclass
+class _WizardStepSummary:
+    scanned: int = 0
+    planned: int = 0
+    written: int = 0
+    skipped: int = 0
+    outputs: list[str] = field(default_factory=list)
+    missing: list[str] = field(default_factory=list)
+    failures: list[str] = field(default_factory=list)
+    notes: list[str] = field(default_factory=list)
+
+
+@dataclass
+class _WizardRunSummary:
+    source: str = ""
+    source_kind: str = ""
+    steps: list[str] = field(default_factory=list)
+    languages: list[str] = field(default_factory=list)
+    order: list[str] = field(default_factory=list)
+    season: str = ""
+    episode: str = ""
+    output: str = ""
+    command: str = ""
+    preflight: list[tuple[str, str, str]] = field(default_factory=list)
+    steps_by_name: dict[str, _WizardStepSummary] = field(default_factory=dict)
+
+
+_ACTIVE_WIZARD_SUMMARY: _WizardRunSummary | None = None
+
+
+def _wizard_summary_begin(state: object) -> _WizardRunSummary:
+    global _ACTIVE_WIZARD_SUMMARY
+    summary = _WizardRunSummary(
+        source=str(getattr(state, "source", "") or ""),
+        source_kind=str(getattr(state, "source_kind", "") or ""),
+        steps=sorted(getattr(state, "steps", set()) or []),
+        languages=list(getattr(state, "languages", []) or []),
+        order=list(getattr(state, "order", []) or []),
+        season=str(getattr(state, "season", "") or ""),
+        episode=str(getattr(state, "episode", "") or ""),
+        output=str(getattr(state, "output", "") or ""),
+    )
+    _ACTIVE_WIZARD_SUMMARY = summary
+    return summary
+
+
+def _wizard_summary_end() -> _WizardRunSummary | None:
+    global _ACTIVE_WIZARD_SUMMARY
+    summary = _ACTIVE_WIZARD_SUMMARY
+    _ACTIVE_WIZARD_SUMMARY = None
+    return summary
+
+
+def _wizard_summary_active() -> _WizardRunSummary | None:
+    return _ACTIVE_WIZARD_SUMMARY
+
+
+def _wizard_summary_step(name: str) -> _WizardStepSummary | None:
+    summary = _wizard_summary_active()
+    if summary is None:
+        return None
+    return summary.steps_by_name.setdefault(name, _WizardStepSummary())
+
+
+def _wizard_summary_add(
+    name: str,
+    *,
+    scanned: int | None = None,
+    planned: int | None = None,
+    written: int | None = None,
+    skipped: int | None = None,
+    outputs: Iterable[Path | str] | None = None,
+    missing: Iterable[str] | None = None,
+    failures: Iterable[str] | None = None,
+    notes: Iterable[str] | None = None,
+) -> None:
+    step = _wizard_summary_step(name)
+    if step is None:
+        return
+    if scanned is not None:
+        step.scanned += scanned
+    if planned is not None:
+        step.planned += planned
+    if written is not None:
+        step.written += written
+    if skipped is not None:
+        step.skipped += skipped
+    if outputs:
+        step.outputs.extend(str(Path(p).expanduser()) for p in outputs)
+    if missing:
+        step.missing.extend(str(item) for item in missing)
+    if failures:
+        step.failures.extend(str(item) for item in failures)
+    if notes:
+        step.notes.extend(str(item) for item in notes)
+
+
+def _wizard_summary_add_preflight(gaps: list[tuple[str, str, str]]) -> None:
+    summary = _wizard_summary_active()
+    if summary is None:
+        return
+    summary.preflight.extend(gaps)
+
+
+def _wizard_scope_label(summary: _WizardRunSummary) -> str:
+    if summary.season and summary.episode:
+        return f"season {summary.season}, episode {summary.episode}"
+    if summary.season:
+        return f"season {summary.season}"
+    if summary.episode:
+        return f"episode {summary.episode}"
+    return "auto / not specified"
+
+
+def _wizard_unique_preview(items: Iterable[str], limit: int = 6) -> list[str]:
+    seen: set[str] = set()
+    out: list[str] = []
+    for item in items:
+        text = str(item)
+        key = text.casefold()
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append(text)
+        if len(out) >= limit:
+            break
+    return out
+
+
+def _wizard_print_run_summary(summary: _WizardRunSummary | None, rc: int) -> None:
+    if summary is None:
+        return
+    print()
+    print("=" * 70)
+    print("Workflow summary")
+    print("=" * 70)
+    print(f"Result: {'completed' if rc == 0 else 'finished with issues'}")
+    if rc != 0:
+        # Standardised What / Why / How so a failed run is actionable.
+        missing_any = any(
+            s.missing or s.failures for s in summary.steps_by_name.values()
+        )
+        print(_format_failure(
+            what="The workflow finished with issues (details per step below).",
+            why=("Some subtitles couldn't be found, or a step reported errors."
+                 if missing_any else
+                 "A step exited with a non-zero status."),
+            how="Check the 'issue:' lines below, then re-run after fixing — or "
+                "fill gaps with AI translation / manual search and merge again.",
+        ))
+    print(f"Source: {summary.source or '(not set)'}")
+    print(f"Scope: {_wizard_scope_label(summary)}")
+    if summary.languages:
+        print(f"Languages requested: {', '.join(summary.languages)}")
+    if summary.order and summary.order != summary.languages:
+        print(f"Display order: {', '.join(summary.order)}")
+    if summary.output:
+        print(f"Output folder: {summary.output}")
+    if summary.preflight:
+        blockers = [g for g in summary.preflight if g[0] == "block"]
+        warnings = [g for g in summary.preflight if g[0] == "warn"]
+        infos = [g for g in summary.preflight if g[0] == "info"]
+        if blockers:
+            print(f"Preflight blockers: {len(blockers)}")
+        if warnings:
+            print(f"Preflight warnings: {len(warnings)}")
+        if infos:
+            print(f"Preflight info: {len(infos)}")
+    else:
+        print("Preflight: ready")
+
+    order = ["fetch", "translate", "modify", "merge"]
+    for name in order:
+        step = summary.steps_by_name.get(name)
+        if not step:
+            continue
+        parts: list[str] = []
+        if step.scanned:
+            parts.append(f"scanned {step.scanned}")
+        if step.planned:
+            parts.append(f"planned {step.planned}")
+        if step.written:
+            parts.append(f"wrote {step.written}")
+        if step.skipped:
+            parts.append(f"skipped {step.skipped}")
+        if step.missing:
+            parts.append(f"missing/issues {len(step.missing)}")
+        if step.failures:
+            parts.append(f"failures {len(step.failures)}")
+        print(f"{name.capitalize()}: " + (", ".join(parts) if parts else "no work recorded"))
+        for item in _wizard_unique_preview(step.outputs):
+            print(f"  wrote: {Path(item).name}")
+        issue_preview = _wizard_unique_preview([*step.missing, *step.failures], limit=4)
+        for item in issue_preview:
+            print(f"  issue: {item}")
+
+    merge_outputs = summary.steps_by_name.get("merge", _WizardStepSummary()).outputs
+    missing_any = any(step.missing or step.failures for step in summary.steps_by_name.values())
+    print()
+    print("Next:")
+    if merge_outputs:
+        print("  Open the merged subtitle file in your player and check timing/readability.")
+    elif missing_any:
+        print("  Fill missing subtitles manually or with MT, then run merge again.")
+    elif len(summary.order or summary.languages) >= 2:
+        target = summary.output or summary.source or "FOLDER"
+        langs = ",".join(summary.order or summary.languages)
+        print(f"  Merge later with: getsubtitle merge {shlex.quote(target)} -l {langs}")
+    else:
+        print("  Add another language or reading aid when you want a multi-language file.")
+    if summary.command:
+        print("  Re-run this workflow command after any setup fixes:")
+        print("    " + summary.command)
 
 
 def _manual_search_query_terms(media: MediaInfo) -> list[str]:
@@ -13913,7 +14223,9 @@ plus a saveable workflow file before letting you pick a final action.
 
 You answer each menu by NUMBER (1/2/3…); only free-text fields take typed
 text (languages, paths, URL, title, season/episode). Headings are numbered
-contiguously from what you picked, so a subset run has no gaps.
+contiguously from what you picked, so a subset run has no gaps. Each
+question after Q1 starts with a divider and shows a rough progress bar
+on the same line as the question.
 Type 'b' at any prompt to return to the previous visible step.
 
 What it asks (only the questions relevant to your step choice appear):
@@ -13922,7 +14234,6 @@ What it asks (only the questions relevant to your step choice appear):
       The translation question still defaults to "Skip", so pressing Enter
       through setup does not silently start AI translation.
       Common picks:
-        '1-4'   → full subtitle workflow
         '1,3,4' → download + modify + merge existing subtitles
         '5'     → rename titles, prefixes, or numbering
       Rename is a separate maintenance workflow; choosing it with other
@@ -14261,6 +14572,21 @@ _WIZARD_READING_AID_MENU: list[tuple[str, str, str, bool]] = [
     ("ru", "ru:iso-9",          "Russian — ISO-9 transliteration",          False),
 ]
 
+_WIZARD_READING_AID_PREVIEWS: dict[str, str] = {
+    "ja:hiragana": "勉強する → べんきょうする",
+    "ja:katakana": "勉強する → ベンキョウする",
+    "ja:romaji": "今日は日本語を練習したい → kyou wa nihongo wo renshuu shitai",
+    "ko:revised": "한국어 공부 → hangugeo gongbu",
+    "ko:yale": "한국어 공부 → hankwuke kongpwu",
+    "zh:marks": "学中文 → xué zhōngwén",
+    "zh:numbers": "学中文 → xue2 zhong1wen2",
+    "yue:numbers": "香港 → hoeng1 gong2",
+    "th:royal-thai": "ภาษาไทย → phasa thai",
+    "ar:ala-lc": "العربية → al-ʻarabīyah",
+    "hi:iast": "हिन्दी → hindī",
+    "ru:iso-9": "русский → russkij",
+}
+
 
 class _WizardAbort(Exception):
     """Raised when the user explicitly bails out (Ctrl-C / `q`)."""
@@ -14320,7 +14646,7 @@ def _wizard_prompt(
         suffix = " [q=quit]"
     while True:
         try:
-            raw = input(f"  {question}{suffix} > ").strip()
+            raw = input(f"\n  {question}{suffix} > ").strip()
         except EOFError as e:
             raise _WizardAbort("stdin closed") from e
         if not raw and default is not None:
@@ -15284,26 +15610,57 @@ def _wizard_q_rename(state: _WizardState) -> None:
             print("    Going back to the previous rename step.")
 
 
-def _wizard_next_q(state: _WizardState) -> str:
-    """Return the next contiguous question label ('Q1.', 'Q2.', …).
+_WIZARD_HEADING_WIDTH = 96
+_WIZARD_PROGRESS_WIDTH = PROGRESS_BAR_WIDTH
+
+
+def _wizard_next_q(state: _WizardState, question: str | None = None, *, spacer: bool = True) -> str:
+    """Return the next contiguous question heading.
 
     The wizard's question functions kept fixed numbers from an older
     12-question flow, so a trimmed run showed visible gaps (Q1 → Q2 →
     Q4 → Q7). A running counter numbers each heading in the order it is
     actually printed, which stays gap-free even when `state.steps`
     mutates mid-flow (the local-language preflight can add 'fetch'
-    after the source/languages questions have already been numbered)."""
+    after the source/languages questions have already been numbered).
+
+    Keep the heading itself stable ("Q1.", "Q2.", ...). The total question
+    count is dynamic, so exposing "of ~N" made users wonder why N changed.
+    Q1 intentionally has no progress bar; later questions get a divider and
+    same-line progress indicator.
+    """
     n = getattr(state, "_qcount", 0) + 1
     state._qcount = n
-    total = _wizard_estimate_total_questions(state)
-    return f"Q{n} of ~{total}."
+    label = f"Q{n}." if question is None else f"Q{n}. {question}"
+    suffix = "\n" if spacer else ""
+    if n == 1:
+        return label + suffix
+    progress = _wizard_progress_text(state, n)
+    max_label = max(12, _WIZARD_HEADING_WIDTH - len(progress) - 1)
+    if len(label) > max_label:
+        label = label[: max_label - 1].rstrip() + "…"
+    spaces = max(1, _WIZARD_HEADING_WIDTH - len(label) - len(progress))
+    divider = "-" * _WIZARD_HEADING_WIDTH
+    return f"{divider}\n{label}{' ' * spaces}{progress}{suffix}"
+
+
+def _wizard_progress_text(state: _WizardState, question_number: int) -> str:
+    total = max(_wizard_estimate_total_questions(state), question_number, 1)
+    # Midpoint progress for the current question: Q1 starts with a little
+    # movement, and the last question does not claim 100% before it is answered.
+    pct = int(round(((question_number - 0.5) / total) * 100))
+    pct = min(95, max(5, pct))
+    filled = int(round((pct / 100) * _WIZARD_PROGRESS_WIDTH))
+    filled = min(_WIZARD_PROGRESS_WIDTH, max(1, filled))
+    bar = "◼" * filled + "◻" * (_WIZARD_PROGRESS_WIDTH - filled)
+    return f"Progress [{bar}] {pct}%"
 
 
 def _wizard_estimate_total_questions(state: _WizardState) -> int:
     """Rough count of questions for the current step selection, for the
-    'Q n of ~M' breadcrumb. Approximate ('~') because the flow is dynamic —
-    the local-language preflight can add fetch mid-run. Mirrors the gating
-    in `_wizard_step_skip`: format/text-size are smart-defaulted (not asked)."""
+    visual progress bar. Approximate because the flow is dynamic — the
+    local-language preflight can add fetch mid-run. Mirrors the gating in
+    `_wizard_step_skip`: format/text-size are smart-defaulted (not asked)."""
     if "rename" in state.steps:
         return 2  # steps + source (rename runs its own sub-flow after)
     n = 1  # steps
@@ -15360,19 +15717,17 @@ def _wizard_q0_steps(state: _WizardState) -> None:
     asking irrelevant questions downstream and keeps the emitted CLI
     short."""
     print()
-    print(f"{_wizard_next_q(state)} What do you want getsubtitle to do?")
-    print("    1) Fetch     — download subtitles from a URL or title")
-    print("    2) Translate — fill any missing language with AI translation")
-    print("    3) Modify    — clean up cues, add reading aids (furigana/hangul/pinyin/…)")
-    print("    4) Merge     — stack multiple languages into one study file")
-    print("    5) Rename    — batch-rename existing subtitle filenames")
+    print(_wizard_next_q(state, "What would you like to do?"))
+    print("    1) Fetch      Download subtitles from a URL or title")
+    print("    2) Translate  Fill missing languages with AI")
+    print("    3) Modify     Clean up cues, add reading aids (furigana, hangul, pinyin, ...)")
+    print("    4) Merge      Combine multiple languages into one study file")
+    print("    5) Rename     Batch rename subtitle files")
     print()
-    print("    Default: 1-4 — fetch, translate, modify, then merge.")
     print("    Common picks:")
-    print("      1-4     full subtitle workflow")
     print("      1,3,4   download + modify + merge existing subtitles")
     print("      5       rename titles, prefixes, change numbering")
-    print()
+    print("    Default: 1-4 — fetch, translate, modify, then merge.")
     while True:
         raw = _wizard_prompt(
             "Numbers or ranges, or Enter for default",
@@ -15405,10 +15760,10 @@ def _wizard_q1_source(state: _WizardState) -> None:
         # that makes sense for modify/merge/translate alone.
         state.source_kind = "path"
         if state.steps == {"rename"}:
-            print(f"{_wizard_next_q(state)} Folder or file to rename.")
+            print(_wizard_next_q(state, "Folder or file to rename."))
             print("    Drop a season folder or one subtitle file.")
         else:
-            print(f"{_wizard_next_q(state)} Folder or file to process.")
+            print(_wizard_next_q(state, "Folder or file to process."))
             print("    Drop a folder of .srt files, a single .srt file, or any path")
             print("    your selected step(s) should operate on.")
         while True:
@@ -15450,7 +15805,7 @@ def _wizard_q1_source(state: _WizardState) -> None:
             state.source = str(path)
             print(f"    Identified as: {description}")
             return
-    print(f"{_wizard_next_q(state)} What should getsubtitle work on?")
+    print(_wizard_next_q(state, "What should getsubtitle work on?"))
     print("    1) A movie/show title (The Simpsons, Totoro, The Matrix, …)")
     print("    2) A streaming/catalog URL (IMDb, AniList, Netflix, Crunchyroll, …)")
     print("    3) A folder or file on disk (your Plex/Movies, ~/Downloads, …)")
@@ -15470,9 +15825,8 @@ def _wizard_q1_source(state: _WizardState) -> None:
     else:
         state.source_kind = "url"
     print()
-    entry_q = _wizard_next_q(state)
     if state.source_kind == "url":
-        print(f"{entry_q} Enter the URL.")
+        print(_wizard_next_q(state, "Enter the URL.", spacer=False))
         while True:
             src = _wizard_prompt("URL")
             if _looks_like_url(src):
@@ -15482,7 +15836,7 @@ def _wizard_q1_source(state: _WizardState) -> None:
                 return
             print("    That does not look like an http/https URL. Try again, or enter 'q' to quit.")
     if state.source_kind == "title":
-        print(f"{entry_q} Enter the movie or show title.")
+        print(_wizard_next_q(state, "Enter the movie or show title.", spacer=False))
         while True:
             title = _wizard_prompt("Title")
             if _looks_like_url(title):
@@ -15513,7 +15867,7 @@ def _wizard_q1_source(state: _WizardState) -> None:
                 state.is_movie = picked_is_movie or _wizard_url_is_movie(picked_url)
                 print(f"    Locked to ID source: {label} [{provider}]")
             return
-    print(f"{entry_q} Enter the folder or file path.")
+    print(_wizard_next_q(state, "Enter the folder or file path.", spacer=False))
     while True:
         src = _wizard_prompt("Folder or file path")
         try:
@@ -15528,7 +15882,7 @@ def _wizard_q1_source(state: _WizardState) -> None:
 
 def _wizard_q2_languages(state: _WizardState) -> None:
     print()
-    print(f"{_wizard_next_q(state)} Which subtitle languages do you want to collect?")
+    print(_wizard_next_q(state, "Which subtitle languages do you want to collect?"))
     print("    List them in the order you want them displayed (top → bottom).")
     print()
     print("    Common Picks")
@@ -15776,22 +16130,21 @@ def _wizard_q5_scope(state: _WizardState) -> None:
         return
     if state.season or state.episode:
         print()
-        scope_q = _wizard_next_q(state)
         if state.season and state.episode:
             if state.season.isdigit() and state.episode.isdigit():
                 label = _episode_label_se(int(state.season), int(state.episode))
             else:
                 label = f"season {state.season}, episode {state.episode}"
-            print(f"{scope_q} Episode scope already selected: {label}")
+            print(_wizard_next_q(state, f"Episode scope already selected: {label}"))
         elif state.season:
-            print(f"{scope_q} Season scope already selected: season {state.season}")
+            print(_wizard_next_q(state, f"Season scope already selected: season {state.season}"))
         else:
-            print(f"{scope_q} Episode scope already selected: episode {state.episode}")
+            print(_wizard_next_q(state, f"Episode scope already selected: episode {state.episode}"))
         return
     parsed_source = urllib.parse.urlparse(state.source or "")
     is_crunchyroll = "crunchyroll.com" in parsed_source.netloc.lower()
     print()
-    print(f"{_wizard_next_q(state)} What episode scope?")
+    print(_wizard_next_q(state, "What episode scope?"))
     print("    1) Movie / single item (no season/episode)")
     print("    2) A specific season + episode (or range)")
     print("    3) Whole season, every episode (-e all)")
@@ -15848,7 +16201,7 @@ def _wizard_q5_filename_numbering(state: _WizardState) -> None:
         state.episode_filename_start = ""
         return
     print()
-    print(f"{_wizard_next_q(state)} How should episode numbers appear in output filenames?")
+    print(_wizard_next_q(state, "How should episode numbers appear in output filenames?"))
     print(f"    You are searching Season {state.season} episode(s): {state.episode}.")
     print("    Some streaming pages continue numbering across seasons, while")
     print("    subtitle sources often restart from episode 1 inside each season.")
@@ -15873,15 +16226,118 @@ def _wizard_q5_filename_numbering(state: _WizardState) -> None:
         print("    Enter a positive number, like 25.")
 
 
+def _wizard_argos_likely_pairs(state: _WizardState) -> list[tuple[str, str]]:
+    """Conservative language-pair guess for Argos readiness.
+
+    Before fetch runs, the wizard cannot know which requested language will be
+    present and which will be missing. Check both directions among requested
+    languages so the user learns about likely package gaps before a long run.
+    """
+    langs = [lang for lang in state.languages if lang]
+    pairs: list[tuple[str, str]] = []
+    for src in langs:
+        for tgt in langs:
+            if src != tgt:
+                pair = (src, tgt)
+                if pair not in pairs:
+                    pairs.append(pair)
+    return pairs
+
+
+def _wizard_argos_pair_statuses(state: _WizardState) -> list[tuple[str, str, bool, list[str]]]:
+    try:
+        import argostranslate.translate as at
+    except Exception:
+        return []
+    installed = at.get_installed_languages()
+    statuses: list[tuple[str, str, bool, list[str]]] = []
+    for src, tgt in _wizard_argos_likely_pairs(state):
+        ok = _argos_translation_path_available(installed, src, tgt)
+        statuses.append((src, tgt, ok, [] if ok else _argos_packages_for_pair(src, tgt)))
+    return statuses
+
+
+def _wizard_argos_missing_packages(statuses: list[tuple[str, str, bool, list[str]]]) -> list[str]:
+    packages: list[str] = []
+    for _src, _tgt, ok, pkgs in statuses:
+        if ok:
+            continue
+        for pkg in pkgs:
+            if pkg not in packages:
+                packages.append(pkg)
+    return packages
+
+
+def _wizard_install_argos_packages(packages: list[str]) -> bool:
+    if not packages:
+        return True
+    if not shutil.which("argospm"):
+        print("    argospm was not found on PATH. Run manually:")
+        for pkg in packages:
+            print(f"      argospm install {pkg}")
+        return False
+    ok = True
+    for pkg in packages:
+        print(f"    Installing {pkg}...")
+        result = subprocess.run(["argospm", "install", pkg], check=False)
+        ok = ok and result.returncode == 0
+    return ok
+
+
+def _wizard_handle_argos_preflight(state: _WizardState) -> str:
+    """Return ok / change / disabled after checking Argos language packs."""
+    statuses = _wizard_argos_pair_statuses(state)
+    if not statuses:
+        return "ok"
+    missing = [row for row in statuses if not row[2]]
+    print()
+    print("    Checking Argos language packs...")
+    for src, tgt, ok, _packages in statuses:
+        mark = "✓" if ok else "✗"
+        state_text = "installed" if ok else "missing"
+        print(f"    {mark} {src} -> {tgt} {state_text}")
+    if not missing:
+        return "ok"
+    packages = _wizard_argos_missing_packages(statuses)
+    print()
+    print("    Argos is not ready for all likely translation directions.")
+    print("    Choose:")
+    print("      1) Install missing packs now")
+    print("      2) Continue without translation")
+    print("      3) Pick a different translation engine")
+    pick = _wizard_read_choice("Number", ["1", "2", "3"], "1")
+    if pick == "1":
+        installed = _wizard_install_argos_packages(packages)
+        if installed:
+            refreshed = _wizard_argos_pair_statuses(state)
+            if refreshed and not [row for row in refreshed if not row[2]]:
+                print("    ✓ Argos language packs are ready.")
+                return "ok"
+        print("    Argos packs are still missing; setup check will stop before Run.")
+        return "ok"
+    if pick == "2":
+        state.mt_engine = ""
+        return "disabled"
+    return "change"
+
+
 def _wizard_q6_translate(state: _WizardState) -> None:
     print()
-    print(f"{_wizard_next_q(state)} If a language is missing, what should we do?")
-    print("    1) Skip — accept the gap (no AI translation)")
-    print("    2) Argos — on your computer, low quality (free)")
-    print("    3) Ollama — on your computer, good quality (free; slower)")
-    print("    4) DeepL — online, better quality (free tier; needs API key)")
-    pick = _wizard_read_choice("Number", ["1", "2", "3", "4"], "1")
-    state.mt_engine = {"1": "", "2": "argos", "3": "ollama", "4": "deepl"}[pick]
+    print(_wizard_next_q(state, "Fill missing subtitles?"))
+    while True:
+        print("    1) Skip (use only what's downloaded)")
+        print("    2) Translate with Argos (local, low quality)")
+        print("    3) Translate with Ollama (local, good quality; slower)")
+        print("    4) Translate with DeepL (online, better quality; needs API key)")
+        pick = _wizard_read_choice("Number", ["1", "2", "3", "4"], "1")
+        state.mt_engine = {"1": "", "2": "argos", "3": "ollama", "4": "deepl"}[pick]
+        if state.mt_engine != "argos":
+            return
+        result = _wizard_handle_argos_preflight(state)
+        if result in {"ok", "disabled"}:
+            return
+        print()
+        print("    Pick another translation option:")
 
 
 def _wizard_q7_reading_aids(state: _WizardState) -> None:
@@ -15897,7 +16353,7 @@ def _wizard_q7_reading_aids(state: _WizardState) -> None:
         state.reading_aids = []
         return
     print()
-    print(f"{_wizard_next_q(state)} Reading aids (phonetic guides for the original script).")
+    print(_wizard_next_q(state, "Reading aids (phonetic guides for the original script)."))
     # Pick a script-appropriate example so Korean / Mandarin users don't
     # see a kanji-only sample. Falls back to a Japanese example only when
     # ja is the first relevant language.
@@ -15908,8 +16364,7 @@ def _wizard_q7_reading_aids(state: _WizardState) -> None:
         "zh": "漢字 (pīnyīn)",
         "yue": "漢字 (jyutping)",
     }.get(primary, "original (reading)")
-    print("    VTT renders them as ruby above the script; SRT / SMI / ASS")
-    print(f"    show them as parenthetical {example} form.")
+    print(f"    Example: {example}")
     print("    Pick any combination by number, or '1' to skip.")
     # 'No reading aid' is the explicit first choice + default. The aid
     # entries shift to indices 2..n+1 so users see the no-op at the top
@@ -15917,6 +16372,9 @@ def _wizard_q7_reading_aids(state: _WizardState) -> None:
     print("    1) No reading aid (skip)")
     for i, (lang, spec, label, shipping) in enumerate(relevant, start=2):
         print(f"    {i}) {label}   [{spec}]")
+        preview = _WIZARD_READING_AID_PREVIEWS.get(spec)
+        if preview:
+            print(f"       Preview: {preview}")
     raw = _wizard_prompt(
         "Numbers (comma-separated)",
         "1",
@@ -15973,8 +16431,10 @@ def _wizard_format_recommendation(state: _WizardState) -> tuple[str, str]:
     needs_ruby = _wizard_needs_japanese_ruby(state)
     has_other_reading = _wizard_has_non_japanese_reading_aid(state)
     if needs_ruby:
-        return "vtt", "Browser/asbplayer workflows are the best fit for Japanese ruby."
-    if has_other_reading or line_count >= 3:
+        return "vtt", "VTT supports true Japanese ruby in browsers/asbplayer; local players vary."
+    if has_other_reading:
+        return "ass", "ASS is best for local-player stacked Korean/Chinese/Cantonese readings."
+    if line_count >= 3:
         return "ass", "ASS gives local desktop players the most reliable layout and font sizing."
     return "srt", "SRT is the safest general-purpose choice."
 
@@ -15983,7 +16443,7 @@ def _wizard_q9_format(state: _WizardState) -> None:
     needs_ruby = any(spec.startswith("ja:hiragana") or spec.startswith("ja:furigana")
                      for spec in state.reading_aids)
     print()
-    print(f"{_wizard_next_q(state)} Final output format.")
+    print(_wizard_next_q(state, "Final output format."))
     default, reason = _wizard_format_recommendation(state)
     default_pick = {"srt": "1", "ass": "2", "vtt": "3", "smi": "4", "txt": "5"}.get(default, "1")
     print(f"    Recommended: {default.upper()} — {reason}")
@@ -15993,6 +16453,15 @@ def _wizard_q9_format(state: _WizardState) -> None:
     print("    3) VTT  — best for browser/asbplayer Japanese ruby; local players vary.")
     print("    4) SMI  — legacy Korean SAMI; font size is usually player-controlled.")
     print("    5) TXT  — plain text without timestamps")
+    if state.reading_aids:
+        print()
+        print("    Reading-aid notes:")
+        if needs_ruby:
+            print("      VTT can show true ruby above Japanese text in browsers/asbplayer.")
+            print("      SRT/SMI/ASS use fallback reading-aid layouts instead.")
+        if _wizard_has_non_japanese_reading_aid(state):
+            print("      ASS is usually the clearest local-player choice for Korean,")
+            print("      Chinese, or Cantonese reading aids.")
     mapping = {"1": "srt", "2": "ass", "3": "vtt", "4": "smi", "5": "txt"}
     pick = _wizard_read_choice("Final format", ["1", "2", "3", "4", "5"], default_pick)
     state.format = mapping[pick]
@@ -16003,8 +16472,8 @@ def _wizard_q9_format(state: _WizardState) -> None:
         print("          漢字（かんじ） form.")
     if state.format == "vtt" and state.asbplayer and needs_ruby:
         print("    Reminder: in asbplayer, enable Settings > Misc > Subtitles >")
-        print("              Subtitle HTML = Render to see ruby. Most other")
-        print("              players render VTT ruby out of the box.")
+        print("              Subtitle HTML = Render to see ruby. Local-player")
+        print("              VTT ruby support varies.")
 
 
 def _wizard_expected_stack_line_count(state: _WizardState) -> int:
@@ -16035,7 +16504,7 @@ def _wizard_q_font_size(state: _WizardState) -> None:
     custom_default = re.sub(r"\D+", "", label(regular)) or "30"
     plural = "line" if line_count == 1 else "lines"
     print()
-    print(f"{_wizard_next_q(state)} Subtitle text size?")
+    print(_wizard_next_q(state, "Subtitle text size?"))
     print(f"    This output will usually show {line_count} {plural} at once.")
     print(f"    Format: {fmt.upper()}")
     print("    SRT and ASS use calibrated presets from player testing.")
@@ -16255,7 +16724,19 @@ def _wizard_apply_smart_defaults(state: _WizardState) -> dict[str, str]:
             "srt": "tv", "ass": "desktop", "vtt": "browser",
             "smi": "legacy", "txt": "text",
         }.get(fmt, "")
-        notes["Output format"] = f"{fmt.upper()}  (recommended — {reason})"
+        # Show the REAL format name + a compatibility cue, and make clear it
+        # is selectable — never a generic label, never silently fixed (#4).
+        compat = {
+            "srt": "plays almost everywhere (Plex, TVs, phones)",
+            "ass": "best for desktop players (VLC/mpv/IINA): layout + font size",
+            "vtt": "best for browser / asbplayer Japanese ruby",
+            "smi": "legacy Korean SAMI; sizing is player-controlled",
+            "txt": "plain text, no timestamps",
+        }.get(fmt, reason)
+        notes["Output format"] = (
+            f"{fmt.upper()} — {compat}.  "
+            "Edit to pick SRT / ASS / VTT / SMI / TXT."
+        )
     # Text size: calibrated 'regular' preset for the size-aware formats.
     if (
         "merge" in state.steps
@@ -16289,9 +16770,10 @@ def _wizard_step_skip(label: str, state: _WizardState) -> bool:
         "filename_numbering": not _wizard_should_ask_filename_numbering(state),
         "translate":    "translate" not in state.steps,
         "reading_aids": "modify" not in state.steps,
-        # Format + text size are smart-defaulted (recommendation shown in the
-        # banner) and only asked when the user edits them. Keeps the forward
-        # flow short while still letting users customize via 'Edit'.
+        # Format and text size are smart-defaulted: the recommendation is
+        # shown by REAL name (SRT/ASS/VTT/SMI/TXT) in the banner with a
+        # compatibility note, and stays fully selectable via 'Edit a single
+        # answer' (never hidden behind a generic label, never removed).
         "format":       True,
         "font_size":    True,
     }
@@ -16548,10 +17030,10 @@ def _wizard_emit_cli(state: _WizardState) -> list[str]:
     --fetch noise or unwanted verbs."""
     steps = state.steps or {"fetch", "modify", "merge"}
     local_steps = steps - {"fetch"}
-    local_episode_filter = "fetch" not in steps and bool(state.season or state.episode)
+    downstream_episode_filter = bool(state.season or state.episode)
 
-    def add_local_episode_filter(argv: list[str]) -> None:
-        if not local_episode_filter:
+    def add_downstream_episode_filter(argv: list[str]) -> None:
+        if not downstream_episode_filter:
             return
         if state.season:
             argv += ["--season", state.season]
@@ -16580,7 +17062,7 @@ def _wizard_emit_cli(state: _WizardState) -> list[str]:
     # subcommand form is what users expect and what argparse supports.
     if "fetch" not in steps and local_steps == {"modify"}:
         argv: list[str] = ["getsubtitle", "modify", state.source]
-        add_local_episode_filter(argv)
+        add_downstream_episode_filter(argv)
         if state.convert_smi:
             argv += ["--convert", "smi-to-srt"]
         if state.asbplayer:
@@ -16593,7 +17075,7 @@ def _wizard_emit_cli(state: _WizardState) -> list[str]:
 
     if "fetch" not in steps and local_steps == {"merge"}:
         argv = ["getsubtitle", "merge", state.source]
-        add_local_episode_filter(argv)
+        add_downstream_episode_filter(argv)
         order = merge_order()
         if len(order) >= 2:
             argv += ["--languages", ",".join(order)]
@@ -16609,6 +17091,7 @@ def _wizard_emit_cli(state: _WizardState) -> list[str]:
 
     if "fetch" not in steps and local_steps == {"translate"}:
         argv = ["getsubtitle", "translate", state.source]
+        add_downstream_episode_filter(argv)
         if state.languages:
             argv += ["--languages", ",".join(state.languages)]
         if state.mt_engine:
@@ -16643,6 +17126,7 @@ def _wizard_emit_cli(state: _WizardState) -> list[str]:
     # selected without translate.
     if "translate" in steps and state.mt_engine:
         argv += ["--translate", state.mt_engine]
+        add_downstream_episode_filter(argv)
         if "fetch" not in steps and state.languages:
             argv += ["--languages", ",".join(state.languages)]
     elif "fetch" in steps and state.source_kind in ("url", "title"):
@@ -16650,7 +17134,7 @@ def _wizard_emit_cli(state: _WizardState) -> list[str]:
     # Modify block.
     if "modify" in steps and (state.reading_aids or state.asbplayer or state.convert_smi):
         argv.append("--modify")
-        add_local_episode_filter(argv)
+        add_downstream_episode_filter(argv)
         if state.convert_smi:
             argv += ["--convert", "smi-to-srt"]
         if state.asbplayer:
@@ -16662,7 +17146,7 @@ def _wizard_emit_cli(state: _WizardState) -> list[str]:
     # Merge block — only when 2+ languages.
     if "merge" in steps and len(state.order) >= 2:
         argv += ["--merge", "--languages", ",".join(merge_order())]
-        add_local_episode_filter(argv)
+        add_downstream_episode_filter(argv)
         merge_reading = _wizard_merge_inline_reading_spec(state)
         if merge_reading:
             argv += ["--reading", merge_reading]
@@ -16763,7 +17247,7 @@ def _wizard_emit_toml(state: _WizardState) -> str:
     boilerplate."""
     lines: list[str] = []
     steps = state.steps or {"fetch", "modify", "merge"}
-    local_episode_filter = "fetch" not in steps and bool(state.season or state.episode)
+    downstream_episode_filter = bool(state.season or state.episode)
     if "fetch" in steps:
         lines.append("[fetch]")
         if state.source_kind == "title":
@@ -16788,6 +17272,11 @@ def _wizard_emit_toml(state: _WizardState) -> str:
     if "translate" in steps and state.mt_engine:
         lines.append("[translate]")
         lines.append(f'engine = "{state.mt_engine}"')
+        if downstream_episode_filter:
+            if state.season:
+                lines.append(f'season = "{state.season}"')
+            if state.episode:
+                lines.append(f'episode = "{state.episode}"')
         if "fetch" not in steps and state.languages:
             lines.append(f'languages = "{",".join(state.languages)}"')
         lines.append('mt_source = "auto"')
@@ -16796,7 +17285,7 @@ def _wizard_emit_toml(state: _WizardState) -> str:
     has_modify = "modify" in steps and bool(state.reading_aids or state.asbplayer or state.convert_smi)
     if has_modify:
         lines.append("[modify]")
-        if local_episode_filter:
+        if downstream_episode_filter:
             if state.season:
                 lines.append(f'season = "{state.season}"')
             if state.episode:
@@ -16815,7 +17304,7 @@ def _wizard_emit_toml(state: _WizardState) -> str:
     if "merge" in steps and len(state.order) >= 2:
         lines.append("[merge]")
         lines.append(f'languages = "{",".join(_wizard_merge_order(state))}"')
-        if local_episode_filter:
+        if downstream_episode_filter:
             if state.season:
                 lines.append(f'season = "{state.season}"')
             if state.episode:
@@ -16882,13 +17371,196 @@ def _wizard_offer_open_saved_workflow_folder(path: Path) -> None:
 
 # ─── Dependency probe + auto-setup ─────────────────────────────────────
 
+def _wizard_output_write_issue(state: _WizardState) -> tuple[str, str, str] | None:
+    target_raw = (state.output or "").strip()
+    if not target_raw:
+        return None
+    target = Path(target_raw).expanduser()
+    if target.exists() and not target.is_dir():
+        return (
+            "block",
+            f"Output target is not a folder: {target}",
+            "Choose a folder with --output, or change Q12 in the wizard.",
+        )
+    probe_root = target if target.exists() else target.parent
+    while not probe_root.exists() and probe_root != probe_root.parent:
+        probe_root = probe_root.parent
+    if not probe_root.exists():
+        return (
+            "block",
+            f"Output folder parent does not exist: {target.parent}",
+            "Create the parent folder or choose another output folder.",
+        )
+    if not probe_root.is_dir():
+        return (
+            "block",
+            f"Output parent is not a folder: {probe_root}",
+            "Choose another output folder.",
+        )
+    probe = probe_root / f".getsubtitle-write-test-{os.getpid()}-{int(time.time() * 1000)}"
+    try:
+        probe.write_text("ok", encoding="utf-8")
+        probe.unlink()
+    except OSError as e:
+        try:
+            if probe.exists():
+                probe.unlink()
+        except OSError:
+            pass
+        return (
+            "block",
+            f"Output folder is not writable: {probe_root}",
+            f"Choose another folder or fix permissions ({e}).",
+        )
+    return None
+
+
+def _wizard_fast_subtitle_scan(
+    roots: list[Path],
+    *,
+    limit: int = 5000,
+) -> tuple[list[tuple[Path, int, int, str, bool, str]], bool, int]:
+    rows: list[tuple[Path, int, int, str, bool, str]] = []
+    seen: set[Path] = set()
+    scanned = 0
+    truncated = False
+
+    def consider(path: Path) -> None:
+        nonlocal scanned
+        if path in seen or is_filesystem_metadata_name(path.name):
+            return
+        seen.add(path)
+        scanned += 1
+        suffix = path.suffix.lower()
+        parsed: tuple[int, int, str, bool] | None = None
+        fmt = suffix.lstrip(".")
+        if suffix == ".srt":
+            parsed = parse_srt_filename(path.name)
+        elif suffix == ".vtt":
+            parsed = _parse_vtt_filename(path.name)
+        elif suffix in {".ass", ".ssa"}:
+            parsed = _parse_ass_filename(path.name)
+        elif suffix == ".smi":
+            ep = parse_episode_marker(path.name)
+            if ep:
+                parsed = (ep[0], ep[1], "smi", False)
+        if parsed is not None:
+            rows.append((path, *parsed, fmt))
+
+    for root in roots:
+        if scanned >= limit:
+            truncated = True
+            break
+        if root.is_file():
+            consider(root)
+            continue
+        if not root.is_dir():
+            continue
+        for path in root.rglob("*"):
+            if scanned >= limit:
+                truncated = True
+                break
+            if path.is_file() and path.suffix.lower() in {".srt", ".vtt", ".ass", ".ssa", ".smi"}:
+                consider(path)
+    return rows, truncated, scanned
+
+
+def _wizard_coverage_preflight(state: _WizardState) -> list[tuple[str, str, str]]:
+    if state.source_kind != "path" or not (state.steps & {"translate", "modify", "merge"}):
+        return []
+    source = Path(state.source).expanduser()
+    if not source.exists():
+        return []
+    root = source if source.is_dir() else source.parent
+    rows, truncated, scanned_count = _wizard_fast_subtitle_scan([root])
+    notes: list[tuple[str, str, str]] = []
+    if truncated:
+        notes.append((
+            "warn",
+            "Coverage estimate scanned the first 5000 subtitle candidates only",
+            "Use a narrower folder if the estimate looks wrong.",
+        ))
+    if not rows:
+        if "fetch" in state.steps:
+            notes.append((
+                "warn",
+                "Coverage estimate: no local subtitles found yet",
+                "Fetch will try online providers; if it misses, use manual search or MKV extraction.",
+            ))
+        else:
+            notes.append((
+                "warn",
+                "Coverage estimate: no local subtitle files found",
+                "Check the folder path, extract MKV subtitles, or fetch/download subtitles first.",
+            ))
+        return notes
+
+    grouped: dict[tuple[int, int], set[str]] = {}
+    for _path, season, episode, lang, _is_mt, _fmt in rows:
+        grouped.setdefault((season, episode), set()).add(lang)
+    detected_keys = _sorted_episode_keys(grouped.keys())
+    selected_keys = filter_episode_keys(
+        detected_keys,
+        season=state.season or "all",
+        episode=state.episode or "all",
+    )
+    if not selected_keys:
+        notes.append((
+            "warn",
+            "Coverage estimate: no subtitle files match the selected episode scope",
+            f"Detected {_episode_label_se(*detected_keys[0])}-{_episode_label_se(*detected_keys[-1])}; selected {_wizard_scope_label(_WizardRunSummary(season=state.season, episode=state.episode))}.",
+        ))
+        return notes
+
+    requested = list(state.languages or state.order or [])
+    if "merge" in state.steps and len(requested) >= 2:
+        complete = [
+            key for key in selected_keys
+            if all(lang in grouped.get(key, set()) for lang in requested)
+        ]
+        missing_examples: list[str] = []
+        for key in selected_keys:
+            missing = [lang for lang in requested if lang not in grouped.get(key, set())]
+            if missing:
+                missing_examples.append(f"{_episode_label_se(*key)} missing {','.join(missing)}")
+            if len(missing_examples) >= 4:
+                break
+        if len(complete) < len(selected_keys):
+            notes.append((
+                "warn",
+                f"Coverage estimate: {len(complete)}/{len(selected_keys)} episode(s) already have all requested languages",
+                "; ".join(missing_examples) or "Some requested languages are missing.",
+            ))
+        else:
+            notes.append((
+                "info",
+                f"Coverage estimate: {len(complete)}/{len(selected_keys)} episode(s) have all requested languages",
+                f"Fast scan checked {scanned_count} subtitle candidate(s).",
+            ))
+    elif "translate" in state.steps:
+        source_langs = sorted({lang for key in selected_keys for lang in grouped.get(key, set())})
+        if not source_langs:
+            notes.append((
+                "warn",
+                "Coverage estimate: no translation source subtitles found",
+                "Add at least one source-language SRT before running translate.",
+            ))
+    return notes
+
+
 def _wizard_probe_dependencies(state: _WizardState) -> list[tuple[str, str, str]]:
     """Inspect the wizard answers and return a list of unmet requirements.
 
     Each row: (severity, label, fix_hint). severity is "block" (the
-    chosen action will fail without it) or "warn" (might fail at run
-    time but isn't fatal upfront)."""
+    chosen action will fail without it), "warn" (might fail at run
+    time but isn't fatal upfront), or "info" (non-blocking context the
+    user should see before running)."""
     out: list[tuple[str, str, str]] = []
+
+    output_issue = _wizard_output_write_issue(state)
+    if output_issue is not None:
+        out.append(output_issue)
+    out.extend(_wizard_coverage_preflight(state))
 
     # Reading aids → pykakasi for Japanese.
     needs_pykakasi = any(s.startswith("ja:") for s in state.reading_aids)
@@ -16950,10 +17622,33 @@ def _wizard_probe_dependencies(state: _WizardState) -> list[tuple[str, str, str]
         except ImportError:
             out.append(("block", "argostranslate (offline MT)",
                         "pip install argostranslate"))
+        else:
+            statuses = _wizard_argos_pair_statuses(state)
+            missing_packages = _wizard_argos_missing_packages(statuses)
+            if missing_packages:
+                out.append((
+                    "block",
+                    "Argos language pack(s): " + ", ".join(missing_packages),
+                    " && ".join(f"argospm install {pkg}" for pkg in missing_packages),
+                ))
     if state.mt_engine == "ollama":
         if not _wizard_ollama_reachable():
             out.append(("block", "Ollama daemon at http://localhost:11434",
                         "Start Ollama: https://ollama.com  (then re-run)"))
+        else:
+            # Daemon is up — verify the model the run will use is present so a
+            # long translate job doesn't stall on a first-run model download.
+            model = _wizard_ollama_target_model()
+            if not _wizard_ollama_model_installed(model, _wizard_ollama_installed_models()):
+                if _ollama_models_flag("auto_load", True):
+                    out.append(("info", f"Ollama model {model!r} is not downloaded yet",
+                                f"It auto-pulls on first run (a large download — the first "
+                                f"translate will be slow). Pre-pull to avoid the wait: "
+                                f"ollama pull {model}"))
+                else:
+                    out.append(("block", f"Ollama model {model!r} is not installed",
+                                f"ollama pull {model}   "
+                                "(auto-pull is off in [translate.ollama_models])"))
     if state.mt_engine == "deepl":
         if not get_provider_api_key("deepl"):
             out.append(("block", "DeepL API key", "getsubtitle --set-key deepl"))
@@ -16964,9 +17659,11 @@ def _wizard_probe_dependencies(state: _WizardState) -> list[tuple[str, str, str]
             out.append(("warn", "Jimaku API key (Japanese anime)",
                         "getsubtitle --set-key jimaku"))
         wants_non_ja = any(lang != "ja" for lang in state.languages)
-        if wants_non_ja and not get_provider_api_key("wyzie"):
-            out.append(("warn", "Wyzie API key (movies / non-anime TV)",
-                        "getsubtitle --set-key wyzie"))
+        has_wyzie = bool(get_provider_api_key("wyzie"))
+        has_subdl = bool(get_provider_api_key("subdl"))
+        if wants_non_ja and not (has_wyzie or has_subdl):
+            out.append(("warn", "Wyzie or SubDL API key (movies / TV subtitles)",
+                        "getsubtitle --set-key wyzie  # or: getsubtitle --set-key subdl"))
         if state.episode == "all" and not get_provider_api_key("tmdb") and (
            state.source_kind == "title"
            or (
@@ -16989,6 +17686,41 @@ def _wizard_ollama_reachable() -> bool:
             return 200 <= resp.status < 300
     except Exception:
         return False
+
+
+def _wizard_ollama_installed_models() -> set[str]:
+    """Model names the local Ollama daemon already has (empty set on error)."""
+    try:
+        import json
+        import urllib.request as _ur
+        req = _ur.Request("http://localhost:11434/api/tags", method="GET")
+        with _ur.urlopen(req, timeout=1) as resp:  # noqa: S310 — localhost only
+            data = json.loads(resp.read().decode("utf-8"))
+        return {
+            m.get("name", "")
+            for m in (data.get("models", []) if isinstance(data, dict) else [])
+            if isinstance(m, dict)
+        }
+    except Exception:
+        return set()
+
+
+def _wizard_ollama_target_model() -> str:
+    """The Ollama model the run will use: [translate].model or the default."""
+    try:
+        cfg = load_user_config()
+    except CliError:
+        cfg = {}
+    return (cfg.get("translate", {}) or {}).get("model") or DEFAULT_OLLAMA_MODEL
+
+
+def _wizard_ollama_model_installed(model: str, installed: set[str]) -> bool:
+    """Tolerant match: exact, or the configured bare name vs an installed
+    tagged name (e.g. config "qwen3" matches installed "qwen3:4b")."""
+    return any(
+        m == model or m.startswith(model + ":") or m.split(":")[0] == model.split(":")[0]
+        for m in installed
+    )
 
 
 def _wizard_run_setup(state: _WizardState, gaps: list[tuple[str, str, str]]) -> None:
@@ -17016,6 +17748,27 @@ def _wizard_run_setup(state: _WizardState, gaps: list[tuple[str, str, str]]) -> 
         print()
 
 
+# Every failure answers the same three questions. `_PREFLIGHT_WHY` supplies
+# the "why it matters" line per severity; the probe row's label is the
+# "what" and its fix string is the "how".
+_PREFLIGHT_WHY: dict[str, str] = {
+    "block": "Required — the run would fail before it starts.",
+    "warn":  "Optional — the run works, but may fail or look worse without it.",
+    "info":  "Heads-up — no action needed before running.",
+}
+
+
+def _format_failure(what: str, why: str, how: str) -> str:
+    """Standard failure block answering What / Why / How. Concise and
+    actionable so every wizard failure reads the same way."""
+    lines = [f"  What: {what}"]
+    if why:
+        lines.append(f"  Why:  {why}")
+    if how:
+        lines.append(f"  How:  {how}")
+    return "\n".join(lines)
+
+
 def _wizard_dependency_check_before_run(state: _WizardState) -> str:
     """Return the action to take after dependency probing.
 
@@ -17025,30 +17778,37 @@ def _wizard_dependency_check_before_run(state: _WizardState) -> str:
     a doomed run. `quit` exits without running.
     """
     gaps = _wizard_probe_dependencies(state)
+    _wizard_summary_add_preflight(gaps)
     if not gaps:
         return "run"
 
     print()
-    print("Dependency check — issues found:")
+    print(f"Preflight check — {len(gaps)} item(s) to know about:")
     for sev, label, fix in gaps:
-        marker = "✗ block" if sev == "block" else "• warn "
-        print(f"  {marker}  {label}")
+        marker = "✗" if sev == "block" else "•"
+        print(f"  {marker} {label}")
+        print(f"      Why: {_PREFLIGHT_WHY.get(sev, '')}")
+        if fix:
+            print(f"      Fix: {fix}")
     blockers = [g for g in gaps if g[0] == "block"]
     if not blockers:
         return "run"
 
-    if _wizard_yesno("Run setup now to fix these?", default=True):
-        _wizard_run_setup(state, gaps)
+    if _wizard_yesno("Run setup now to fix the blocker(s)?", default=True):
+        _wizard_run_setup(state, blockers)
 
     remaining = [g for g in _wizard_probe_dependencies(state) if g[0] == "block"]
     if not remaining:
         return "run"
 
     print()
-    print("Still missing required setup:")
+    print("Still blocked — the run would fail before it starts:")
     for _sev, label, fix in remaining:
-        print(f"  - {label}: {fix}")
-    print("Not running yet, because this workflow would fail before it starts.")
+        print(_format_failure(
+            what=label,
+            why="Required for this workflow.",
+            how=fix or "see setup instructions above",
+        ))
     if _wizard_yesno("Save the workflow instead so you can run it after setup?", default=True):
         return "save"
     return "quit"
@@ -17056,14 +17816,26 @@ def _wizard_dependency_check_before_run(state: _WizardState) -> str:
 
 # ─── Entry point ───────────────────────────────────────────────────────
 
-_WIZARD_INTRO = """
-getsubtitle — interactive workflow builder
+_WIZARD_INTRO = """\
+  ____      _   ____        _     _   _ _   _
 
-I'll ask a few short questions, then show you the equivalent terminal
-command and a reusable workflow file. You can save the workflow for
-later, run it now, or edit a single answer. Type 'b' to go back,
-'q' to quit, or Ctrl-C to bail.
-"""
+ / ___| ___| |_/ ___| _   _| |__ | |_| |_| |_| ___
+
+| |  _ / _ \\ __\\___ \\| | | | '_ \\| __| | __| |/ _ \\
+
+| |_| |  __/ |_ ___) | |_| | |_) | |_| | |_| |  __/
+
+ \\____|\\___|\\__|____/ \\__,_|_.__/ \\__|_|\\__|_|\\___|
+
+GetSubtitle — Workflow Builder
+
+Answer a few questions to generate a command and reusable workflow.
+
+Commands:
+  Enter  Accept default
+  b      Back
+  q      Quit
+  Ctrl-C Cancel"""
 
 
 def interactive_main(argv: list[str] | None = None) -> int:
@@ -17143,11 +17915,15 @@ def interactive_main(argv: list[str] | None = None) -> int:
         # Probe dependencies only for the 'run' action. Save can be cross-
         # machine — don't nag a user generating a TOML for a different box.
         if action == "run":
+            _wizard_summary_begin(state)
             action = _wizard_dependency_check_before_run(state)
             if action == "quit":
+                _wizard_summary_end()
                 _wizard_clear_draft()
                 print("Quit.")
                 return 0
+            if action != "run":
+                _wizard_summary_end()
 
         cli_string = _wizard_emit_cli_string(state)
         toml_str = _wizard_emit_toml(state)
@@ -17200,6 +17976,18 @@ def interactive_main(argv: list[str] | None = None) -> int:
                 print("  (Saved TOML keeps these so the workflow runs once the")
                 print("   backend ships. See ROADMAP.md.)")
                 cli_string = _wizard_emit_cli_string(run_state)
+            active_summary = _wizard_summary_active()
+            if active_summary is None:
+                active_summary = _wizard_summary_begin(run_state)
+            active_summary.source = run_state.source
+            active_summary.source_kind = run_state.source_kind
+            active_summary.steps = sorted(run_state.steps or [])
+            active_summary.languages = list(run_state.languages or [])
+            active_summary.order = list(run_state.order or [])
+            active_summary.season = run_state.season
+            active_summary.episode = run_state.episode
+            active_summary.output = run_state.output
+            active_summary.command = cli_string
             print()
             print("Running:")
             print("  " + cli_string)
@@ -17219,7 +18007,11 @@ def interactive_main(argv: list[str] | None = None) -> int:
             opens_folder = bool(run_state.steps & {"merge", "fetch"})
             if opens_folder and "--no-open-folder-prompt" not in dispatch_argv:
                 dispatch_argv.append("--no-open-folder-prompt")
-            rc = main(dispatch_argv)
+            try:
+                rc = main(dispatch_argv)
+            finally:
+                run_summary = _wizard_summary_end()
+            _wizard_print_run_summary(run_summary, rc)
             # Post-run cleanup + folder opener. Skipped silently on a
             # failed run so we don't act on a half-finished output.
             if rc == 0 and state.output:
@@ -17696,12 +18488,32 @@ def main(argv: list[str] | None = None) -> int:
         open_mode=args.manual_search_open,
         expected_output_dir=expected_dir,
     )
+    fetch_issues = [
+        f"{r.language} {episode_label(r.episode)}: {r.status}"
+        + (f" — {r.error}" if r.error else "")
+        for r in search_results
+        if r.status != "found"
+    ]
 
     if not planned:
         print("\nNo downloads planned.")
+        _wizard_summary_add(
+            "fetch",
+            planned=0,
+            skipped=len(fetch_issues),
+            missing=fetch_issues,
+            notes=warnings,
+        )
         return 1
 
     print_planned_downloads(planned)
+    _wizard_summary_add(
+        "fetch",
+        planned=len(planned),
+        skipped=len(fetch_issues),
+        missing=fetch_issues,
+        notes=warnings,
+    )
 
     confirm_bulk(len(planned), args)
     if args.dry_run:
@@ -17741,6 +18553,8 @@ def main(argv: list[str] | None = None) -> int:
     # Machine translation pass: fill missing requested languages by
     # translating from the closest available downloaded SRT.
     mt_files: list[Path] = []
+    mt_task_count = 0
+    mt_failure_notes: list[str] = []
     if args.mt_engine:
         explicit_mt_model = args.mt_model if (
             option_was_passed(raw_argv, "--model") or option_was_passed(raw_argv, "--mt-model")
@@ -17813,6 +18627,7 @@ def main(argv: list[str] | None = None) -> int:
                 mt_tasks.append((target, ep, src_path, src_lang))
 
         if mt_tasks:
+            mt_task_count = len(mt_tasks)
             print(f"\nMachine translation ({translator.name}):")
             grouped_mt_failures: dict[str, list[str]] = {}
             mt_written_times: list[tuple[Path, float]] = []
@@ -17855,10 +18670,12 @@ def main(argv: list[str] | None = None) -> int:
             for msg, tasks in grouped_mt_failures.items():
                 if len(tasks) == 1:
                     warnings.append(f"{tasks[0]}: MT failed — {msg}")
+                    mt_failure_notes.append(f"{tasks[0]}: {msg}")
                 else:
                     sample = ", ".join(tasks[:3])
                     more = f" (+{len(tasks) - 3} more)" if len(tasks) > 3 else ""
                     warnings.append(f"MT failed for {len(tasks)} task(s) [{sample}{more}]: {msg}")
+                    mt_failure_notes.extend(f"{task}: {msg}" for task in tasks)
 
         # Auto-unload Ollama models from memory after the MT pass, if enabled.
         # Default true; failures are silent because the user's MT already ran.
@@ -17941,10 +18758,24 @@ def main(argv: list[str] | None = None) -> int:
     print("\nSaved:")
     for path in saved:
         print(f"  {path}")
+    _wizard_summary_add(
+        "fetch",
+        written=len(saved),
+        outputs=saved,
+        notes=download_failures,
+    )
     if mt_files:
         print("\nMachine-translated (not human-quality — verify before use):")
         for path in mt_files:
             print(f"  {path}")
+    if args.mt_engine:
+        _wizard_summary_add(
+            "translate",
+            planned=mt_task_count,
+            written=len(mt_files),
+            outputs=mt_files,
+            failures=mt_failure_notes,
+        )
     if args.ja_reading:
         if generated:
             print("\nGenerated furigana:")
@@ -17973,6 +18804,15 @@ def main(argv: list[str] | None = None) -> int:
                 print(f"  {path}")
         else:
             print("\nCantonese Jyutping: no .yue.srt files were generated; Jyutping is created from Cantonese SRT.")
+    reading_outputs = [*generated, *ko_generated, *zh_generated, *yue_generated]
+    if reading_outputs or args.ja_reading or getattr(args, "ko_reading", None) or getattr(args, "zh_reading", None) or getattr(args, "yue_reading", None):
+        _wizard_summary_add(
+            "modify",
+            planned=len(reading_outputs),
+            written=len(reading_outputs),
+            outputs=reading_outputs,
+            missing=[] if reading_outputs else ["reading aid requested, but no matching source SRT was generated"],
+        )
     # If MT contributed late-stage warnings (e.g., no source available, engine
     # not configured), surface them after the saved-files block so they aren't
     # lost beneath download output.

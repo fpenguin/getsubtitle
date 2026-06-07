@@ -6558,6 +6558,19 @@ def test_modify_main_validates_format_upfront_before_progress_bar():
     assert "Processing:" not in text
 
 
+def test_progress_bar_uses_wizard_block_style():
+    import io, contextlib
+    out = io.StringIO()
+    with contextlib.redirect_stdout(out):
+        MODULE["progress_bar"](1, 3, "searching", "episode 1 ja")
+        MODULE["progress_bar"](3, 3, "searching", "episode 3 ja")
+    text = out.getvalue()
+    assert "[◼◼◼◼◻◻◻◻◻◻◻◻◻] 1/3 searching episode 1 ja" in text
+    assert "[◼◼◼◼◼◼◼◼◼◼◼◼◼] 3/3 searching episode 3 ja" in text
+    assert "#" not in text
+    assert "-" not in text
+
+
 # ---------------------------------------------------------------------------
 # SAMI (.smi) → SRT conversion
 # ---------------------------------------------------------------------------
@@ -8429,6 +8442,275 @@ def test_wizard_dependency_probe_flags_deepl_missing_key_as_block():
     assert deepl_gaps and deepl_gaps[0][0] == "block"
 
 
+def test_argos_translation_path_available_accepts_direct_and_pivot():
+    class FakeLang:
+        def __init__(self, code, targets=()):
+            self.code = code
+            self.targets = set(targets)
+
+        def get_translation(self, other):
+            return object() if other and other.code in self.targets else None
+
+    installed = [
+        FakeLang("ja", ["en"]),
+        FakeLang("en", ["ko", "es"]),
+        FakeLang("ko", []),
+        FakeLang("es", []),
+    ]
+    assert MODULE["_argos_translation_path_available"](installed, "en", "ko")
+    assert MODULE["_argos_translation_path_available"](installed, "ja", "ko")
+    assert not MODULE["_argos_translation_path_available"](installed, "ko", "ja")
+
+
+def test_wizard_q6_argos_preflight_can_disable_translation():
+    import contextlib
+    import io
+
+    state = _wizard_state(languages=["en", "ko"], mt_engine="")
+    fn_g = MODULE["_wizard_q6_translate"].__globals__
+    saved_statuses = fn_g["_wizard_argos_pair_statuses"]
+    had_input = "input" in fn_g
+    saved_input = fn_g.get("input")
+    answers = iter(["2", "2"])  # choose Argos, then continue without translation
+    try:
+        fn_g["_wizard_argos_pair_statuses"] = lambda _state: [
+            ("en", "ko", True, []),
+            ("ko", "en", False, ["translate-ko_en"]),
+        ]
+        fn_g["input"] = lambda *a, **k: next(answers)
+        with contextlib.redirect_stdout(io.StringIO()) as buf:
+            MODULE["_wizard_q6_translate"](state)
+    finally:
+        fn_g["_wizard_argos_pair_statuses"] = saved_statuses
+        if had_input:
+            fn_g["input"] = saved_input
+        else:
+            fn_g.pop("input", None)
+    out = buf.getvalue()
+    assert state.mt_engine == ""
+    assert "Fill missing subtitles?" in out
+    assert "Checking Argos language packs" in out
+    assert "✓ en -> ko installed" in out
+    assert "✗ ko -> en missing" in out
+    assert "Continue without translation" in out
+
+
+def test_wizard_dependency_probe_flags_argos_missing_language_pack_as_block(monkeypatch):
+    import types
+    import sys
+
+    state = _wizard_state(languages=["en", "ko"], mt_engine="argos")
+    fn_g = MODULE["_wizard_probe_dependencies"].__globals__
+    saved_statuses = fn_g["_wizard_argos_pair_statuses"]
+    saved_module = sys.modules.get("argostranslate")
+    monkeypatch.setitem(sys.modules, "argostranslate", types.SimpleNamespace())
+    try:
+        fn_g["_wizard_argos_pair_statuses"] = lambda _state: [
+            ("en", "ko", True, []),
+            ("ko", "en", False, ["translate-ko_en"]),
+        ]
+        gaps = MODULE["_wizard_probe_dependencies"](state)
+    finally:
+        fn_g["_wizard_argos_pair_statuses"] = saved_statuses
+        if saved_module is None:
+            monkeypatch.delitem(sys.modules, "argostranslate", raising=False)
+        else:
+            monkeypatch.setitem(sys.modules, "argostranslate", saved_module)
+    argos_gaps = [g for g in gaps if "Argos language pack" in g[1]]
+    assert argos_gaps and argos_gaps[0][0] == "block"
+    assert "argospm install translate-ko_en" in argos_gaps[0][2]
+
+
+def test_wizard_dependency_probe_blocks_unwritable_output_target(tmp_path):
+    bad_output = tmp_path / "not-a-folder"
+    bad_output.write_text("file, not a directory", encoding="utf-8")
+    state = _wizard_state(
+        source=str(tmp_path),
+        source_kind="path",
+        languages=["ja"],
+        order=["ja"],
+        mt_engine="",
+        reading_aids=[],
+        output=str(bad_output),
+        steps={"modify"},
+    )
+    gaps = MODULE["_wizard_probe_dependencies"](state)
+    output_gaps = [g for g in gaps if "Output target" in g[1]]
+    assert output_gaps and output_gaps[0][0] == "block"
+
+
+def test_wizard_dependency_probe_warns_when_broad_provider_keys_missing(tmp_path):
+    state = _wizard_state(
+        source="https://www.imdb.com/title/tt0108778/",
+        source_kind="url",
+        languages=["en", "es"],
+        order=["en", "es"],
+        mt_engine="",
+        reading_aids=[],
+        output=str(tmp_path),
+        steps={"fetch", "merge"},
+    )
+    fn_g = MODULE["_wizard_probe_dependencies"].__globals__
+    saved = fn_g["get_provider_api_key"]
+    try:
+        fn_g["get_provider_api_key"] = lambda _provider, **_kwargs: None
+        gaps = MODULE["_wizard_probe_dependencies"](state)
+    finally:
+        fn_g["get_provider_api_key"] = saved
+    provider_gaps = [g for g in gaps if "Wyzie or SubDL" in g[1]]
+    assert provider_gaps and provider_gaps[0][0] == "warn"
+
+
+def test_wizard_coverage_preflight_reports_complete_local_merge_set(tmp_path):
+    (tmp_path / "Show - S01E01.ja.srt").write_text(
+        "1\n00:00:01,000 --> 00:00:02,000\nこんにちは\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "Show - S01E01.en.srt").write_text(
+        "1\n00:00:01,000 --> 00:00:02,000\nHello\n",
+        encoding="utf-8",
+    )
+    state = _wizard_state(
+        source=str(tmp_path),
+        source_kind="path",
+        languages=["ja", "en"],
+        order=["ja", "en"],
+        season="1",
+        episode="1",
+        mt_engine="",
+        reading_aids=[],
+        steps={"modify", "merge"},
+    )
+    notes = MODULE["_wizard_coverage_preflight"](state)
+    assert notes
+    assert notes[0][0] == "info"
+    assert "1/1 episode(s) have all requested languages" in notes[0][1]
+
+
+def test_wizard_coverage_preflight_warns_about_partial_local_merge_set(tmp_path):
+    (tmp_path / "Show - S01E01.ja.srt").write_text(
+        "1\n00:00:01,000 --> 00:00:02,000\nこんにちは\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "Show - S01E01.en.srt").write_text(
+        "1\n00:00:01,000 --> 00:00:02,000\nHello\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "Show - S01E02.ja.srt").write_text(
+        "1\n00:00:01,000 --> 00:00:02,000\nまたね\n",
+        encoding="utf-8",
+    )
+    state = _wizard_state(
+        source=str(tmp_path),
+        source_kind="path",
+        languages=["ja", "en"],
+        order=["ja", "en"],
+        season="1",
+        episode="all",
+        mt_engine="",
+        reading_aids=[],
+        steps={"modify", "merge"},
+    )
+    notes = MODULE["_wizard_coverage_preflight"](state)
+    partial = [n for n in notes if "already have all requested languages" in n[1]]
+    assert partial and partial[0][0] == "warn"
+    assert "S01E02 missing en" in partial[0][2]
+
+
+def test_format_failure_what_why_how():
+    block = MODULE["_format_failure"]("DeepL API key", "Required.", "getsubtitle --set-key deepl")
+    assert "What: DeepL API key" in block
+    assert "Why:  Required." in block
+    assert "How:  getsubtitle --set-key deepl" in block
+
+
+def test_wizard_probe_flags_missing_ollama_model(monkeypatch):
+    # Daemon reachable but the target model isn't downloaded -> a row that
+    # tells the user how to pre-pull (so a long run doesn't stall mid-way).
+    g = MODULE["_wizard_probe_dependencies"].__globals__
+    monkeypatch.setitem(g, "_wizard_ollama_reachable", lambda: True)
+    monkeypatch.setitem(g, "_wizard_ollama_installed_models", lambda: {"llama3.2:3b"})
+    monkeypatch.setitem(g, "_ollama_models_flag", lambda name, default=True: True)
+    monkeypatch.setitem(g, "get_provider_api_key", lambda p: "x")
+    st = MODULE["_WizardState"]()
+    st.steps = {"translate", "merge"}
+    st.mt_engine = "ollama"
+    st.languages = ["ja", "en"]
+    st.source = "/tmp"
+    st.output = "/tmp"
+    st.source_kind = "path"
+    rows = MODULE["_wizard_probe_dependencies"](st)
+    model_rows = [r for r in rows if "Ollama model" in r[1]]
+    assert model_rows, rows
+    assert "ollama pull qwen3:4b" in model_rows[0][2]
+
+
+def test_wizard_dependency_check_runs_with_info_only_preflight():
+    import contextlib
+    import io
+
+    state = _wizard_state()
+    info = [("info", "Coverage estimate: 1/1 episode(s) have all requested languages", "Fast scan checked 2 subtitle candidate(s).")]
+    fn_g = MODULE["_wizard_dependency_check_before_run"].__globals__
+    saved_probe = fn_g["_wizard_probe_dependencies"]
+    try:
+        fn_g["_wizard_probe_dependencies"] = lambda _state: info
+        with contextlib.redirect_stdout(io.StringIO()) as buf:
+            action = MODULE["_wizard_dependency_check_before_run"](state)
+    finally:
+        fn_g["_wizard_probe_dependencies"] = saved_probe
+    out = buf.getvalue()
+    assert action == "run"
+    assert "Preflight check —" in out
+    assert "Heads-up — no action needed before running." in out
+    assert "Run setup now" not in out
+
+
+def test_wizard_run_summary_prints_outcome_and_next_steps(tmp_path, capsys):
+    state = _wizard_state(
+        source="https://www.imdb.com/title/tt0108778/",
+        source_kind="url",
+        languages=["en", "es"],
+        order=["en", "es"],
+        season="4",
+        episode="3-5",
+        output=str(tmp_path),
+    )
+    try:
+        summary = MODULE["_wizard_summary_begin"](state)
+        summary.command = "getsubtitle --fetch URL --merge"
+        MODULE["_wizard_summary_add_preflight"]([
+            ("warn", "Wyzie or SubDL API key", "getsubtitle --set-key wyzie"),
+            ("info", "Coverage estimate: 1/1 episode(s) have all requested languages", ""),
+        ])
+        MODULE["_wizard_summary_add"](
+            "fetch",
+            planned=2,
+            written=1,
+            outputs=[tmp_path / "Friends - S04E03.en.srt"],
+            missing=["es E03: missing"],
+        )
+        MODULE["_wizard_summary_add"](
+            "merge",
+            planned=1,
+            written=1,
+            outputs=[tmp_path / "Friends - S04E03.en-es.srt"],
+        )
+        summary = MODULE["_wizard_summary_end"]()
+        MODULE["_wizard_print_run_summary"](summary, 0)
+    finally:
+        MODULE["_wizard_summary_end"]()
+    out = capsys.readouterr().out
+    assert "Workflow summary" in out
+    assert "Result: completed" in out
+    assert "Scope: season 4, episode 3-5" in out
+    assert "Preflight warnings: 1" in out
+    assert "Preflight info: 1" in out
+    assert "Fetch: planned 2, wrote 1, missing/issues 1" in out
+    assert "Merge: planned 1, wrote 1" in out
+    assert "Open the merged subtitle file" in out
+
+
 def test_wizard_dependency_check_saves_instead_of_running_with_remaining_blocker():
     """A block-level dependency must actually block the Run action.
 
@@ -8459,8 +8741,7 @@ def test_wizard_dependency_check_saves_instead_of_running_with_remaining_blocker
     out = buf.getvalue()
     assert action == "save"
     assert setup_called == [True]
-    assert "Still missing required setup" in out
-    assert "Not running yet" in out
+    assert "Still blocked — the run would fail before it starts:" in out
 
 
 def test_wizard_state_to_toml_round_trip_safe():
@@ -9170,17 +9451,26 @@ def test_interactive_wizard_fuzz_never_aborts_or_loops(tmp_path, monkeypatch):
 
 
 def test_wizard_next_q_numbers_contiguously():
-    """`_wizard_next_q` hands out gap-free labels from a per-pass counter
-    so trimmed flows never show Q1 -> Q2 -> Q4 jumps. The reset lives in
-    `_run_wizard`; here we drive the counter directly."""
+    """`_wizard_next_q` hands out gap-free labels from a per-pass counter.
+
+    Q1 stays clean (no progress bar); later headings get a divider and a
+    same-line progress bar so the dynamic total never leaks as "Q2 of ~7".
+    """
     s = MODULE["_WizardState"]()
     s._qcount = 0
-    labels = [MODULE["_wizard_next_q"](s) for _ in range(4)]
-    # Format is "Q{n} of ~{total}." — the running number must increment 1..4.
-    assert [l.split(" of ", 1)[0] for l in labels] == ["Q1", "Q2", "Q3", "Q4"]
-    assert all(" of ~" in l and l.endswith(".") for l in labels)
+    labels = [MODULE["_wizard_next_q"](s, f"Question {i}?") for i in range(1, 5)]
+    assert labels[0].splitlines() == ["Q1. Question 1?"]
+    assert [l.splitlines()[-1].split(".", 1)[0] for l in labels] == ["Q1", "Q2", "Q3", "Q4"]
+    assert "Progress [" not in labels[0]
+    for label in labels[1:]:
+        divider, heading = label.splitlines()
+        assert divider == "-" * MODULE["_WIZARD_HEADING_WIDTH"]
+        assert len(heading) == MODULE["_WIZARD_HEADING_WIDTH"]
+        assert "Progress [" in heading
+        assert "◼" in heading and "◻" in heading
+    assert all(" of ~" not in l for l in labels)
     s._qcount = 1
-    assert MODULE["_wizard_next_q"](s).startswith("Q2 of ~")
+    assert MODULE["_wizard_next_q"](s, "Again?").splitlines()[-1].startswith("Q2. Again?")
 
 
 def test_wizard_qcount_before_honors_step_gating():
@@ -9579,6 +9869,34 @@ def test_wizard_emit_cli_modify_merge_includes_local_episode_filter():
     assert toml.count('episode = "1"') == 2
 
 
+def test_wizard_emit_cli_url_pipeline_scopes_all_downstream_steps():
+    s = MODULE["_WizardState"](
+        source="https://www.crunchyroll.com/series/GEXH3W2W7/mf-ghost",
+        source_kind="url",
+        languages=["ja", "ko"],
+        order=["ja", "ko"],
+        season="3",
+        episode="5-10",
+        mt_engine="deepl",
+        reading_aids=["ja:hiragana"],
+        asbplayer=True,
+        format="vtt",
+        output="~/Downloads/GetSubtitle",
+        steps={"fetch", "translate", "modify", "merge"},
+    )
+    cli = MODULE["_wizard_emit_cli"](s)
+    blocks = MODULE["split_pipeline_argv"](cli[1:])
+    for block_name in ("fetch", "translate", "modify", "merge"):
+        block = blocks[block_name]
+        assert "--season" in block, f"{block_name} block missing season: {block!r}"
+        assert block[block.index("--season") + 1] == "3"
+        assert "--episode" in block, f"{block_name} block missing episode: {block!r}"
+        assert block[block.index("--episode") + 1] == "5-10"
+    toml = MODULE["_wizard_emit_toml"](s)
+    assert toml.count('season = "3"') == 4
+    assert toml.count('episode = "5-10"') == 4
+
+
 def test_wizard_emit_cli_translate_only_path_form():
     """Translate-only path: getsubtitle FOLDER --translate ENGINE."""
     s = MODULE["_WizardState"](
@@ -9682,6 +10000,7 @@ def test_wizard_q7_reading_aids_no_reading_aid_is_option_one_default():
         out = buf.getvalue()
         assert "1) No reading aid" in out
         assert "2) Japanese — hiragana" in out
+        assert "Preview: 勉強する → べんきょうする" in out
         assert s.reading_aids == []
         # '2' should land on the first real aid (hiragana).
         fn_g["input"] = lambda *a, **k: "2"
@@ -9701,14 +10020,13 @@ def test_wizard_q7_reading_aids_no_reading_aid_is_option_one_default():
 
 
 def test_wizard_intro_uses_beginner_friendly_terms():
-    """Wizard intro talks about 'workflow file' / 'terminal command'
-    instead of 'TOML workflow' / 'pipeline' — v0.7.1 reword. Word
-    wrapping may split 'terminal command' across lines, so collapse
-    whitespace before matching."""
+    """Wizard intro stays concise and beginner-facing. It should explain
+    what the builder produces without exposing TOML/pipeline jargon."""
     intro = MODULE["_WIZARD_INTRO"]
     collapsed = " ".join(intro.split())
-    assert "workflow file" in collapsed
-    assert "terminal command" in collapsed
+    assert "Workflow Builder" in collapsed
+    assert "generate a command and reusable workflow" in collapsed
+    assert "Commands:" in intro
 
 
 def test_wizard_intro_has_no_jargon():
@@ -9976,6 +10294,7 @@ def test_wizard_q7_reading_aid_example_is_script_appropriate():
         out = buf.getvalue()
         assert "한글" in out, "Korean learner should see hangul example"
         assert "漢字（かんじ）" not in out, "Korean learner should not see ja example"
+        assert "VTT" not in out, "Format guidance belongs in the format question"
         # Mandarin primary.
         s_zh = MODULE["_WizardState"](languages=["zh", "en"], order=["zh", "en"])
         buf2 = io.StringIO()
@@ -10032,6 +10351,30 @@ def test_wizard_q9_format_describes_vtt_and_ass_player_fit():
     assert "browser/asbplayer" in out
     assert "ASS" in out
     assert "font size" in out
+
+
+def test_wizard_q9_format_carries_reading_aid_rendering_guidance():
+    import io, contextlib
+    fn_g = MODULE["_wizard_q9_format"].__globals__
+    saved_input = fn_g.get("input")
+    try:
+        fn_g["input"] = lambda *a, **k: "3"
+        s = MODULE["_WizardState"](
+            languages=["ja", "ko"],
+            reading_aids=["ja:hiragana", "ko:revised"],
+            asbplayer=True,
+        )
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            MODULE["_wizard_q9_format"](s)
+    finally:
+        if saved_input is not None:
+            fn_g["input"] = saved_input
+    out = buf.getvalue()
+    assert "Reading-aid notes:" in out
+    assert "true ruby above Japanese text" in out
+    assert "Korean" in out
+    assert "Local-player" in out
 
 
 def test_wizard_font_size_labels_follow_selected_format():
