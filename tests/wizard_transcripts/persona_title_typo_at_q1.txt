@@ -3,41 +3,43 @@ getsubtitle — interactive workflow builder
 
 I'll ask a few short questions, then show you the equivalent terminal
 command and a reusable workflow file. You can save the workflow for
-later, run it now, or edit a single answer. Type 'back' to return to
-the previous step, 'q' to quit, or Ctrl-C to bail.
+later, run it now, or edit a single answer. Type 'b' to go back,
+'q' to quit, or Ctrl-C to bail.
 
 
 Q1. What do you want getsubtitle to do?
     1) Fetch     — download subtitles from a URL or title
     2) Translate — fill any missing language with AI translation
-    3) Modify    — clean up cues, add reading aids (furigana/pinyin/…)
+    3) Modify    — clean up cues, add reading aids (furigana/hangul/pinyin/…)
     4) Merge     — stack multiple languages into one study file
     5) Rename    — batch-rename existing subtitle filenames
 
-    Default: fetch + modify + merge (no AI translation).
-    Common shortcuts: '4' for merge-only, '3' for modify-only,
-    '2' for AI-translation-only, '3,4' for modify + merge,
-    '5' for rename-only.
-  Numbers (comma-separated), 'a' for all, or Enter for default [1,3,4 | back/quit] >
-    Selected: fetch + modify + merge.
+    Default: 1-4 — fetch, translate, modify, then merge.
+    Common picks:
+      1-4     full subtitle workflow
+      1,3,4   download + modify + merge existing subtitles
+      5       rename titles, prefixes, change numbering
+
+  Numbers or ranges, or Enter for default [1-4 | q=quit] >
+    Selected: fetch + translate + modify + merge.
 
 Q2. What should getsubtitle work on?
     1) A movie/show title (The Simpsons, Totoro, The Matrix, …)
     2) A streaming/catalog URL (IMDb, AniList, Netflix, Crunchyroll, …)
     3) A folder or file on disk (your Plex/Movies, ~/Downloads, …)
-  Number [3 | back/quit] > totoro
+  Number [3 | b=back | q=quit] > totoro
     Invalid selection. Type 1, 2, or 3. To search for a title, choose 1 first.
-  Number [3 | back/quit] > 1
+  Number [3 | b=back | q=quit] > 1
 
 Q3. Enter the movie or show title.
-  Title [back/quit] > Totoro
+  Title [b=back | q=quit] > Totoro
     Identified as: title search for 'Totoro'
 
     No title-resolver hits. Add a TMDB key for richer matches:
       getsubtitle --set-key tmdb
     Continuing with raw title text — fetch may still work via
     AniList or other built-in fallbacks.
-  Is this a movie? (No = TV show / anime) [y/N | back] > n
+  Is this a movie? (No = TV show / anime) [y/N | b=back | q=quit] > n
 
 Q4. What episode scope?
     1) Movie / single item (no season/episode)
@@ -46,41 +48,69 @@ Q4. What episode scope?
     4) Auto — let getsubtitle infer from the URL/title metadata
        (anime URLs typically resolve to single episodes; movies to a
         single item; TV without -e usually picks S01E01)
-  Number [4 | back/quit] > ja,en
+  Number [4 | b=back | q=quit] > 2
+  Season or range (e.g. 1, 2-3, all) [1 | b=back | q=quit] > 1
+  Episode or range within each season (e.g. 5, 1-10, all) [1 | b=back | q=quit] > 1
 
 Q5. Which subtitle languages do you want to collect?
     List them in the order you want them displayed (top → bottom).
     Examples: ja,en   ja,ko,en,es   japanese,korean,english
-  Languages (comma-separated) [ja,en | back/quit] > 2
+  Languages (comma-separated) [ja,en | b=back | q=quit] > ja,en
+
+Q6. If a language is missing, what should we do?
+    1) Skip — accept the gap (no AI translation)
+    2) Argos — on your computer, low quality (free)
+    3) Ollama — on your computer, good quality (free; slower)
+    4) DeepL — online, better quality (free tier; needs API key)
+  Number [1 | b=back | q=quit] > 1
+
+Q7. Reading aids (phonetic guides for the original script).
+    VTT renders them as ruby above the script; SRT / SMI / ASS
+    show them as parenthetical 漢字（かんじ） form.
+    Pick any combination by number, or '1' to skip.
+    1) No reading aid (skip)
+    2) Japanese — hiragana readings for kanji   [ja:hiragana]
+    3) Japanese — katakana readings for kanji   [ja:katakana]
+    4) Japanese — full-sentence romaji   [ja:romaji]
+  Numbers (comma-separated) [1 | b=back | q=quit] > 1
 
 ======================================================================
 Here's the plan:
 ======================================================================
-  • Fetch 2 for Totoro
+  • Fetch ja, en for Totoro  (season 1, episode 1)
   • Clean up cues (single line, strip broadcast noise)
-  • Stack 2 into one SRT study file
+  • Stack ja, en into one SRT study file
   • Save to ~/Downloads/GetSubtitle
 ======================================================================
 Smart defaults filled in for you (edit via 'Edit a single answer'):
 ======================================================================
+  Display order  ja, en  (top → bottom on screen)
+  Timing master  ja  (first language)
   Cleanup preset on  (single-line cues + strip broadcast noise)
   Output format  SRT  (SRT — most compatible)
   Output folder  ~/Downloads/GetSubtitle
 ======================================================================
 Based on your choice, you can try:
 ======================================================================
-  getsubtitle --fetch --title Totoro --languages 2 --no-engine --modify --strip-cc-noise --single-line --output ~/Downloads/GetSubtitle
+  getsubtitle --fetch --title Totoro --season 1 --episode 1 --languages ja,en --no-engine --modify --strip-cc-noise --single-line --merge --languages ja,en --format srt --output ~/Downloads/GetSubtitle
 ======================================================================
 Equivalent workflow file (save as .toml):
 ======================================================================
   [fetch]
   title = "Totoro"
-  languages = "2"
+  season = "1"
+  episode = "1"
+  languages = "ja,en"
   no_engine = true
 
   [modify]
   single_line = true
   strip_cc_noise = true
+
+  [merge]
+  languages = "ja,en"
+  sync = "auto"
+  format = "srt"
 
   [output]
   target = "~/Downloads/GetSubtitle"
@@ -92,20 +122,22 @@ Equivalent workflow file (save as .toml):
     3) Edit a single answer
     4) Start over from beginning
     5) Quit
-  Number [2 | back/quit] > 1
+  Number [2 | b=back | q=quit] > 2
 
-Dependency check — issues found:
-  • warn   Wyzie API key (movies / non-anime TV)
+  Save to (relative paths OK) [getsubtitle-workflow.toml] > {TMP}/totoro-typo.toml
+Saved: {TMP}/totoro-typo.toml
 
-Running:
-  getsubtitle --fetch --title Totoro --languages 2 --no-engine --modify --strip-cc-noise --single-line --output ~/Downloads/GetSubtitle
+Your totoro-typo.toml runs the same workflow as this command:
+  # getsubtitle --fetch --title Totoro --season 1 --episode 1 --languages ja,en --no-engine --modify --strip-cc-noise --single-line --merge --languages ja,en --format srt --output ~/Downloads/GetSubtitle
 
-  Open folder? [Y/n] > 1
-    (please answer y or n; Enter = yes)
-  Open folder? [Y/n] > 1
-    (please answer y or n; Enter = yes)
-  Open folder? [Y/n] > 2
-    (please answer y or n; Enter = yes)
-  Open folder? [Y/n] > {TMP}/totoro-typo.toml
-    (please answer y or n; Enter = yes)
-  Open folder? [Y/n] > n
+Run it later with:
+  getsubtitle --config {TMP}/totoro-typo.toml
+
+You can recycle this TOML and override saved settings with extra CLI flags.
+For example, reuse the same language, reading-aid, translation, and merge
+choices on another show or season:
+  getsubtitle --config {TMP}/totoro-typo.toml --source 'https://www.imdb.com/title/tt1234567/' --season 3 --episode all --output "$HOME/Downloads/GetSubtitle/TV Show/Season 03"
+
+CLI flags win over matching TOML settings, so the file can stay as a reusable template.
+
+  Open folder containing totoro-typo.toml? [Y/n] > n

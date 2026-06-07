@@ -3,32 +3,34 @@ getsubtitle — interactive workflow builder
 
 I'll ask a few short questions, then show you the equivalent terminal
 command and a reusable workflow file. You can save the workflow for
-later, run it now, or edit a single answer. Type 'back' to return to
-the previous step, 'q' to quit, or Ctrl-C to bail.
+later, run it now, or edit a single answer. Type 'b' to go back,
+'q' to quit, or Ctrl-C to bail.
 
 
 Q1. What do you want getsubtitle to do?
     1) Fetch     — download subtitles from a URL or title
     2) Translate — fill any missing language with AI translation
-    3) Modify    — clean up cues, add reading aids (furigana/pinyin/…)
+    3) Modify    — clean up cues, add reading aids (furigana/hangul/pinyin/…)
     4) Merge     — stack multiple languages into one study file
     5) Rename    — batch-rename existing subtitle filenames
 
-    Default: fetch + modify + merge (no AI translation).
-    Common shortcuts: '4' for merge-only, '3' for modify-only,
-    '2' for AI-translation-only, '3,4' for modify + merge,
-    '5' for rename-only.
-  Numbers (comma-separated), 'a' for all, or Enter for default [1,3,4 | back/quit] > 1,3,4
+    Default: 1-4 — fetch, translate, modify, then merge.
+    Common picks:
+      1-4     full subtitle workflow
+      1,3,4   download + modify + merge existing subtitles
+      5       rename titles, prefixes, change numbering
+
+  Numbers or ranges, or Enter for default [1-4 | q=quit] > 1,3,4
     Selected: fetch + modify + merge.
 
 Q2. What should getsubtitle work on?
     1) A movie/show title (The Simpsons, Totoro, The Matrix, …)
     2) A streaming/catalog URL (IMDb, AniList, Netflix, Crunchyroll, …)
     3) A folder or file on disk (your Plex/Movies, ~/Downloads, …)
-  Number [3 | back/quit] > 2
+  Number [3 | b=back | q=quit] > 2
 
 Q3. Enter the URL.
-  URL [back/quit] > https://www.crunchyroll.com/watch/GZ7UDVKPD/miraculous-comeback
+  URL [b=back | q=quit] > https://www.crunchyroll.com/watch/GZ7UDVKPD/miraculous-comeback
     Identified as: Crunchyroll watch URL
 
 Q4. What episode scope?
@@ -41,9 +43,9 @@ Q4. What episode scope?
 
     Crunchyroll may display Season 3 as E25-E37, but subtitle
     sources usually search that as Season 3 episodes 1-13.
-  Number [2 | back/quit] > 2
-  Season or range (e.g. 1, 2-3, all) [1 | back/quit] > 3
-  Episode or range within each season (e.g. 5, 1-10, all) [1 | back/quit] > 1-13
+  Number [2 | b=back | q=quit] > 2
+  Season or range (e.g. 1, 2-3, all) [1 | b=back | q=quit] > 3
+  Episode or range within each season (e.g. 5, 1-10, all) [1 | b=back | q=quit] > 1-13
 
 Q5. How should episode numbers appear in output filenames?
     You are searching Season 3 episode(s): 1-13.
@@ -54,14 +56,14 @@ Q5. How should episode numbers appear in output filenames?
        Example: S03E01, S03E02, ...
     2) Match the episode numbers shown on the streaming page
        Example: S03E25, S03E26, ...
-  Number [1 | back/quit] > 2
-  First episode number shown on the page (e.g. 25) [back/quit] > 25
+  Number [1 | b=back | q=quit] > 2
+  First episode number shown on the page (e.g. 25) [b=back | q=quit] > 25
     Output filenames will start at S03E25.
 
 Q6. Which subtitle languages do you want to collect?
     List them in the order you want them displayed (top → bottom).
     Examples: ja,en   ja,ko,en,es   japanese,korean,english
-  Languages (comma-separated) [ja,en | back/quit] > ja,ko
+  Languages (comma-separated) [ja,en | b=back | q=quit] > ja,ko
 
 Q7. Reading aids (phonetic guides for the original script).
     VTT renders them as ruby above the script; SRT / SMI / ASS
@@ -73,7 +75,7 @@ Q7. Reading aids (phonetic guides for the original script).
     4) Japanese — full-sentence romaji   [ja:romaji]
     5) Korean — Revised Romanization (G2P)   [ko:revised]
     6) Korean — Yale Romanization   [ko:yale]
-  Numbers (comma-separated) [1 | back/quit] > 1
+  Numbers (comma-separated) [1 | b=back | q=quit] > 1
 
 ======================================================================
 Here's the plan:
@@ -124,7 +126,7 @@ Equivalent workflow file (save as .toml):
     3) Edit a single answer
     4) Start over from beginning
     5) Quit
-  Number [2 | back/quit] > 2
+  Number [2 | b=back | q=quit] > 2
 
   Save to (relative paths OK) [getsubtitle-workflow.toml] > {TMP}/mfghost-s3.toml
 Saved: {TMP}/mfghost-s3.toml

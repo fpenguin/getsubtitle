@@ -14,15 +14,16 @@ SCENARIO = Scenario(
     name="persona_title_typo_at_q1",
     files={},
     inputs=[
-        "",         # steps default (fetch+modify+merge)
+        "",         # steps default (1-4)
         "totoro",   # wrong: free text at Q1
         "1",        # correct: title search
         "Totoro",   # title to search
         "n",        # "Is this a movie?" → no
-        "ja,en",
         "2",        # scope: specific season + episode
-        "1",
-        "1",
+        "1",        # season
+        "1",        # episode
+        "ja,en",    # languages
+        "1",        # missing-language action — skip
         "1",        # reading aids — skip
         "2",        # save action
         "{TMP}/totoro-typo.toml",

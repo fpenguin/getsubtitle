@@ -2,7 +2,7 @@
 
 The user starts a local modify+merge workflow, enters one folder, then
 realises they picked the wrong source while answering languages. Typing
-`back` should return to the previous visible step, clear that answer,
+`b` should return to the previous visible step, clear that answer,
 and let the new source flow through to the emitted command/TOML.
 """
 
@@ -18,7 +18,7 @@ SCENARIO = Scenario(
     inputs=[
         "3,4",          # modify + merge
         "{TMP}/Wrong",
-        "back",         # from language prompt, go back to source
+        "b",            # from language prompt, go back to source
         "{TMP}/Right",
         "ja,en",
         "1",            # reading aids — skip

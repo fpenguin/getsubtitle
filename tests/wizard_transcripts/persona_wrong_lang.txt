@@ -3,41 +3,43 @@ getsubtitle — interactive workflow builder
 
 I'll ask a few short questions, then show you the equivalent terminal
 command and a reusable workflow file. You can save the workflow for
-later, run it now, or edit a single answer. Type 'back' to return to
-the previous step, 'q' to quit, or Ctrl-C to bail.
+later, run it now, or edit a single answer. Type 'b' to go back,
+'q' to quit, or Ctrl-C to bail.
 
 
 Q1. What do you want getsubtitle to do?
     1) Fetch     — download subtitles from a URL or title
     2) Translate — fill any missing language with AI translation
-    3) Modify    — clean up cues, add reading aids (furigana/pinyin/…)
+    3) Modify    — clean up cues, add reading aids (furigana/hangul/pinyin/…)
     4) Merge     — stack multiple languages into one study file
     5) Rename    — batch-rename existing subtitle filenames
 
-    Default: fetch + modify + merge (no AI translation).
-    Common shortcuts: '4' for merge-only, '3' for modify-only,
-    '2' for AI-translation-only, '3,4' for modify + merge,
-    '5' for rename-only.
-  Numbers (comma-separated), 'a' for all, or Enter for default [1,3,4 | back/quit] > 3,4
+    Default: 1-4 — fetch, translate, modify, then merge.
+    Common picks:
+      1-4     full subtitle workflow
+      1,3,4   download + modify + merge existing subtitles
+      5       rename titles, prefixes, change numbering
+
+  Numbers or ranges, or Enter for default [1-4 | q=quit] > 3,4
     Selected: modify + merge.
 
 Q2. Folder or file to process.
     Drop a folder of .srt files, a single .srt file, or any path
     your selected step(s) should operate on.
-  Folder or file path [back/quit] > {TMP}/Foo
+  Folder or file path [b=back | q=quit] > {TMP}/Foo
     Identified as: local subtitle folder: 0 video file(s), 1 subtitle file(s)
 
 Q3. Which subtitle languages do you want to collect?
     List them in the order you want them displayed (top → bottom).
     Examples: ja,en   ja,ko,en,es   japanese,korean,english
-  Languages (comma-separated) [ja,en | back/quit] > ja,en
+  Languages (comma-separated) [ja,en | b=back | q=quit] > ja,en
 
     Local subtitle check:
       Found locally: ko
       Missing for your requested stack: ja, en
     If you continue without Fetch, modify/merge can only use the
     subtitle languages already in this folder.
-  Search online for the missing languages now? [Y/n | back] > n
+  Search online for the missing languages now? [Y/n | b=back | q=quit] > n
     Tip: restart with `getsubtitle -i`, choose Fetch, and use a
     catalog URL/title so getsubtitle can look online for missing tracks.
 
@@ -49,7 +51,7 @@ Q4. Reading aids (phonetic guides for the original script).
     2) Japanese — hiragana readings for kanji   [ja:hiragana]
     3) Japanese — katakana readings for kanji   [ja:katakana]
     4) Japanese — full-sentence romaji   [ja:romaji]
-  Numbers (comma-separated) [1 | back/quit] > 1
+  Numbers (comma-separated) [1 | b=back | q=quit] > 1
 
 ======================================================================
 Here's the plan:
@@ -92,5 +94,5 @@ Equivalent workflow file (save as .toml):
     3) Edit a single answer
     4) Start over from beginning
     5) Quit
-  Number [1 | back/quit] > 5
+  Number [1 | b=back | q=quit] > 5
 Quit.

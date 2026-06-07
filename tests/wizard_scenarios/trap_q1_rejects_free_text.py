@@ -18,19 +18,21 @@ SCENARIO = Scenario(
         "{TMP}/Foo/Foo.ja.srt": "1\n00:00:01,000 --> 00:00:02,000\nひ\n",
         "{TMP}/Foo/Foo.en.srt": "1\n00:00:01,000 --> 00:00:02,000\nhi\n",
     },
-    # 1) Q1 steps: default fetch+modify+merge (Enter).
+    # 1) Q1 steps: default 1-4 (Enter).
     # 2) source: free-text "totoro" → must reprompt.
     # 3) source retry: "3" (folder/file).
     # 4) path: the staged folder.
     # 5) languages: ja,en.
-    # 6) reading aids: 1 (skip).
-    # 7) action: 5 (quit).
+    # 6) missing-language action: 1 (skip AI translation).
+    # 7) reading aids: 1 (skip).
+    # 8) action: 5 (quit).
     inputs=[
         "",       # Q1 steps default
         "totoro", # invalid source pick
         "3",      # correct source pick (folder/file)
         "{TMP}/Foo",  # path
         "ja,en",  # languages
+        "1",      # missing-language action — skip
         "1",      # reading aids — skip
         "5",      # quit at action menu
     ],

@@ -7,10 +7,10 @@ has a default, providing only the bare-minimum required answers
 (path, languages can also default to ja,en).
 
 Defaults exercised:
-- Q1 steps: 1,3,4 (fetch+modify+merge)
+- Q1 steps: 1-4 (fetch+translate+modify+merge)
 - Q1 source choice: 'c' when no TMDB key configured
 - Q4 languages: ja,en
-- Q5 (skipped for path source)
+- missing-language action: skip AI translation
 - Q7 reading aids: 1 (skip)
 - Q12 action: 'a' (run) for local path source
 
@@ -30,12 +30,13 @@ SCENARIO = Scenario(
         "",            # Q1 source choice (Enter → '3' folder when no TMDB key)
         "{TMP}/Foo",    # path — only required answer
         "",            # Q4 languages → 'ja,en'
+        "",            # missing-language action → skip AI translation
         "",            # Q7 reading aids → '1' (skip)
         "",            # Q12 action — Enter accepts default '1' (run) for path source
         "",            # post-run open folder → default Y
     ],
     expect_state={
-        "steps": {"fetch", "modify", "merge"},
+        "steps": {"fetch", "translate", "modify", "merge"},
         "languages": ["ja", "en"],
         "reading_aids": [],
     },

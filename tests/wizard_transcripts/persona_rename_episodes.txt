@@ -3,27 +3,29 @@ getsubtitle — interactive workflow builder
 
 I'll ask a few short questions, then show you the equivalent terminal
 command and a reusable workflow file. You can save the workflow for
-later, run it now, or edit a single answer. Type 'back' to return to
-the previous step, 'q' to quit, or Ctrl-C to bail.
+later, run it now, or edit a single answer. Type 'b' to go back,
+'q' to quit, or Ctrl-C to bail.
 
 
 Q1. What do you want getsubtitle to do?
     1) Fetch     — download subtitles from a URL or title
     2) Translate — fill any missing language with AI translation
-    3) Modify    — clean up cues, add reading aids (furigana/pinyin/…)
+    3) Modify    — clean up cues, add reading aids (furigana/hangul/pinyin/…)
     4) Merge     — stack multiple languages into one study file
     5) Rename    — batch-rename existing subtitle filenames
 
-    Default: fetch + modify + merge (no AI translation).
-    Common shortcuts: '4' for merge-only, '3' for modify-only,
-    '2' for AI-translation-only, '3,4' for modify + merge,
-    '5' for rename-only.
-  Numbers (comma-separated), 'a' for all, or Enter for default [1,3,4 | back/quit] > 5
+    Default: 1-4 — fetch, translate, modify, then merge.
+    Common picks:
+      1-4     full subtitle workflow
+      1,3,4   download + modify + merge existing subtitles
+      5       rename titles, prefixes, change numbering
+
+  Numbers or ranges, or Enter for default [1-4 | q=quit] > 5
     Selected: rename.
 
 Q2. Folder or file to rename.
     Drop a season folder or one subtitle file.
-  Folder or file path [back/quit] > {TMP}/Show
+  Folder or file path [b=back | q=quit] > {TMP}/Show
     Identified as: local subtitle folder: 0 video file(s), 5 subtitle file(s)
 
 Skipping 1 file(s) that don't match the
@@ -33,7 +35,7 @@ Skipping 1 file(s) that don't match the
 Found 2 variations of files in the folder.
     1) MF Ghost - S01E**.en.srt  (2 files)
     2) MF Ghost - S01E**.ja.srt  (2 files)
-  Which one would you like to work on? (1/2/3 or all) [all | back/quit] > all
+  Which one would you like to work on? (1/2/3 or all) [all | b=back | q=quit] > all
 
 Example:
   MF Ghost - S01E01.en.srt
@@ -47,14 +49,14 @@ What needs to be changed?
     4) Language
     5) Modifiers
     6) Extension (rename only; does not convert format)
-  Number [2 | back/quit] > 3
+  Number [2 | b=back | q=quit] > 3
 
 How should it be changed?
     1) Change prefix (e.g. S -> Season, E -> Ep)
     2) Change range (e.g. 01-12 -> 13-24)
     3) Change digits (e.g. 01 -> 001)
-  Number [2 | back/quit] > 2
-  First episode number in the new range [1 | back/quit] > 5
+  Number [2 | b=back | q=quit] > 2
+  First episode number in the new range [1 | b=back | q=quit] > 5
 
 Planned rename: 4 file(s)
   MF Ghost - S01E01.en.srt
@@ -71,11 +73,11 @@ What next?
     2) Keep this change and change another field
     3) Discard this change and choose another field
     4) Cancel
-  Number [1 | back/quit] > 1
+  Number [1 | b=back | q=quit] > 1
 
 How should it be applied?
     1) Copy and apply (keep the original files)
     2) Rename the original files
-  Number [1 | back/quit] > 1
-  Create these renamed copies? [y/N | back] > y
+  Number [1 | b=back | q=quit] > 1
+  Create these renamed copies? [y/N | b=back | q=quit] > y
 Copied 4 renamed file(s).
