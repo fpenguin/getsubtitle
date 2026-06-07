@@ -1699,15 +1699,49 @@ def test_merge_help_mentions_label_langs():
 def test_rename_value_safety_and_plan_guard(tmp_path):
     # CODEX #3: unsafe filename parts must not raise a raw ValueError.
     import pytest
-    assert MODULE["_rename_value_is_safe"]("Good Title")
+    assert MODULE["_rename_value_is_safe"]("Good Title")   # internal space OK
     assert not MODULE["_rename_value_is_safe"]("Bad/Title")
     assert not MODULE["_rename_value_is_safe"]("vtt\\bad")
+    # Windows-reserved characters and trailing dot/space also rejected.
+    assert not MODULE["_rename_value_is_safe"]("vtt:bad")
+    assert not MODULE["_rename_value_is_safe"]("a*b")
+    assert not MODULE["_rename_value_is_safe"]('q"x')
+    assert not MODULE["_rename_value_is_safe"]("a|b")
+    assert not MODULE["_rename_value_is_safe"]("a?b")
+    assert not MODULE["_rename_value_is_safe"]("trailing ")
+    assert not MODULE["_rename_value_is_safe"]("dot.")
     p = tmp_path / "Show - S01E01.ja.srt"
     p.write_text("x", encoding="utf-8")
     part = MODULE["_rename_parse_parts"](p)
     part.title = "Bad/Title"
     with pytest.raises(MODULE["CliError"]):
         MODULE["_rename_plan_for_parts"]([part])
+
+
+def test_no_label_langs_overrides_user_settings(tmp_path, monkeypatch):
+    # --no-label-langs wins over [merge] label_langs = true in user_settings.
+    cfg = tmp_path / "user_settings.toml"
+    cfg.write_text("[merge]\nlabel_langs = true\n", encoding="utf-8")
+    monkeypatch.setenv("GETSUBTITLE_CONFIG_PATH", str(cfg))
+    (tmp_path / "S.S01E01.ja.srt").write_text(
+        "1\n00:00:01,000 --> 00:00:02,000\nこ\n", encoding="utf-8")
+    (tmp_path / "S.S01E01.en.srt").write_text(
+        "1\n00:00:01,000 --> 00:00:02,000\nh\n", encoding="utf-8")
+    rc = MODULE["combine_main"]([
+        str(tmp_path), "-l", "ja,en", "--no-label-langs",
+        "--force", "--no-open-folder-prompt",
+    ])
+    assert rc == 0
+    assert "[JA]" not in (tmp_path / "S.S01E01.ja-en.srt").read_text(encoding="utf-8")
+
+
+def test_inline_no_label_langs_clears_config_flag():
+    # `--config flow.toml --merge --no-label-langs` overrides a TOML true.
+    ov, _residual, vb = MODULE["_extract_cli_overrides"](["--merge", "--no-label-langs"])
+    data = MODULE["_merge_overrides_into_toml"](
+        {"merge": {"languages": "ja,en", "label_langs": True}}, ov, vb)
+    argv, _ = MODULE["_toml_to_pipeline_argv"](data)
+    assert "--label-langs" not in argv
 
 
 def test_combine_cues_overlap_threshold_drops_weak_matches():
@@ -8426,7 +8460,7 @@ def test_wizard_prompt_distinguishes_back_from_quit_in_hint():
 
     def fake_input(prompt):
         prompts.append(prompt)
-        return "back"
+        return "b"
 
     try:
         g["_WIZARD_BACK_NAV_ACTIVE"] = True
@@ -8442,8 +8476,8 @@ def test_wizard_prompt_distinguishes_back_from_quit_in_hint():
         g["_WIZARD_BACK_NAV_ACTIVE"] = saved_active
 
     assert prompts
-    assert "[back/quit]" in prompts[0]
-    assert "[back/q]" not in prompts[0]
+    assert "[b=back | q=quit]" in prompts[0]
+    assert "[back/quit]" not in prompts[0]
 
 
 def test_wizard_quit_at_path_prompt_is_not_recoverable_draft():
@@ -8585,26 +8619,47 @@ def test_wizard_q11_banner_uses_fixed_70_char_rule():
 
 
 def test_wizard_state_default_steps_include_fetch_modify_merge():
-    """Default step set is the 'recommended all-in-one' — fetch + modify
-    + merge. Translate is opt-in so users don't accidentally start MT."""
+    """Raw state seed stays conservative until Q1 runs.
+
+    User-visible Q1 defaults to 1-4, but its translate question still
+    defaults to "Skip", so Enter-spamming does not silently start MT.
+    """
     s = MODULE["_WizardState"]()
     assert s.steps == {"fetch", "modify", "merge"}
 
 
-def test_wizard_q0_steps_accepts_numbers_and_all_alias():
-    """Q1 step picker parses '1,3,4' / 'a' / 'all' / step names; defaults
-    to the all-in-one when the user presses Enter."""
+def test_wizard_q0_steps_accepts_numbers_ranges_and_all_alias():
+    """Q1 step picker parses '1,3,4' / '1-4' / hidden 'a' aliases; Enter
+    uses the visible 1-4 default."""
     import io, contextlib
     fn_g = MODULE["_wizard_q0_steps"].__globals__
     saved = fn_g.get("input")
+    saved_back_nav = fn_g.get("_WIZARD_BACK_NAV_ACTIVE", False)
     try:
-        # Pressing Enter -> default 1,3,4 (fetch/modify/merge).
-        fn_g["input"] = lambda *a, **k: ""
+        # Pressing Enter -> default 1-4 (full pipeline).
+        prompts: list[str] = []
+        fn_g["_WIZARD_BACK_NAV_ACTIVE"] = True
+        fn_g["input"] = lambda prompt="", *a, **k: prompts.append(prompt) or ""
         s = MODULE["_WizardState"]()
         with contextlib.redirect_stdout(io.StringIO()):
             MODULE["_wizard_q0_steps"](s)
-        assert s.steps == {"fetch", "modify", "merge"}
-        # 'a' -> all four steps.
+        assert s.steps == {"fetch", "translate", "modify", "merge"}
+        assert prompts
+        assert "[1-4 | q=quit]" in prompts[0]
+        assert "b=back" not in prompts[0]
+        # Explicit range -> all four pipeline steps.
+        fn_g["input"] = lambda *a, **k: "1-4"
+        s = MODULE["_WizardState"]()
+        with contextlib.redirect_stdout(io.StringIO()):
+            MODULE["_wizard_q0_steps"](s)
+        assert s.steps == {"fetch", "translate", "modify", "merge"}
+        # Spaced range is accepted too; people type this naturally.
+        fn_g["input"] = lambda *a, **k: "1 - 4"
+        s = MODULE["_WizardState"]()
+        with contextlib.redirect_stdout(io.StringIO()):
+            MODULE["_wizard_q0_steps"](s)
+        assert s.steps == {"fetch", "translate", "modify", "merge"}
+        # Old hidden alias -> all four steps.
         fn_g["input"] = lambda *a, **k: "a"
         s = MODULE["_WizardState"]()
         with contextlib.redirect_stdout(io.StringIO()):
@@ -8636,6 +8691,11 @@ def test_wizard_q0_steps_accepts_numbers_and_all_alias():
         with contextlib.redirect_stdout(io.StringIO()):
             MODULE["_wizard_q0_steps"](s)
         assert s.steps == {"rename"}
+        fn_g["input"] = lambda *a, **k: "1-5"
+        s = MODULE["_WizardState"]()
+        with contextlib.redirect_stdout(io.StringIO()):
+            MODULE["_wizard_q0_steps"](s)
+        assert s.steps == {"rename"}
         # Multi-select.
         fn_g["input"] = lambda *a, **k: "3,4"
         s = MODULE["_WizardState"]()
@@ -8651,6 +8711,9 @@ def test_wizard_q0_steps_accepts_numbers_and_all_alias():
     finally:
         if saved is not None:
             fn_g["input"] = saved
+        else:
+            fn_g.pop("input", None)
+        fn_g["_WIZARD_BACK_NAV_ACTIVE"] = saved_back_nav
 
 
 def test_rename_parse_parts_and_group_variations(tmp_path):

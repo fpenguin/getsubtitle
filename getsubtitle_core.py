@@ -7227,7 +7227,8 @@ def build_combine_parser() -> argparse.ArgumentParser:
     p.add_argument("--no-open-folder-prompt", action="store_true", help="Do not ask whether to open the output folder after writing.")
     p.add_argument("--sync", choices=list(SYNC_PRESETS), default="auto", help="Time-overlap strictness preset. Default: auto.")
     p.add_argument("--master", metavar="LANG", help="Override the timing master language (default: first language in -l).")
-    p.add_argument("--label-langs", action="store_true", default=False, help="Prefix each language's line in a stacked cue with [JA]/[KO]/… so tracks are easy to tell apart.")
+    p.add_argument("--label-langs", dest="label_langs", action="store_true", default=None, help="Prefix each language's line in a stacked cue with [JA]/[KO]/… so tracks are easy to tell apart.")
+    p.add_argument("--no-label-langs", dest="label_langs", action="store_false", help="Never label languages, even when [merge] label_langs = true is set in user_settings.toml.")
     p.add_argument("--single-line", "--single", dest="preserve_lines", action="store_false", default=argparse.SUPPRESS, help="Flatten each language to one line per cue. This is the default; kept as an explicit readability flag.")
     p.add_argument("--preserve-lines", action="store_true", default=argparse.SUPPRESS, help="Keep each source language's original line breaks. Default: flatten each language to a single line.")
     # Hidden compat aliases for the pre-reading --furigana flag; kept so old
@@ -7338,8 +7339,9 @@ def combine_main(argv: list[str]) -> int:
     langs = split_csv(args.langs, "ja,en")
     if not langs:
         raise CliError("No languages specified. Use -l ja,en or similar.")
-    # user_settings.toml [merge].label_langs default; the CLI flag ORs on top.
-    if not getattr(args, "label_langs", False):
+    # Three-state: --label-langs (True) / --no-label-langs (False) win; when
+    # neither is given (None) fall back to user_settings.toml [merge].label_langs.
+    if getattr(args, "label_langs", None) is None:
         args.label_langs = _combine_label_langs_from_config()
     # Multi-variant merge: identify pseudo-lang codes (ja-hiragana,
     # ko-revised, zh-marks, …) so the scanner knows to look for the
@@ -10224,6 +10226,7 @@ def _merge_overrides_into_toml(data: dict, overrides: dict, verb_blocks: dict) -
             "--force": ("force", True),
             "--preserve-lines": ("preserve_lines", True),
             "--label-langs": ("label_langs", True),
+            "--no-label-langs": ("label_langs", False),
         },
     }
     for verb in ("fetch", "translate", "modify", "merge"):
@@ -13582,16 +13585,17 @@ plus a saveable workflow file before letting you pick a final action.
 You answer each menu by NUMBER (1/2/3…); only free-text fields take typed
 text (languages, paths, URL, title, season/episode). Headings are numbered
 contiguously from what you picked, so a subset run has no gaps.
-Type 'back' at any prompt to return to the previous visible step.
+Type 'b' at any prompt to return to the previous visible step.
 
 What it asks (only the questions relevant to your step choice appear):
   • Which steps to run — fetch / translate / modify / merge / rename.
-      Default: fetch + modify + merge (no AI translation).
-      Pick a subset to skip irrelevant downstream questions:
-        '4' → merge-only (folder of existing .srt files)
-        '3' → modify-only (add furigana to a single .ja.srt)
-        '2' → translate-only   '3,4' → modify + merge   '5' → rename-only
-        'a' → all four pipeline steps (fetch/translate/modify/merge)
+      Default: 1-4 — fetch, translate, modify, then merge.
+      The translation question still defaults to "Skip", so pressing Enter
+      through setup does not silently start AI translation.
+      Common picks:
+        '1-4'   → full subtitle workflow
+        '1,3,4' → download + modify + merge existing subtitles
+        '5'     → rename titles, prefixes, or numbering
       Rename is a separate maintenance workflow; choosing it with other
       steps runs rename only so files are not fetched/modified by accident.
   • Source kind — title search / streaming URL / folder or file.
@@ -13682,7 +13686,7 @@ Limitations:
     re-run once the backend lands.
 
 Tips:
-  - Type 'back' / 'prev' / 'previous' at any prompt to revisit the
+  - Type 'b' or 'back' at any prompt to revisit the
     previous visible step.
   - Press 'q' at any prompt to quit; answers are auto-saved to
     ~/.cache/getsubtitle/wizard-draft.toml so you can resume later.
@@ -13961,18 +13965,27 @@ def _wizard_is_interactive() -> bool:
         return False
 
 
-def _wizard_prompt(question: str, default: str | None = None, *, choices: list[str] | None = None) -> str:
+def _wizard_prompt(
+    question: str,
+    default: str | None = None,
+    *,
+    choices: list[str] | None = None,
+    allow_back: bool = True,
+) -> str:
     """Read one answer. Empty input → default (if any). Trims whitespace.
 
     `choices` is informational — printed alongside the question; we do
     NOT enforce it here (callers validate, since some questions accept
     free-form input on top of suggestions)."""
+    can_go_back = allow_back and _wizard_back_nav_active()
     suffix = ""
     if default is not None:
-        back_hint = " | back/quit" if _wizard_back_nav_active() else ""
+        back_hint = " | b=back | q=quit" if can_go_back else (" | q=quit" if _wizard_back_nav_active() else "")
         suffix = f" [{default}{back_hint}]"
+    elif can_go_back:
+        suffix = " [b=back | q=quit]"
     elif _wizard_back_nav_active():
-        suffix = " [back/quit]"
+        suffix = " [q=quit]"
     while True:
         try:
             raw = input(f"  {question}{suffix} > ").strip()
@@ -13983,17 +13996,20 @@ def _wizard_prompt(question: str, default: str | None = None, *, choices: list[s
         low = raw.lower()
         if low in ("q", "quit", "exit"):
             raise _WizardAbort("user quit")
-        if _wizard_back_nav_active() and low in ("back", "prev", "previous"):
+        if can_go_back and low in ("b", "back", "prev", "previous"):
             raise _WizardBack()
         if raw:
             return raw
-        print("    (empty answer; please enter something, 'back' to go back, or 'q' to quit)")
+        if can_go_back:
+            print("    (empty answer; please enter something, 'b' to go back, or 'q' to quit)")
+        else:
+            print("    (empty answer; please enter something, or 'q' to quit)")
 
 
 def _wizard_yesno(question: str, default: bool = True) -> bool:
     suffix = "[Y/n]" if default else "[y/N]"
     if _wizard_back_nav_active():
-        suffix = suffix[:-1] + " | back]"
+        suffix = suffix[:-1] + " | b=back | q=quit]"
     while True:
         try:
             ans = input(f"  {question} {suffix} > ").strip().lower()
@@ -14001,7 +14017,7 @@ def _wizard_yesno(question: str, default: bool = True) -> bool:
             raise _WizardAbort("stdin closed") from e
         if ans in ("q", "quit", "exit"):
             raise _WizardAbort("user quit")
-        if _wizard_back_nav_active() and ans in ("back", "prev", "previous"):
+        if _wizard_back_nav_active() and ans in ("b", "back", "prev", "previous"):
             raise _WizardBack()
         if not ans:
             return default
@@ -14060,9 +14076,10 @@ class _WizardState:
     final_action: str = "run"              # Q12: run | save | restart | quit | edit
     save_path: str = ""                    # Q11 sub-prompt
     is_movie: bool = False                 # Q1 hint: skip Q6 (episode scope) when set
-    # Q1 step picker — which pipeline verbs to include. Default is the
-    # 'recommended all-in-one' (fetch + modify + merge). The translate
-    # verb is opt-in to protect users from accidentally kicking off MT.
+    # Q1 step picker — which pipeline verbs to include. The visible wizard
+    # default is the full pipeline (fetch + translate + modify + merge), but
+    # the translate question itself still defaults to "Skip" so Enter-spamming
+    # does not silently start AI translation.
     # Modify-only / merge-only / translate-only variants drop the verbs
     # they don't need from the emitted CLI and skip the corresponding
     # questions downstream.
@@ -14281,6 +14298,57 @@ def _wizard_pick_title_candidate(title: str) -> tuple[str, str, str, bool] | Non
 
 _PIPELINE_STEPS = ("fetch", "translate", "modify", "merge")
 _VALID_STEPS = (*_PIPELINE_STEPS, "rename")
+
+
+def _wizard_parse_step_selection(raw: str) -> set[str]:
+    """Parse Q1 step selection.
+
+    Accepted forms are deliberately forgiving: "1,3,4", "1-4", step names,
+    and the older hidden "a/all" aliases. Rename stays a separate maintenance
+    workflow, so "all" maps to the four pipeline verbs only.
+    """
+    mapping = {
+        "1": "fetch",
+        "2": "translate",
+        "3": "modify",
+        "4": "merge",
+        "5": "rename",
+        "fetch": "fetch",
+        "translate": "translate",
+        "modify": "modify",
+        "merge": "merge",
+        "rename": "rename",
+    }
+    value = raw.strip().lower()
+    value = re.sub(r"(\d+)\s*-\s*(\d+)", r"\1-\2", value)
+    if value in ("a", "all"):
+        return set(_PIPELINE_STEPS)
+
+    picked: set[str] = set()
+    for tok in re.split(r"[, ]+", value):
+        tok = tok.strip()
+        if not tok:
+            continue
+        if re.fullmatch(r"\d+\s*-\s*\d+", tok):
+            start_s, end_s = re.split(r"\s*-\s*", tok)
+            start, end = int(start_s), int(end_s)
+            if start <= end:
+                numbers = range(start, end + 1)
+            else:
+                numbers = range(start, end - 1, -1)
+            for number in numbers:
+                step = mapping.get(str(number))
+                if step:
+                    picked.add(step)
+                else:
+                    print(f"    (ignored unrecognised step {number!r})")
+            continue
+        step = mapping.get(tok)
+        if step is None:
+            print(f"    (ignored unrecognised step {tok!r})")
+            continue
+        picked.add(step)
+    return picked
 
 
 @dataclass
@@ -14541,13 +14609,22 @@ def _rename_copy_plan(plan: list[tuple[Path, Path]]) -> None:
         shutil.copy2(src, dst)
 
 
-_RENAME_UNSAFE_CHARS = set('/\\\x00')
+# Cross-platform unsafe filename characters: POSIX separators/NUL plus the
+# Windows-reserved set (< > : " | ? * \ /) and ASCII control chars. Keeping
+# subtitle names Windows-safe matters because they travel between machines.
+_RENAME_UNSAFE_CHARS = set('/\\<>:"|?*') | {chr(c) for c in range(0x20)}
 
 
 def _rename_value_is_safe(value: str) -> bool:
-    """True when `value` is safe to put inside a filename component — no
-    path separators or NUL, which would otherwise make Path.with_name raise
-    a raw ValueError mid-rename."""
+    """True when `value` is safe to put inside a filename component on every
+    platform — no path separators, no Windows-reserved characters, no control
+    characters. Unsafe values would make Path.with_name raise a raw ValueError
+    on POSIX and produce un-creatable files on Windows."""
+    if not value:
+        return True
+    if value != value.strip() or value.endswith("."):
+        # Windows trims trailing dots/spaces, which silently changes the name.
+        return False
     return not (set(value) & _RENAME_UNSAFE_CHARS)
 
 
@@ -14568,7 +14645,7 @@ def _wizard_rename_change_details(component: str, sample: _RenameParts) -> tuple
             print("Empty value; rename cancelled.")
             return "", ""
         if not _rename_value_is_safe(value):
-            print("    That can't go in a filename (no '/' or '\\'); rename cancelled.")
+            print("    That can't be used in a filename on all platforms (avoid / \\ : * ? \" < > | and trailing dots/spaces); rename cancelled.")
             return "", ""
         return value, ""
 
@@ -14590,7 +14667,7 @@ def _wizard_rename_change_details(component: str, sample: _RenameParts) -> tuple
                     sample.season_prefix if component == "season" else sample.episode_prefix,
                 )
                 if not _rename_value_is_safe(new_prefix):
-                    print("    That can't go in a filename (no '/' or '\\'); rename cancelled.")
+                    print("    That can't be used in a filename on all platforms (avoid / \\ : * ? \" < > | and trailing dots/spaces); rename cancelled.")
                     return "", ""
                 return "", f"prefix:{new_prefix}"
             if action_pick == "2" and component == "season":
@@ -14906,34 +14983,22 @@ def _wizard_q0_steps(state: _WizardState) -> None:
     print(f"{_wizard_next_q(state)} What do you want getsubtitle to do?")
     print("    1) Fetch     — download subtitles from a URL or title")
     print("    2) Translate — fill any missing language with AI translation")
-    print("    3) Modify    — clean up cues, add reading aids (furigana/pinyin/…)")
+    print("    3) Modify    — clean up cues, add reading aids (furigana/hangul/pinyin/…)")
     print("    4) Merge     — stack multiple languages into one study file")
     print("    5) Rename    — batch-rename existing subtitle filenames")
     print()
-    print("    Default: fetch + modify + merge (no AI translation).")
-    print("    Common shortcuts: '4' for merge-only, '3' for modify-only,")
-    print("    '2' for AI-translation-only, '3,4' for modify + merge,")
-    print("    '5' for rename-only.")
+    print("    Default: 1-4 — fetch, translate, modify, then merge.")
+    print("    Common picks:")
+    print("      1-4     full subtitle workflow")
+    print("      1,3,4   download + modify + merge existing subtitles")
+    print("      5       rename titles, prefixes, change numbering")
+    print()
     raw = _wizard_prompt(
-        "Numbers (comma-separated), 'a' for all, or Enter for default",
-        "1,3,4",
+        "Numbers or ranges, or Enter for default",
+        "1-4",
+        allow_back=False,
     ).strip().lower()
-    if raw in ("a", "all"):
-        state.steps = set(_PIPELINE_STEPS)
-        return
-    mapping = {"1": "fetch", "2": "translate", "3": "modify", "4": "merge", "5": "rename",
-               "fetch": "fetch", "translate": "translate",
-               "modify": "modify", "merge": "merge", "rename": "rename"}
-    picked: set[str] = set()
-    for tok in raw.split(","):
-        tok = tok.strip()
-        if not tok:
-            continue
-        step = mapping.get(tok)
-        if step is None:
-            print(f"    (ignored unrecognised step {tok!r})")
-            continue
-        picked.add(step)
+    picked = _wizard_parse_step_selection(raw)
     if not picked:
         raise CliError("interactive: pick at least one step.")
     if "rename" in picked and len(picked) > 1:
@@ -16403,8 +16468,8 @@ getsubtitle — interactive workflow builder
 
 I'll ask a few short questions, then show you the equivalent terminal
 command and a reusable workflow file. You can save the workflow for
-later, run it now, or edit a single answer. Type 'back' to return to
-the previous step, 'q' to quit, or Ctrl-C to bail.
+later, run it now, or edit a single answer. Type 'b' to go back,
+'q' to quit, or Ctrl-C to bail.
 """
 
 

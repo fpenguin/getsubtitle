@@ -177,7 +177,9 @@ vs original-file rename.
 
 - **Interactive step picker.** New Q1 asks which pipeline verbs to run
   (fetch / translate / modify / merge) up front, with
-  fetch+modify+merge as the default. Subsequent questions are gated on
+  `1-4` (fetch+translate+modify+merge) as the current default. The
+  translation question still defaults to "Skip", so pressing Enter does
+  not silently start AI translation. Subsequent questions are gated on
   the selected steps — merge-only on a folder skips the URL/title
   picker, episode scope, MT engine and reading-aid questions; modify-
   only on a single file skips merge order, master, and format. The
@@ -401,7 +403,7 @@ vs original-file rename.
 
 ### Tests
 
-- 514 automated tests covering URL parsing, provider response shapes, TMDB / AniList resolution, SAMI parsing, VTT/ASS input parsing, MT helpers + auto_load/auto_unload, merge with format hints, pipeline orchestration, `--config` CLI overrides, config validation, source smoke diagnostics, help system, and dispatch routing.
+- 611 automated tests covering URL parsing, provider response shapes, TMDB / AniList resolution, SAMI parsing, VTT/ASS input parsing, MT helpers + auto_load/auto_unload, merge with format hints, the wizard scenario harness, rename mode, the named pipeline registry, pipeline orchestration, `--config` CLI overrides, config validation, source smoke diagnostics, help system, and dispatch routing.
 
 ## Planned (post-v0.9.x)
 
