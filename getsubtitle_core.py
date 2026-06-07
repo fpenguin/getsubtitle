@@ -14331,6 +14331,31 @@ def _wizard_prompt(
             print("    (empty answer; please enter something, or 'q' to quit)")
 
 
+def _wizard_read_choice(
+    prompt: str,
+    valid: list[str],
+    default: str,
+    *,
+    allow_back: bool = True,
+) -> str:
+    """Single-select menu read with uniform guardrails.
+
+    One primitive so every numbered menu behaves the same: Enter → default,
+    a token in `valid` → returned, anything else → re-prompt (NEVER abort the
+    wizard). `q` quits and `b` goes back via `_wizard_prompt`. This is the
+    guardrail that stops one menu aborting (Q1) while another silently falls
+    back to its default — both are now "invalid re-prompts" by construction.
+
+    `valid` is the list of acceptable tokens, e.g. ['1', '2', '3'].
+    """
+    valid_set = {v.lower() for v in valid}
+    while True:
+        raw = _wizard_prompt(prompt, default, allow_back=allow_back).strip().lower()
+        if raw in valid_set:
+            return raw
+        print(f"    Please enter one of: {', '.join(valid)}.")
+
+
 def _wizard_yesno(question: str, default: bool = True) -> bool:
     suffix = "[Y/n]" if default else "[y/N]"
     if _wizard_back_nav_active():
@@ -15321,14 +15346,18 @@ def _wizard_q0_steps(state: _WizardState) -> None:
     print("      1,3,4   download + modify + merge existing subtitles")
     print("      5       rename titles, prefixes, change numbering")
     print()
-    raw = _wizard_prompt(
-        "Numbers or ranges, or Enter for default",
-        "1-4",
-        allow_back=False,
-    ).strip().lower()
-    picked = _wizard_parse_step_selection(raw)
-    if not picked:
-        raise CliError("interactive: pick at least one step.")
+    while True:
+        raw = _wizard_prompt(
+            "Numbers or ranges, or Enter for default",
+            "1-4",
+            allow_back=False,
+        ).strip().lower()
+        picked = _wizard_parse_step_selection(raw)
+        if picked:
+            break
+        # Invalid input must NOT abort the wizard — re-prompt instead.
+        print("    Please pick at least one step by number "
+              "(e.g. 1-4, or 5 for rename).")
     if "rename" in picked and len(picked) > 1:
         print("    Rename is a separate maintenance workflow; using rename only.")
         picked = {"rename"}
@@ -15747,7 +15776,7 @@ def _wizard_q5_scope(state: _WizardState) -> None:
         print()
         print("    Crunchyroll may display Season 3 as E25-E37, but subtitle")
         print("    sources usually search that as Season 3 episodes 1-13.")
-    pick = _wizard_prompt("Number", "2" if is_crunchyroll else "4").strip()
+    pick = _wizard_read_choice("Number", ["1", "2", "3", "4"], "2" if is_crunchyroll else "4")
     if pick == "1":
         state.season = ""
         state.episode = ""
@@ -15825,8 +15854,8 @@ def _wizard_q6_translate(state: _WizardState) -> None:
     print("    2) Argos — on your computer, low quality (free)")
     print("    3) Ollama — on your computer, good quality (free; slower)")
     print("    4) DeepL — online, better quality (free tier; needs API key)")
-    pick = _wizard_prompt("Number", "1").strip()
-    state.mt_engine = {"1": "", "2": "argos", "3": "ollama", "4": "deepl"}.get(pick[:1], "")
+    pick = _wizard_read_choice("Number", ["1", "2", "3", "4"], "1")
+    state.mt_engine = {"1": "", "2": "argos", "3": "ollama", "4": "deepl"}[pick]
 
 
 def _wizard_q7_reading_aids(state: _WizardState) -> None:
@@ -15938,9 +15967,9 @@ def _wizard_q9_format(state: _WizardState) -> None:
     print("    3) VTT  — best for browser/asbplayer Japanese ruby; local players vary.")
     print("    4) SMI  — legacy Korean SAMI; font size is usually player-controlled.")
     print("    5) TXT  — plain text without timestamps")
-    pick = _wizard_prompt("Final format", default_pick).strip()
     mapping = {"1": "srt", "2": "ass", "3": "vtt", "4": "smi", "5": "txt"}
-    state.format = mapping.get(pick[:1], default)
+    pick = _wizard_read_choice("Final format", ["1", "2", "3", "4", "5"], default_pick)
+    state.format = mapping[pick]
     state.viewing_env = {"srt": "tv", "ass": "desktop", "vtt": "browser", "smi": "legacy", "txt": "text"}.get(state.format, "")
     if needs_ruby and state.format != "vtt":
         print("    Note: hiragana readings render as ruby (above-the-kanji)")
@@ -15991,7 +16020,7 @@ def _wizard_q_font_size(state: _WizardState) -> None:
     print(f"    2) Smaller ({label(smaller)})")
     print(f"    3) Larger ({label(larger)})")
     print("    4) Custom — enter exact font size")
-    pick = _wizard_prompt("Number", "1").strip()
+    pick = _wizard_read_choice("Number", ["1", "2", "3", "4"], "1")
     if pick == "2":
         state.font_size = "smaller"
         return
@@ -16114,9 +16143,9 @@ def _wizard_q11_action(state: _WizardState) -> str:
     print("    3) Edit a single answer")
     print("    4) Start over from beginning")
     print("    5) Quit")
-    pick = _wizard_prompt("Number", default_pick).strip()
     mapping = {"1": "run", "2": "save", "3": "edit", "4": "restart", "5": "quit"}
-    return mapping.get(pick[:1], "run")
+    pick = _wizard_read_choice("Number", ["1", "2", "3", "4", "5"], default_pick)
+    return mapping[pick]
 
 
 # ─── Orchestrator ──────────────────────────────────────────────────────

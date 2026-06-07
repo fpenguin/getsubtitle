@@ -9101,6 +9101,73 @@ def test_wizard_rename_empty_folder_lists_what_it_found(tmp_path, monkeypatch, c
     assert "random_fansub_01.srt" in out
 
 
+def test_wizard_read_choice_reprompts_defaults_and_quits(monkeypatch, capsys):
+    # The shared menu primitive: Enter->default, garbage->re-prompt (never
+    # abort), q->quit. This is the guardrail every numbered menu now shares.
+    import pytest
+    g = MODULE["_wizard_prompt"].__globals__
+    monkeypatch.setitem(g, "input", lambda *a, **k: "")
+    assert MODULE["_wizard_read_choice"]("Number", ["1", "2", "3"], "2") == "2"
+    seq = iter(["99", "abc", "3"])
+    monkeypatch.setitem(g, "input", lambda *a, **k: next(seq))
+    assert MODULE["_wizard_read_choice"]("Number", ["1", "2", "3"], "1") == "3"
+    assert "Please enter one of" in capsys.readouterr().out
+    monkeypatch.setitem(g, "input", lambda *a, **k: "q")
+    with pytest.raises(MODULE["_WizardAbort"]):
+        MODULE["_wizard_read_choice"]("Number", ["1", "2", "3"], "1")
+
+
+def test_wizard_q1_steps_reprompts_not_aborts(monkeypatch, capsys):
+    # Regression: invalid Q1 input must re-prompt, not raise CliError and
+    # kill the whole wizard (the bug a beginner hit fat-fingering question 1).
+    g = MODULE["_wizard_prompt"].__globals__
+    seq = iter(["99", "abc", "1,3,4"])
+    monkeypatch.setitem(g, "input", lambda *a, **k: next(seq))
+    s = MODULE["_WizardState"]()
+    MODULE["_wizard_q0_steps"](s)  # must NOT raise
+    assert s.steps == {"fetch", "modify", "merge"}
+    assert "Please pick at least one step" in capsys.readouterr().out
+
+
+def test_interactive_wizard_fuzz_never_aborts_or_loops(tmp_path, monkeypatch):
+    # Property/fuzz harness: random input sequences must never make the
+    # wizard raise an unexpected exception, traceback, or loop forever.
+    import random
+    import io
+    import contextlib
+    g = MODULE["_wizard_prompt"].__globals__
+    monkeypatch.setitem(g, "_wizard_is_interactive", lambda: True)
+    monkeypatch.setitem(g, "main", lambda *a, **k: 0)        # don't really dispatch
+    monkeypatch.setitem(g, "open_folder", lambda *a, **k: None)
+    (tmp_path / "Show.S01E01.ja.srt").write_text(
+        "1\n00:00:01,000 --> 00:00:02,000\nx\n", encoding="utf-8")
+    (tmp_path / "Show.S01E01.en.srt").write_text(
+        "1\n00:00:01,000 --> 00:00:02,000\ny\n", encoding="utf-8")
+    pool = ["", "1", "2", "3", "4", "5", "9", "99", "b", "q", "x",
+            "ja,en", str(tmp_path), "-1", "0", "y", "n", " ", "abc"]
+    CAP = 400
+    random.seed(7)
+    expected = (MODULE["CliError"], SystemExit, MODULE["_WizardAbort"])
+    for trial in range(25):
+        seq = iter(random.choice(pool) for _ in range(35))
+        calls = {"n": 0}
+
+        def feed(prompt="", _seq=seq, _calls=calls, _t=trial):
+            _calls["n"] += 1
+            assert _calls["n"] <= CAP, f"wizard looped (> {CAP} prompts) on trial {_t}"
+            try:
+                return next(_seq)
+            except StopIteration:
+                return "q"
+
+        monkeypatch.setitem(g, "input", feed)
+        with contextlib.redirect_stdout(io.StringIO()):
+            try:
+                MODULE["interactive_main"]([])
+            except expected:
+                pass  # handled exits are acceptable; any other type fails the test
+
+
 def test_wizard_next_q_numbers_contiguously():
     """`_wizard_next_q` hands out gap-free labels from a per-pass counter
     so trimmed flows never show Q1 -> Q2 -> Q4 jumps. The reset lives in
