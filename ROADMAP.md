@@ -14,6 +14,36 @@ Until the app is marketing-ready for v1.0, use pre-1.0 release steps:
 - **v2.0**: a later larger behavior milestone, aimed at an AI-based
   subtitle sync engine.
 
+## v0.9.6 — what's new
+
+- **Named pipeline registry.** `getsubtitle run --save NAME workflow.toml`
+  stores a workflow under a short name; `getsubtitle run NAME` runs it
+  (with optional `--source` / `--output` / … overrides). `run --list` and
+  `run --remove NAME` manage saved pipelines. Names are validated so they
+  cannot escape the registry folder.
+- **`--label-langs` for merge.** Prefix each language's line in a stacked
+  cue with `[JA]` / `[KO]` / … so tracks are easy to tell apart. Also
+  available as `[merge] label_langs = true`.
+- **Rename mode is safer.** Episode-range renumbering keeps language
+  variants of the same episode paired (E01.ja and E01.en renumber
+  together) and renumbers each season independently. Files that don't
+  match the expected `Title - S03E05.lang.ext` shape are reported as
+  skipped instead of silently ignored; a discarded change no longer locks
+  the field; and a filesystem error mid-apply is reported cleanly (no
+  traceback) with a partial-state warning.
+- **Clearer wizard summary.** The action banner leads with a plain-language
+  "Here's the plan" summary before the exact command and the workflow
+  file, so you can sanity-check intent without reading the flag string.
+
+## Interactive rename maintenance mode
+
+`getsubtitle -i` includes `5) Rename` for subtitle filename cleanup. It
+groups matching patterns such as `Title - S03E**.ja.srt`, previews
+old -> new filenames, checks collisions, and defaults to copy-and-apply
+so originals stay untouched. The preview asks whether to apply now, keep
+editing, discard the current change, or cancel; apply now then asks copy
+vs original-file rename.
+
 ## v0.9.5 — what's new
 
 - **Interactive wizard backtracking and cleaner ordering.** The wizard now

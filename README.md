@@ -21,6 +21,7 @@ romaji as a normal subtitle line, and English support in one synced cue.*
 - **Clean messy captions** by removing broadcast noise and flattening cues for
   easier reading and sentence mining.
 - **Prepare a media library** by scanning Plex/Jellyfin folders, converting legacy subtitles, downloading or translating missing tracks, and merging per episode.
+- **Fix filename numbering safely** from the wizard: copy-and-rename by default, or rename originals when you're ready.
 - **No CLI flags to memorize** — `getsubtitle -i` builds your command in 4-7 questions and saves it as a reusable workflow.
 
 ## What you can build
@@ -79,7 +80,7 @@ what you're learning, recommends the right providers and reading-aid
 extras, and saves a profile that pre-fills the wizard. You can skip it
 and go straight to `-i`.
 
-`-i` asks what you want to do (fetch / translate / modify / merge),
+`-i` asks what you want to do (fetch / translate / modify / merge / rename),
 which source, which languages, and whether you want reading aids.
 Everything else (display order, cleanup, format, output folder) is
 smart-defaulted and surfaced in a "Smart defaults filled in for you"
@@ -90,6 +91,14 @@ answer". You get **Run**, **Save the workflow as TOML**, **Edit**,
 The wizard probes your environment first (pykakasi, Ollama, API keys)
 so you don't get stuck mid-run, and offers to open the output folder
 when it's done.
+
+Choose `5) Rename` in the wizard for subtitle filename cleanup. It groups
+variations like `Title - S03E**.ja.srt`, previews every change, checks
+collisions, and defaults to **copy and apply** so the original files stay
+untouched unless you choose to rename them in place. You can keep a
+previewed change and change another field, such as modifiers plus episode
+range, before applying; the wizard asks whether to keep editing before it
+asks copy vs original-file rename.
 
 ## CLI Examples
 
@@ -195,6 +204,10 @@ getsubtitle "URL" \
     --merge -l ja,ja-hiragana,ja-romaji,en
 ```
 
+Add `--label-langs` to prefix each language's line with `[JA]` / `[KO]` /
+… so stacked tracks are easy to tell apart at a glance (also
+`[merge] label_langs = true`).
+
 Merged outputs include a short GetSubtitle credit/disclaimer cue at the
 beginning and end. Use `--no-watermark` or `[merge] watermark = false`
 to omit it for private/test files.
@@ -237,6 +250,15 @@ Two example configs ship in this repo:
   Simpsons S1 in English + French.
 - [`plex-movies-fill-merge.toml`](plex-movies-fill-merge.toml) — PATH:
   scan `/Plex/Movies`, fetch JP/KO/EN/ES, fill MT gaps, merge in-place.
+
+Or save a workflow under a short name and run it without typing the path:
+
+```sh
+getsubtitle run --save anime plex-movies-fill-merge.toml
+getsubtitle run anime                          # run the saved workflow
+getsubtitle run anime --source /Plex/NewShow   # with overrides
+getsubtitle run --list                         # see saved pipelines
+```
 
 Per-user defaults live in `user_settings.toml`:
 

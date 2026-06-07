@@ -1010,6 +1010,66 @@ def test_subdl_provider_uses_unpacked_episode_files():
     assert subs[0].url == "https://dl.subdl.com/subtitle/e2.srt"
 
 
+def test_jimaku_provider_can_lookup_by_tmdb_id_when_anilist_is_missing():
+    scope = MODULE["JimakuProvider"]._search_entries.__globals__
+    saved_request = scope["request_json"]
+    calls: list[str] = []
+
+    def fake_request_json(url, **kwargs):
+        calls.append(url)
+        assert kwargs["headers"]["Authorization"] == "jimaku-key"
+        return [{"id": 42, "name": "My Neighbor Totoro"}]
+
+    try:
+        scope["request_json"] = fake_request_json
+        provider = MODULE["JimakuProvider"]("jimaku-key")
+        media = MODULE["MediaInfo"](
+            source_url="https://www.themoviedb.org/movie/8392",
+            provider="tmdb",
+            title="My Neighbor Totoro",
+            tmdb_id="8392",
+            is_movie=True,
+        )
+        assert provider.search_entry_id(media) == 42
+    finally:
+        scope["request_json"] = saved_request
+
+    assert "tmdb_id=movie%3A8392" in calls[0]
+
+
+def test_jimaku_provider_query_fallback_uses_title_aliases_carefully():
+    scope = MODULE["JimakuProvider"]._search_entries.__globals__
+    saved_request = scope["request_json"]
+    calls: list[str] = []
+
+    def fake_request_json(url, **kwargs):
+        calls.append(url)
+        if "query=Fena" in url:
+            return [{"id": 1, "name": "Wrong Fuzzy Result"}]
+        if "query=Kaizoku+Oujo" in url:
+            return [
+                {"id": 2, "name": "Other Show"},
+                {"id": 77, "name": "Kaizoku Oujo", "english_name": "Fena: Pirate Princess"},
+            ]
+        return []
+
+    try:
+        scope["request_json"] = fake_request_json
+        provider = MODULE["JimakuProvider"]("jimaku-key")
+        media = MODULE["MediaInfo"](
+            source_url="title://Fena",
+            provider="title",
+            title="Fena",
+            title_aliases=["Kaizoku Oujo", "海賊王女"],
+        )
+        assert provider.search_entry_id(media) == 77
+    finally:
+        scope["request_json"] = saved_request
+
+    assert any("query=Fena" in call for call in calls)
+    assert any("query=Kaizoku+Oujo" in call for call in calls)
+
+
 def test_url_form_uses_subdl_fallback_without_wyzie_key():
     import io
     import contextlib
@@ -1533,6 +1593,57 @@ def test_combine_cues_preserve_lines_keeps_original_breaks():
     assert combined[0].text_lines == ["Line A", "Line B", "가", "나"]
 
 
+def test_combine_cues_label_langs_prefixes_each_block():
+    SrtCue = MODULE["SrtCue"]
+    master = [SrtCue("1", "00:00:01,000 --> 00:00:03,000", ["Line A", "Line B"])]
+    targets = {"ko": [SrtCue("1", "00:00:01,000 --> 00:00:03,000", ["가", "나"])]}
+    # preserve_lines so we can confirm only the FIRST line of each block is tagged.
+    combined, _ = MODULE["combine_cues"](
+        master, targets, ["en", "ko"], "en", MODULE["SYNC_PRESETS"]["auto"],
+        preserve_lines=True, label_langs=True,
+    )
+    assert combined[0].text_lines == ["[EN] Line A", "Line B", "[KO] 가", "나"]
+
+
+def test_combine_cues_label_langs_off_by_default():
+    SrtCue = MODULE["SrtCue"]
+    master = [SrtCue("1", "00:00:01,000 --> 00:00:02,000", ["Hello"])]
+    targets = {"ko": [SrtCue("1", "00:00:01,000 --> 00:00:02,000", ["안녕"])]}
+    combined, _ = MODULE["combine_cues"](
+        master, targets, ["en", "ko"], "en", MODULE["SYNC_PRESETS"]["auto"],
+    )
+    assert combined[0].text_lines == ["Hello", "안녕"]
+
+
+def test_run_registry_save_list_remove(tmp_path, monkeypatch, capsys):
+    monkeypatch.setenv("GETSUBTITLE_CONFIG_PATH", str(tmp_path / "user_settings.toml"))
+    wf = tmp_path / "wf.toml"
+    wf.write_text('[fetch]\nsource = "x"\n', encoding="utf-8")
+    assert MODULE["run_main"](["--save", "myflow", str(wf)]) == 0
+    assert (tmp_path / "pipelines" / "myflow.toml").is_file()
+    capsys.readouterr()
+    assert MODULE["run_main"](["--list"]) == 0
+    assert "myflow" in capsys.readouterr().out
+    assert MODULE["run_main"](["--remove", "myflow"]) == 0
+    assert not (tmp_path / "pipelines" / "myflow.toml").exists()
+
+
+def test_run_registry_rejects_unsafe_name(tmp_path, monkeypatch):
+    import pytest
+    monkeypatch.setenv("GETSUBTITLE_CONFIG_PATH", str(tmp_path / "user_settings.toml"))
+    wf = tmp_path / "wf.toml"
+    wf.write_text("[fetch]\nsource = \"x\"\n", encoding="utf-8")
+    with pytest.raises(MODULE["CliError"]):
+        MODULE["run_main"](["--save", "../evil", str(wf)])
+
+
+def test_run_registry_unknown_name_errors(tmp_path, monkeypatch):
+    import pytest
+    monkeypatch.setenv("GETSUBTITLE_CONFIG_PATH", str(tmp_path / "user_settings.toml"))
+    with pytest.raises(MODULE["CliError"]):
+        MODULE["run_main"](["does-not-exist"])
+
+
 def test_combine_cues_overlap_threshold_drops_weak_matches():
     SrtCue = MODULE["SrtCue"]
     # Both cues are ~2s long but only overlap by 100ms (from 1.9-2.0s).
@@ -1844,6 +1955,40 @@ def test_multi_variant_merge_end_to_end():
         assert "かんじ" in content
         assert "漢字（かんじ）" not in content
         assert "I will study kanji." in content
+
+
+def test_merge_end_to_end_label_langs_writes_prefixed_file(tmp_path):
+    (tmp_path / "Show.S01E01.ja.srt").write_text(
+        "1\n00:00:01,000 --> 00:00:03,000\nこんにちは\n", encoding="utf-8")
+    (tmp_path / "Show.S01E01.en.srt").write_text(
+        "1\n00:00:01,000 --> 00:00:03,000\nHello\n", encoding="utf-8")
+    rc = MODULE["combine_main"]([
+        str(tmp_path), "-l", "ja,en",
+        "--label-langs", "--force", "--no-open-folder-prompt",
+    ])
+    assert rc == 0
+    out = tmp_path / "Show.S01E01.ja-en.srt"
+    assert out.exists(), list(tmp_path.iterdir())
+    content = out.read_text(encoding="utf-8")
+    assert "[JA] こんにちは" in content
+    assert "[EN] Hello" in content
+
+
+def test_merge_end_to_end_mixed_input_formats(tmp_path):
+    # ja supplied as VTT (via :vtt hint), en as SRT -> a single merged SRT.
+    (tmp_path / "Show.S01E01.ja.vtt").write_text(
+        "WEBVTT\n\n00:00:01.000 --> 00:00:03.000\nこんにちは\n", encoding="utf-8")
+    (tmp_path / "Show.S01E01.en.srt").write_text(
+        "1\n00:00:01,000 --> 00:00:03,000\nHello\n", encoding="utf-8")
+    rc = MODULE["combine_main"]([
+        str(tmp_path), "-l", "ja:vtt,en", "--force", "--no-open-folder-prompt",
+    ])
+    assert rc == 0
+    out = tmp_path / "Show.S01E01.ja-en.srt"
+    assert out.exists(), list(tmp_path.iterdir())
+    content = out.read_text(encoding="utf-8")
+    assert "こんにちは" in content
+    assert "Hello" in content
 
 
 def test_multi_variant_vtt_prefers_japanese_ruby_side_file():
@@ -8167,6 +8312,104 @@ def test_wizard_q5_scope_keeps_episode_inferred_from_selected_file():
     assert "S02E13" in buf.getvalue()
 
 
+def test_wizard_q5_whole_season_does_not_prompt_for_season():
+    """Option 3 means default/current season, all episodes.
+
+    The wizard used to ask a second "Season" prompt after the user chose
+    "Whole season, every episode", which made the shortcut feel pointless.
+    """
+    import contextlib
+    import io
+
+    s = MODULE["_WizardState"](
+        source="https://anilist.co/anime/166610/",
+        source_kind="url",
+        languages=["ja", "en"],
+        order=["ja", "en"],
+    )
+    fn_g = MODULE["_wizard_q5_scope"].__globals__
+    saved_prompt = fn_g["_wizard_prompt"]
+    calls: list[str] = []
+
+    def fake_prompt(label, default="", *args, **kwargs):
+        calls.append(label)
+        if label == "Number":
+            return "3"
+        raise AssertionError(f"unexpected prompt after whole-season choice: {label}")
+
+    try:
+        fn_g["_wizard_prompt"] = fake_prompt
+        with contextlib.redirect_stdout(io.StringIO()):
+            MODULE["_wizard_q5_scope"](s)
+    finally:
+        fn_g["_wizard_prompt"] = saved_prompt
+
+    assert calls == ["Number"]
+    assert s.season == "1"
+    assert s.episode == "all"
+
+
+def test_wizard_prompt_distinguishes_back_from_quit_in_hint():
+    import builtins
+
+    prompt_fn = MODULE["_wizard_prompt"]
+    g = prompt_fn.__globals__
+    saved_active = g["_WIZARD_BACK_NAV_ACTIVE"]
+    saved_input = builtins.input
+    prompts: list[str] = []
+
+    def fake_input(prompt):
+        prompts.append(prompt)
+        return "back"
+
+    try:
+        g["_WIZARD_BACK_NAV_ACTIVE"] = True
+        builtins.input = fake_input
+        try:
+            prompt_fn("Folder or file path")
+        except MODULE["_WizardBack"]:
+            pass
+        else:
+            raise AssertionError("expected back to raise _WizardBack")
+    finally:
+        builtins.input = saved_input
+        g["_WIZARD_BACK_NAV_ACTIVE"] = saved_active
+
+    assert prompts
+    assert "[back/quit]" in prompts[0]
+    assert "[back/q]" not in prompts[0]
+
+
+def test_wizard_quit_at_path_prompt_is_not_recoverable_draft():
+    s = MODULE["_WizardState"](steps={"fetch"})
+    fn = MODULE["_wizard_q1_source"]
+    fn_g = fn.__globals__
+    saved_prompt = fn_g["_wizard_prompt"]
+    answers = iter(["3"])
+
+    def fake_prompt(label, default=None, **kwargs):
+        if label == "Number":
+            return next(answers)
+        if label == "Folder or file path":
+            raise MODULE["_WizardAbort"]("user quit")
+        raise AssertionError(f"unexpected prompt: {label}")
+
+    try:
+        fn_g["_wizard_prompt"] = fake_prompt
+        try:
+            fn(s)
+        except MODULE["_WizardAbort"]:
+            pass
+        else:
+            raise AssertionError("expected abort at folder path prompt")
+    finally:
+        fn_g["_wizard_prompt"] = saved_prompt
+
+    assert s.source_kind == "path"
+    assert s.source == ""
+    assert MODULE["_wizard_has_recoverable_draft"](s) is False
+
+
 def test_mediainfo_movie_skips_season_subdir():
     """output_dir flattens the layout for movies: archive layout becomes
     base/Title/ instead of base/Title/Season XX/."""
@@ -8301,6 +8544,9 @@ def test_wizard_q0_steps_accepts_numbers_and_all_alias():
         with contextlib.redirect_stdout(io.StringIO()):
             MODULE["_wizard_q0_steps"](s)
         assert s.steps == {"fetch", "translate", "modify", "merge"}
+        # Rename is a maintenance workflow, so "all" means all pipeline
+        # verbs, not rename.
+        assert "rename" not in s.steps
         # Single number -> single step. Drives merge-only / modify-only.
         fn_g["input"] = lambda *a, **k: "4"
         s = MODULE["_WizardState"]()
@@ -8312,6 +8558,18 @@ def test_wizard_q0_steps_accepts_numbers_and_all_alias():
         with contextlib.redirect_stdout(io.StringIO()):
             MODULE["_wizard_q0_steps"](s)
         assert s.steps == {"modify"}
+        fn_g["input"] = lambda *a, **k: "5"
+        s = MODULE["_WizardState"]()
+        with contextlib.redirect_stdout(io.StringIO()):
+            MODULE["_wizard_q0_steps"](s)
+        assert s.steps == {"rename"}
+        # Rename is intentionally exclusive so it cannot accidentally fetch
+        # or modify files while a user is doing filename maintenance.
+        fn_g["input"] = lambda *a, **k: "1,5"
+        s = MODULE["_WizardState"]()
+        with contextlib.redirect_stdout(io.StringIO()):
+            MODULE["_wizard_q0_steps"](s)
+        assert s.steps == {"rename"}
         # Multi-select.
         fn_g["input"] = lambda *a, **k: "3,4"
         s = MODULE["_WizardState"]()
@@ -8327,6 +8585,227 @@ def test_wizard_q0_steps_accepts_numbers_and_all_alias():
     finally:
         if saved is not None:
             fn_g["input"] = saved
+
+
+def test_rename_parse_parts_and_group_variations(tmp_path):
+    path = tmp_path / "MF Ghost - S03E05.ja.furigana-hiragana.single-line.ruby.vtt"
+    path.write_text("WEBVTT\n", encoding="utf-8")
+    parsed = MODULE["_rename_parse_parts"](path)
+    assert parsed is not None
+    assert parsed.title == "MF Ghost"
+    assert parsed.season_prefix == "S"
+    assert parsed.season == "03"
+    assert parsed.episode_prefix == "E"
+    assert parsed.episode == "05"
+    assert parsed.language == "ja"
+    assert parsed.modifiers == ["furigana-hiragana", "single-line", "ruby"]
+    assert parsed.extension == "vtt"
+    assert parsed.render() == path.name
+
+    sibling = tmp_path / "MF Ghost - S03E06.ja.furigana-hiragana.single-line.ruby.vtt"
+    sibling.write_text("WEBVTT\n", encoding="utf-8")
+    groups = MODULE["_rename_group_variations"]([
+        MODULE["_rename_parse_parts"](path),
+        MODULE["_rename_parse_parts"](sibling),
+    ])
+    assert groups[0][0] == "MF Ghost - S03E**.ja.furigana-hiragana.single-line.ruby.vtt"
+    assert len(groups[0][1]) == 2
+
+
+def test_rename_plan_episode_range_preserves_width(tmp_path):
+    first = tmp_path / "MF Ghost - S03E01.ja-furigana-ko.vtt"
+    second = tmp_path / "MF Ghost - S03E02.ja-furigana-ko.vtt"
+    first.write_text("WEBVTT\n", encoding="utf-8")
+    second.write_text("WEBVTT\n", encoding="utf-8")
+    parts = [MODULE["_rename_parse_parts"](first), MODULE["_rename_parse_parts"](second)]
+    plan = MODULE["_rename_plan"](parts, component="episode", number_action="range:25")
+    assert [dst.name for _src, dst in plan] == [
+        "MF Ghost - S03E25.ja-furigana-ko.vtt",
+        "MF Ghost - S03E26.ja-furigana-ko.vtt",
+    ]
+
+
+def test_rename_episode_range_keeps_language_variants_paired(tmp_path):
+    # Selecting ja AND en variants and renumbering must give both files of one
+    # episode the SAME new number (regression: per-file enumerate desynced them).
+    names = [
+        "MF Ghost - S01E01.ja.srt", "MF Ghost - S01E01.en.srt",
+        "MF Ghost - S01E02.ja.srt", "MF Ghost - S01E02.en.srt",
+    ]
+    parts = []
+    for n in names:
+        (tmp_path / n).write_text("1\n", encoding="utf-8")
+        parts.append(MODULE["_rename_parse_parts"](tmp_path / n))
+    plan = MODULE["_rename_plan"](parts, component="episode", number_action="range:5")
+    mapping = {src.name: dst.name for src, dst in plan}
+    assert mapping["MF Ghost - S01E01.ja.srt"] == "MF Ghost - S01E05.ja.srt"
+    assert mapping["MF Ghost - S01E01.en.srt"] == "MF Ghost - S01E05.en.srt"
+    assert mapping["MF Ghost - S01E02.ja.srt"] == "MF Ghost - S01E06.ja.srt"
+    assert mapping["MF Ghost - S01E02.en.srt"] == "MF Ghost - S01E06.en.srt"
+
+
+def test_rename_episode_range_renumbers_each_season_independently(tmp_path):
+    # Two seasons selected together: each season restarts at `start`, no bleed.
+    names = ["Show - S01E03.ja.srt", "Show - S01E04.ja.srt",
+             "Show - S02E07.ja.srt", "Show - S02E08.ja.srt"]
+    parts = []
+    for n in names:
+        (tmp_path / n).write_text("1\n", encoding="utf-8")
+        parts.append(MODULE["_rename_parse_parts"](tmp_path / n))
+    plan = MODULE["_rename_plan"](parts, component="episode", number_action="range:1")
+    mapping = {src.name: dst.name for src, dst in plan}
+    assert mapping["Show - S01E03.ja.srt"] == "Show - S01E01.ja.srt"
+    assert mapping["Show - S01E04.ja.srt"] == "Show - S01E02.ja.srt"
+    assert mapping["Show - S02E07.ja.srt"] == "Show - S02E01.ja.srt"
+    assert mapping["Show - S02E08.ja.srt"] == "Show - S02E02.ja.srt"
+
+
+def test_rename_collision_errors_detect_existing_destination(tmp_path):
+    source = tmp_path / "MF Ghost - S03E01.ja.srt"
+    target = tmp_path / "MF Ghost - S03E01.ko.srt"
+    source.write_text("1\n", encoding="utf-8")
+    target.write_text("1\n", encoding="utf-8")
+    part = MODULE["_rename_parse_parts"](source)
+    plan = MODULE["_rename_plan"]([part], component="language", value="ko")
+    assert MODULE["_rename_collision_errors"](plan) == [
+        "MF Ghost - S03E01.ko.srt already exists"
+    ]
+    shift_source = tmp_path / "MF Ghost - S03E02.ja.srt"
+    shift_source.write_text("1\n", encoding="utf-8")
+    shift_plan = MODULE["_rename_plan"](
+        [
+            MODULE["_rename_parse_parts"](source),
+            MODULE["_rename_parse_parts"](shift_source),
+        ],
+        component="episode",
+        number_action="range:2",
+    )
+    assert MODULE["_rename_collision_errors"](shift_plan) == []
+    assert MODULE["_rename_collision_errors"](shift_plan, copy_mode=True) == [
+        "MF Ghost - S03E02.ja.srt already exists"
+    ]
+
+
+def test_rename_apply_plan_handles_swaps_without_clobbering(tmp_path):
+    a = tmp_path / "Show - S01E01.ja.srt"
+    b = tmp_path / "Show - S01E02.ja.srt"
+    a.write_text("episode one\n", encoding="utf-8")
+    b.write_text("episode two\n", encoding="utf-8")
+
+    MODULE["_rename_apply_plan"]([
+        (a, b),
+        (b, a),
+    ])
+
+    assert a.read_text(encoding="utf-8") == "episode two\n"
+    assert b.read_text(encoding="utf-8") == "episode one\n"
+
+
+def test_rename_copy_plan_keeps_original_files(tmp_path):
+    source = tmp_path / "Show - S01E01.ja.srt"
+    target = tmp_path / "Show - S01E25.ja.srt"
+    source.write_text("episode one\n", encoding="utf-8")
+
+    MODULE["_rename_copy_plan"]([(source, target)])
+
+    assert source.read_text(encoding="utf-8") == "episode one\n"
+    assert target.read_text(encoding="utf-8") == "episode one\n"
+
+
+def test_wizard_rename_flow_renames_selected_variation(tmp_path, monkeypatch):
+    first = tmp_path / "MF Ghost - S03E01.ja.srt"
+    second = tmp_path / "MF Ghost - S03E02.ja.srt"
+    untouched = tmp_path / "MF Ghost - S03E01.ko.srt"
+    for path in (first, second, untouched):
+        path.write_text("1\n", encoding="utf-8")
+
+    answers = iter(["1", "3", "2", "25", "1", "2", "y"])
+    monkeypatch.setitem(MODULE["_wizard_prompt"].__globals__, "input", lambda *a, **k: next(answers))
+    state = MODULE["_WizardState"](steps={"rename"}, source=str(tmp_path), source_kind="path")
+    MODULE["_wizard_q_rename"](state)
+
+    assert not first.exists()
+    assert not second.exists()
+    assert (tmp_path / "MF Ghost - S03E25.ja.srt").exists()
+    assert (tmp_path / "MF Ghost - S03E26.ja.srt").exists()
+    assert untouched.exists()
+
+
+def test_wizard_rename_flow_defaults_to_copy_and_apply(tmp_path, monkeypatch):
+    first = tmp_path / "MF Ghost - S03E01.ja.srt"
+    second = tmp_path / "MF Ghost - S03E02.ja.srt"
+    for path in (first, second):
+        path.write_text("1\n", encoding="utf-8")
+
+    answers = iter(["all", "3", "2", "25", "", "", "y"])
+    monkeypatch.setitem(MODULE["_wizard_prompt"].__globals__, "input", lambda *a, **k: next(answers))
+    state = MODULE["_WizardState"](steps={"rename"}, source=str(tmp_path), source_kind="path")
+    MODULE["_wizard_q_rename"](state)
+
+    assert first.exists()
+    assert second.exists()
+    assert (tmp_path / "MF Ghost - S03E25.ja.srt").exists()
+    assert (tmp_path / "MF Ghost - S03E26.ja.srt").exists()
+
+
+def test_wizard_rename_back_inside_number_detail_stays_in_rename(tmp_path, monkeypatch, capsys):
+    first = tmp_path / "MF Ghost - S03E01.ja.srt"
+    second = tmp_path / "MF Ghost - S03E02.ja.srt"
+    for path in (first, second):
+        path.write_text("1\n", encoding="utf-8")
+
+    answers = iter(["1", "3", "1", "back", "2", "25", "", "", "y"])
+    fn_g = MODULE["_wizard_prompt"].__globals__
+    saved_back_nav = fn_g.get("_WIZARD_BACK_NAV_ACTIVE", False)
+    monkeypatch.setitem(fn_g, "input", lambda *a, **k: next(answers))
+    monkeypatch.setitem(fn_g, "_WIZARD_BACK_NAV_ACTIVE", True)
+    try:
+        state = MODULE["_WizardState"](steps={"rename"}, source=str(tmp_path), source_kind="path")
+        MODULE["_wizard_q_rename"](state)
+    finally:
+        monkeypatch.setitem(fn_g, "_WIZARD_BACK_NAV_ACTIVE", saved_back_nav)
+
+    out = capsys.readouterr().out
+    assert "Going back to the previous rename choice." in out
+    assert "Going back to the previous step." not in out
+    assert first.exists()
+    assert second.exists()
+    assert (tmp_path / "MF Ghost - S03E25.ja.srt").exists()
+    assert (tmp_path / "MF Ghost - S03E26.ja.srt").exists()
+
+
+def test_wizard_rename_can_keep_changes_then_change_another_field(tmp_path, monkeypatch, capsys):
+    first = tmp_path / "MF Ghost - S03E01.ja.furigana-hiragana.vtt"
+    second = tmp_path / "MF Ghost - S03E02.ja.furigana-hiragana.vtt"
+    for path in (first, second):
+        path.write_text("WEBVTT\n", encoding="utf-8")
+
+    answers = iter([
+        "all",       # variation
+        "5",         # modifiers
+        "combined",  # new modifiers
+        "2",         # keep changes and change something else
+        "5",         # try modifiers again; should be rejected
+        "3",         # episode
+        "2",         # range
+        "25",        # starts at E25
+        "1",         # looks good, apply now
+        "2",         # apply to originals
+        "y",         # confirm
+    ])
+    monkeypatch.setitem(MODULE["_wizard_prompt"].__globals__, "input", lambda *a, **k: next(answers))
+    state = MODULE["_WizardState"](steps={"rename"}, source=str(tmp_path), source_kind="path")
+    MODULE["_wizard_q_rename"](state)
+
+    out = capsys.readouterr().out
+    assert "What next?" in out
+    assert "How should it be applied?" in out
+    assert "Modifiers (already handled)" in out
+    assert "already handled in this rename batch" in out
+    assert not first.exists()
+    assert not second.exists()
+    assert (tmp_path / "MF Ghost - S03E25.ja.combined.vtt").exists()
+    assert (tmp_path / "MF Ghost - S03E26.ja.combined.vtt").exists()
 
 
 def test_wizard_next_q_numbers_contiguously():
@@ -8820,7 +9299,8 @@ def test_wizard_dispatch_table_has_at_most_seven_question_steps():
     output format, output folder) are now filled in by
     _wizard_apply_smart_defaults instead of asked."""
     steps = MODULE["_WIZARD_STEPS"]
-    assert len(steps) <= 7, f"too many wizard steps: {[s[0] for s in steps]}"
+    pipeline_steps = [s for s in steps if s[0] != "rename"]
+    assert len(pipeline_steps) <= 7, f"too many wizard steps: {[s[0] for s in pipeline_steps]}"
     # The five removed steps must not be present.
     labels = {s[0] for s in steps}
     for removed in ("order", "master", "asbplayer", "format", "output"):

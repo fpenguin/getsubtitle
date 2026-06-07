@@ -12,17 +12,19 @@ Q1. What do you want getsubtitle to do?
     2) Translate — fill any missing language with AI translation
     3) Modify    — clean up cues, add reading aids (furigana/pinyin/…)
     4) Merge     — stack multiple languages into one study file
+    5) Rename    — batch-rename existing subtitle filenames
 
     Default: fetch + modify + merge (no AI translation).
     Common shortcuts: '4' for merge-only, '3' for modify-only,
-    '2' for AI-translation-only, '3,4' for modify + merge.
-  Numbers (comma-separated), 'a' for all, or Enter for default [1,3,4 | back/q] > 3,4
+    '2' for AI-translation-only, '3,4' for modify + merge,
+    '5' for rename-only.
+  Numbers (comma-separated), 'a' for all, or Enter for default [1,3,4 | back/quit] > 3,4
     Selected: modify + merge.
 
 Q2. Folder or file to process.
     Drop a folder of .srt files, a single .srt file, or any path
     your selected step(s) should operate on.
-  Folder or file path [back/q] > {TMP}/Mashle/Mashle - s02e13.mkv
+  Folder or file path [back/quit] > {TMP}/Mashle/Mashle - s02e13.mkv
     Selected episode: S02E13
     File selected; using its folder so matching sidecar subtitles can be found.
     SMI subtitles found; will convert them to SRT before cleanup/readings.
@@ -31,7 +33,7 @@ Q2. Folder or file to process.
 Q3. Which subtitle languages do you want to collect?
     List them in the order you want them displayed (top → bottom).
     Examples: ja,en   ja,ko,en,es   japanese,korean,english
-  Languages (comma-separated) [ja,en | back/q] > ja,en
+  Languages (comma-separated) [ja,en | back/quit] > ja,en
 
     Local subtitle check:
       Found locally: ko
@@ -41,7 +43,7 @@ Q3. Which subtitle languages do you want to collect?
   Search online for the missing languages now? [Y/n | back] > y
 
     Enter an IMDb/TMDB/AniList/Crunchyroll URL, or type the title.
-  URL or title to fetch [back/q] > Mashle
+  URL or title to fetch [back/quit] > Mashle
     Fetch will save into: {TMP}/Mashle
     Then Modify/Merge will continue from that folder.
 
@@ -53,8 +55,15 @@ Q4. Reading aids (phonetic guides for the original script).
     2) Japanese — hiragana readings for kanji   [ja:hiragana]
     3) Japanese — katakana readings for kanji   [ja:katakana]
     4) Japanese — full-sentence romaji   [ja:romaji]
-  Numbers (comma-separated) [1 | back/q] > 1
+  Numbers (comma-separated) [1 | back/quit] > 1
 
+======================================================================
+Here's the plan:
+======================================================================
+  • Fetch ja, en for Mashle  (season 2, episode 13)
+  • Clean up cues (single line, strip broadcast noise)
+  • Stack ja, en into one SRT study file
+  • Save to {TMP}/Mashle
 ======================================================================
 Smart defaults filled in for you (edit via 'Edit a single answer'):
 ======================================================================
@@ -96,7 +105,7 @@ Equivalent workflow file (save as .toml):
     3) Edit a single answer
     4) Start over from beginning
     5) Quit
-  Number [2 | back/q] > 2
+  Number [2 | back/quit] > 2
 
   Save to (relative paths OK) [getsubtitle-workflow.toml] > {TMP}/mashle.toml
 Saved: {TMP}/mashle.toml

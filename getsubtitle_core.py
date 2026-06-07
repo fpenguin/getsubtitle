@@ -20,7 +20,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 import zipfile
-from dataclasses import dataclass, field, fields
+from dataclasses import dataclass, field, fields, replace
 from html import unescape
 from pathlib import Path
 from typing import Iterable
@@ -1963,7 +1963,7 @@ class JimakuProvider:
 
     def __init__(self, api_key: str | None):
         self.api_key = api_key
-        self._entry_id_by_anilist: dict[int, int] = {}
+        self._entry_id_by_key: dict[str, int] = {}
 
     def configured(self) -> bool:
         return bool(self.api_key)
@@ -1977,26 +1977,117 @@ class JimakuProvider:
             )
         return {"Authorization": self.api_key}
 
-    def search_entry_id(self, media: MediaInfo) -> int:
-        if not media.anilist_id:
-            raise CliError(
-                "Jimaku search needs an AniList ID. Pass --anilist <id>, or use a "
-                "URL the CLI can map to one (anilist.co/anime/<id>, MyAnimeList, "
-                "Crunchyroll series page)."
-            )
-        if media.anilist_id in self._entry_id_by_anilist:
-            return self._entry_id_by_anilist[media.anilist_id]
-        q = urllib.parse.urlencode({"anilist_id": media.anilist_id})
+    def _search_entries(self, params: dict[str, object]) -> list[dict]:
+        q = urllib.parse.urlencode(params)
         entries = request_json(f"{JIMAKU_API}/entries/search?{q}", headers=self._headers())
+        if not isinstance(entries, list):
+            raise CliError("Unexpected Jimaku response.")
+        return [entry for entry in entries if isinstance(entry, dict)]
+
+    def _cached_entry_lookup(self, cache_key: str, params: dict[str, object]) -> int | None:
+        if cache_key in self._entry_id_by_key:
+            return self._entry_id_by_key[cache_key]
+        entries = self._search_entries(params)
         if not isinstance(entries, list) or not entries:
-            raise CliError(
-                f"Jimaku has no entry for AniList ID {media.anilist_id}. "
-                "Not every anime is on Jimaku — try the same URL with -l en,ko,es "
-                "to use other providers, or check the show on jimaku.cc directly."
-            )
+            return None
         entry_id = int(entries[0]["id"])
-        self._entry_id_by_anilist[media.anilist_id] = entry_id
+        self._entry_id_by_key[cache_key] = entry_id
         return entry_id
+
+    @staticmethod
+    def _tmdb_entry_param(media: MediaInfo) -> str | None:
+        if not media.tmdb_id:
+            return None
+        media_type = "movie" if media.is_movie else "tv"
+        if media.source_url:
+            path = urllib.parse.urlparse(media.source_url).path.lower()
+            if "/movie/" in path:
+                media_type = "movie"
+            elif "/tv/" in path:
+                media_type = "tv"
+        return f"{media_type}:{media.tmdb_id}"
+
+    @staticmethod
+    def _entry_titles(entry: dict) -> list[str]:
+        return unique_titles([
+            str(entry.get("name") or ""),
+            str(entry.get("english_name") or ""),
+            str(entry.get("japanese_name") or ""),
+        ])
+
+    @staticmethod
+    def _query_entry_score(query: str, entry: dict) -> int:
+        query_key = _norm_title_key(query)
+        if not query_key:
+            return 0
+        best = 0
+        for title in JimakuProvider._entry_titles(entry):
+            title_key = _norm_title_key(title)
+            if not title_key:
+                continue
+            if title_key == query_key:
+                best = max(best, 100)
+            elif len(query_key) >= 6 and query_key in title_key:
+                best = max(best, 85)
+            elif len(title_key) >= 6 and title_key in query_key:
+                best = max(best, 80)
+        return best
+
+    def _query_entry_id(self, media: MediaInfo) -> int | None:
+        for query in media_title_queries(media):
+            cache_key = f"query:{_norm_title_key(query)}"
+            if cache_key in self._entry_id_by_key:
+                return self._entry_id_by_key[cache_key]
+            try:
+                entries = self._search_entries({"query": query, "anime": "true"})
+            except CliError:
+                continue
+            scored = [
+                (self._query_entry_score(query, entry), entry)
+                for entry in entries
+            ]
+            scored = [(score, entry) for score, entry in scored if score > 0]
+            if not scored:
+                continue
+            scored.sort(key=lambda item: item[0], reverse=True)
+            entry_id = int(scored[0][1]["id"])
+            self._entry_id_by_key[cache_key] = entry_id
+            return entry_id
+        return None
+
+    def search_entry_id(self, media: MediaInfo) -> int:
+        tried: list[str] = []
+        if media.anilist_id:
+            tried.append(f"AniList ID {media.anilist_id}")
+            entry_id = self._cached_entry_lookup(
+                f"anilist:{media.anilist_id}",
+                {"anilist_id": media.anilist_id},
+            )
+            if entry_id is not None:
+                return entry_id
+
+        tmdb_param = self._tmdb_entry_param(media)
+        if tmdb_param:
+            tried.append(f"TMDB {tmdb_param}")
+            entry_id = self._cached_entry_lookup(
+                f"tmdb:{tmdb_param}",
+                {"tmdb_id": tmdb_param},
+            )
+            if entry_id is not None:
+                return entry_id
+
+        if media_title_queries(media):
+            tried.append("title aliases")
+            entry_id = self._query_entry_id(media)
+            if entry_id is not None:
+                return entry_id
+
+        where = ", ".join(tried) if tried else "no usable ID/title"
+        raise CliError(
+            f"Jimaku has no matching entry via {where}. "
+            "Jimaku works best with AniList/TMDB IDs; alternate title search is "
+            "best-effort. Try --anilist, a TMDB URL, or check jimaku.cc directly."
+        )
 
     def files(self, media: MediaInfo, episode: str) -> list[SubtitleFile]:
         entry_id = self.search_entry_id(media)
@@ -6855,8 +6946,13 @@ def combine_cues(
     *,
     preserve_lines: bool = False,
     japanese_furigana_mode: str | None = None,
+    label_langs: bool = False,
 ) -> tuple[list[SrtCue], dict[str, float]]:
     """Combine `master_cues` with overlapping cues from each target language.
+
+    When `label_langs` is true each language block is prefixed with an
+    uppercase `[LANG] ` tag on its first line, so a stacked cue reads
+    `[JA] …` / `[EN] …` — handy for telling tracks apart at a glance.
 
     Returns (combined_cues, per_target_lang_match_rate). Master is timing
     authority. Each target cue is matched to the master cue with the highest
@@ -6921,13 +7017,16 @@ def combine_cues(
         for lang in lang_order:
             if lang == master_lang:
                 if lang == "ja" and japanese_furigana_mode:
-                    body.extend(_format_japanese_furigana_for_combine(
+                    lines = _format_japanese_furigana_for_combine(
                         master_cue.text_lines, japanese_furigana_mode, preserve_lines
-                    ))
+                    )
                 else:
-                    body.extend(_format_cue_text_for_lang(master_cue.text_lines, preserve_lines))
+                    lines = _format_cue_text_for_lang(master_cue.text_lines, preserve_lines)
             else:
-                body.extend(per_lang_text.get(lang, []))
+                lines = list(per_lang_text.get(lang, []))
+            if label_langs and lines:
+                lines = [f"[{lang.upper()}] {lines[0]}", *lines[1:]]
+            body.extend(lines)
 
         combined.append(
             SrtCue(
@@ -7128,6 +7227,7 @@ def build_combine_parser() -> argparse.ArgumentParser:
     p.add_argument("--no-open-folder-prompt", action="store_true", help="Do not ask whether to open the output folder after writing.")
     p.add_argument("--sync", choices=list(SYNC_PRESETS), default="auto", help="Time-overlap strictness preset. Default: auto.")
     p.add_argument("--master", metavar="LANG", help="Override the timing master language (default: first language in -l).")
+    p.add_argument("--label-langs", action="store_true", default=False, help="Prefix each language's line in a stacked cue with [JA]/[KO]/… so tracks are easy to tell apart.")
     p.add_argument("--single-line", "--single", dest="preserve_lines", action="store_false", default=argparse.SUPPRESS, help="Flatten each language to one line per cue. This is the default; kept as an explicit readability flag.")
     p.add_argument("--preserve-lines", action="store_true", default=argparse.SUPPRESS, help="Keep each source language's original line breaks. Default: flatten each language to a single line.")
     # Hidden compat aliases for the pre-reading --furigana flag; kept so old
@@ -7414,6 +7514,7 @@ def combine_main(argv: list[str]) -> int:
                 master_cues, target_cues, langs, master_lang, sync_preset,
                 preserve_lines=args.preserve_lines,
                 japanese_furigana_mode=args.ja_reading if args.format in ("srt", "smi", "ass", "txt") else None,
+                label_langs=getattr(args, "label_langs", False),
             )
         except CliError as e:
             skipped.append((key, f"furigana failed: {e}"))
@@ -10166,6 +10267,78 @@ def _merge_overrides_into_toml(data: dict, overrides: dict, verb_blocks: dict) -
     return out
 
 
+def _pipeline_registry_dir() -> Path:
+    """Folder holding named pipeline TOMLs, beside user_settings.toml."""
+    return config_path().parent / "pipelines"
+
+
+def _pipeline_registry_path(name: str) -> Path:
+    safe = name.strip()
+    bad = not safe or safe.startswith(".") or any(c in safe for c in '/\\<>:"|?*')
+    if bad:
+        raise CliError(
+            f"Invalid pipeline name {name!r}. Use letters, numbers, dashes "
+            "(no slashes or dots)."
+        )
+    return _pipeline_registry_dir() / f"{safe}.toml"
+
+
+def run_main(argv: list[str]) -> int:
+    """Named pipeline registry: save / list / remove / run a workflow TOML
+    by short name so you don't have to remember its path.
+
+        getsubtitle run --save anime path/to/workflow.toml
+        getsubtitle run anime                       # run it
+        getsubtitle run anime --source URL --output DIR   # with overrides
+        getsubtitle run --list
+        getsubtitle run --remove anime
+    """
+    if not argv or argv[0] in ("--list", "list"):
+        reg = _pipeline_registry_dir()
+        names = sorted(p.stem for p in reg.glob("*.toml")) if reg.is_dir() else []
+        if not names:
+            print("No saved pipelines yet.")
+            print("Save one with:  getsubtitle run --save NAME path/to/workflow.toml")
+            return 0
+        print("Saved pipelines:")
+        for n in names:
+            print(f"  {n}")
+        print()
+        print("Run one with:  getsubtitle run NAME [--source X --output Y ...]")
+        return 0
+    if argv[0] == "--save":
+        if len(argv) < 3:
+            raise CliError("Usage: getsubtitle run --save NAME path/to/workflow.toml")
+        name, src = argv[1], argv[2]
+        src_path = Path(src).expanduser()
+        if not src_path.is_file():
+            raise CliError(f"Workflow file not found: {src}")
+        dest = _pipeline_registry_path(name)
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(src_path, dest)
+        print(f"Saved pipeline {name!r}.")
+        print(f"Run it with:  getsubtitle run {name}")
+        return 0
+    if argv[0] == "--remove":
+        if len(argv) < 2:
+            raise CliError("Usage: getsubtitle run --remove NAME")
+        dest = _pipeline_registry_path(argv[1])
+        if not dest.exists():
+            raise CliError(f"No saved pipeline named {argv[1]!r}.")
+        dest.unlink()
+        print(f"Removed pipeline {argv[1]!r}.")
+        return 0
+    name, *overrides = argv
+    dest = _pipeline_registry_path(name)
+    if not dest.exists():
+        raise CliError(
+            f"No saved pipeline named {name!r}. "
+            "List them with:  getsubtitle run --list"
+        )
+    full_argv = ["--config", str(dest), *overrides]
+    return pipeline_from_config_main(str(dest), full_argv)
+
+
 def pipeline_from_config_main(config_path: str, full_argv: list[str] | None = None) -> int:
     """Load a pipeline TOML file, optionally layer CLI overrides from
     `full_argv`, then run pipeline_main on the merged result.
@@ -12521,11 +12694,12 @@ Quick start:
 Subcommands (each has its own --help):
   setup         First-time onboarding: keys, config, recommendations.
   doctor        Check install, keys, dependencies, ffmpeg, and Ollama.
-  interactive   Guided wizard — picks the steps, asks the needed Qs, runs/saves.
+  interactive   Guided wizard — builds workflows or safely renames subtitle files.
   fetch         Download from URL, or scan a folder. (Bare URL works too.)
   translate     Fill missing-language SRTs via MT (argos / ollama / deepl).
   modify        Cleanup, reading aids, SAMI→SRT, and MKV subtitle extraction.
   merge         Stack 2+ language SRTs into one study file.
+  run           Save and run workflows by short name (run --save NAME FILE; run NAME).
   config        Manage user_settings.toml defaults.
   sources       Check provider/source access for your configured API keys.
 
@@ -13362,12 +13536,15 @@ contiguously from what you picked, so a subset run has no gaps.
 Type 'back' at any prompt to return to the previous visible step.
 
 What it asks (only the questions relevant to your step choice appear):
-  • Which steps to run — fetch / translate / modify / merge.
+  • Which steps to run — fetch / translate / modify / merge / rename.
       Default: fetch + modify + merge (no AI translation).
       Pick a subset to skip irrelevant downstream questions:
         '4' → merge-only (folder of existing .srt files)
         '3' → modify-only (add furigana to a single .ja.srt)
-        '2' → translate-only   '3,4' → modify + merge   'a' → all four
+        '2' → translate-only   '3,4' → modify + merge   '5' → rename-only
+        'a' → all four pipeline steps (fetch/translate/modify/merge)
+      Rename is a separate maintenance workflow; choosing it with other
+      steps runs rename only so files are not fetched/modified by accident.
   • Source kind — title search / streaming URL / folder or file.
       (default flips to 'folder' when no TMDB key is configured, so
        first-time users land on the most reliable path. Skipped when
@@ -13393,6 +13570,13 @@ What it asks (only the questions relevant to your step choice appear):
         th:royal-thai / ar:ala-lc / etc.                backend coming
       The header example adapts to your primary script
       (漢字（かんじ） for ja, 한글 (hangeul) for ko, 漢字 (pīnyīn) for zh).
+  • Rename mode — groups matching subtitle filenames by variation
+      (for example `Title - S03E**.ja.srt`), lets you choose one group
+      or all groups, previews every old → new filename, checks for
+      collisions, then asks whether to rename originals or create
+      renamed copies. Copy-and-apply is the default. You can keep the
+      previewed change and change another filename field before applying;
+      each field can be handled only once per rename batch.
 
 Auto-filled for you (shown in a "Smart defaults filled in for you" banner,
 revisable via Edit — these are NOT asked as questions):
@@ -13422,6 +13606,13 @@ Before the action menu the wizard prints both the terminal command AND
 the equivalent workflow file (in TOML, saveable as .toml) so you can
 sanity-check. If a reading aid wants VTT ruby but the format is set to
 something else, a one-line warning surfaces here.
+Rename mode finishes immediately after the confirmed rename preview;
+it does not generate a TOML workflow because it is file maintenance,
+not a reusable fetch/modify/merge recipe. By default it creates renamed
+copies and keeps your original files; choose "Rename the original files"
+only when you are ready to move/rename in place. The preview menu first
+asks "What next?" so you can keep/discard a pending change or apply now;
+the apply menu then asks copy vs original-file rename.
 
 When you pick **Run**, the wizard probes your environment for missing
 pieces — the pykakasi package for Japanese furigana, korean-romanizer +
@@ -13701,6 +13892,17 @@ def _wizard_back_nav_active() -> bool:
     return bool(globals().get("_WIZARD_BACK_NAV_ACTIVE", False))
 
 
+def _wizard_has_recoverable_draft(state: "_WizardState") -> bool:
+    """True when the wizard has enough information to resume usefully."""
+    if not state.steps:
+        return False
+    if not state.source_kind:
+        return False
+    if state.source_kind in {"path", "url", "title"} and not state.source:
+        return False
+    return True
+
+
 def _wizard_is_interactive() -> bool:
     """True iff both stdin and stdout are a terminal. The wizard cannot
     run in a pipeline because every question is a blocking prompt."""
@@ -13718,10 +13920,10 @@ def _wizard_prompt(question: str, default: str | None = None, *, choices: list[s
     free-form input on top of suggestions)."""
     suffix = ""
     if default is not None:
-        back_hint = " | back/q" if _wizard_back_nav_active() else ""
+        back_hint = " | back/quit" if _wizard_back_nav_active() else ""
         suffix = f" [{default}{back_hint}]"
     elif _wizard_back_nav_active():
-        suffix = " [back/q]"
+        suffix = " [back/quit]"
     while True:
         try:
             raw = input(f"  {question}{suffix} > ").strip()
@@ -14028,7 +14230,528 @@ def _wizard_pick_title_candidate(title: str) -> tuple[str, str, str, bool] | Non
     return row["url"], row["provider"], row["label"], row.get("is_movie", False)
 
 
-_VALID_STEPS = ("fetch", "translate", "modify", "merge")
+_PIPELINE_STEPS = ("fetch", "translate", "modify", "merge")
+_VALID_STEPS = (*_PIPELINE_STEPS, "rename")
+
+
+@dataclass
+class _RenameParts:
+    path: Path
+    title: str
+    season_prefix: str
+    season: str
+    episode_prefix: str
+    episode: str
+    language: str
+    modifiers: list[str]
+    extension: str
+
+    def render(self) -> str:
+        trailer = [self.language, *self.modifiers] if self.language else list(self.modifiers)
+        trailer_text = "." + ".".join(t for t in trailer if t) if trailer else ""
+        return (
+            f"{self.title} - "
+            f"{self.season_prefix}{self.season}"
+            f"{self.episode_prefix}{self.episode}"
+            f"{trailer_text}.{self.extension}"
+        )
+
+    def variation_label(self) -> str:
+        trailer = [self.language, *self.modifiers] if self.language else list(self.modifiers)
+        trailer_text = "." + ".".join(t for t in trailer if t) if trailer else ""
+        return (
+            f"{self.title} - "
+            f"{self.season_prefix}{self.season}"
+            f"{self.episode_prefix}**"
+            f"{trailer_text}.{self.extension}"
+        )
+
+
+_RENAME_FILENAME_RE = re.compile(
+    r"^(?P<title>.+?)\s*-\s*"
+    r"(?P<season_prefix>[A-Za-z]+)(?P<season>\d+)"
+    r"(?P<episode_prefix>[A-Za-z]+)(?P<episode>\d+)"
+    r"(?P<trailer>(?:\.[^.]+)*)\.(?P<extension>[A-Za-z0-9]+)$"
+)
+_RENAME_SUBTITLE_EXTS = {".srt", ".vtt", ".ass", ".ssa", ".smi", ".sami", ".txt"}
+
+
+def _rename_parse_parts(path: Path) -> _RenameParts | None:
+    if path.suffix.lower() not in _RENAME_SUBTITLE_EXTS:
+        return None
+    m = _RENAME_FILENAME_RE.match(path.name)
+    if not m:
+        return None
+    trailer = [tok for tok in m.group("trailer").split(".") if tok]
+    language = trailer[0] if trailer else ""
+    modifiers = trailer[1:] if trailer else []
+    return _RenameParts(
+        path=path,
+        title=m.group("title"),
+        season_prefix=m.group("season_prefix"),
+        season=m.group("season"),
+        episode_prefix=m.group("episode_prefix"),
+        episode=m.group("episode"),
+        language=language,
+        modifiers=modifiers,
+        extension=m.group("extension"),
+    )
+
+
+def _rename_discover_parts(source: Path) -> list[_RenameParts]:
+    if source.is_file():
+        parsed = _rename_parse_parts(source)
+        return [parsed] if parsed else []
+    if not source.is_dir():
+        return []
+    out: list[_RenameParts] = []
+    for path in sorted(source.iterdir()):
+        if not path.is_file():
+            continue
+        parsed = _rename_parse_parts(path)
+        if parsed:
+            out.append(parsed)
+    return out
+
+
+def _rename_group_variations(parts: list[_RenameParts]) -> list[tuple[str, list[_RenameParts]]]:
+    grouped: dict[str, list[_RenameParts]] = {}
+    for part in parts:
+        grouped.setdefault(part.variation_label(), []).append(part)
+    return sorted(grouped.items(), key=lambda item: item[0].casefold())
+
+
+def _rename_parse_selection(raw: str, group_count: int) -> set[int]:
+    value = raw.strip().lower()
+    if value in {"all", "a", "*"}:
+        return set(range(1, group_count + 1))
+    selected: set[int] = set()
+    for tok in re.split(r"[, ]+", value):
+        if not tok:
+            continue
+        if tok.isdigit() and 1 <= int(tok) <= group_count:
+            selected.add(int(tok))
+    return selected
+
+
+def _rename_selected_parts(
+    groups: list[tuple[str, list[_RenameParts]]],
+    selected: set[int],
+) -> list[_RenameParts]:
+    out: list[_RenameParts] = []
+    for idx in sorted(selected):
+        out.extend(groups[idx - 1][1])
+    return sorted(out, key=lambda part: (int(part.season), int(part.episode), part.path.name))
+
+
+def _rename_with_digits(value: str, digits: int) -> str:
+    return str(int(value)).zfill(max(1, digits))
+
+
+def _rename_transform_parts(
+    parts: list[_RenameParts],
+    *,
+    component: str,
+    value: str = "",
+    number_action: str = "",
+) -> list[_RenameParts]:
+    updated: list[_RenameParts] = []
+    if component in {"title", "language", "modifiers", "extension"}:
+        for part in parts:
+            clone = replace(part)
+            if component == "title":
+                clone.title = value.strip()
+            elif component == "language":
+                clone.language = value.strip().lstrip(".")
+            elif component == "modifiers":
+                cleaned = value.strip().strip(".")
+                clone.modifiers = [tok for tok in cleaned.split(".") if tok] if cleaned else []
+            elif component == "extension":
+                clone.extension = value.strip().lstrip(".")
+            updated.append(clone)
+    elif component == "season":
+        action, _, arg = number_action.partition(":")
+        for part in parts:
+            clone = replace(part)
+            if action == "prefix":
+                clone.season_prefix = arg
+            elif action == "number":
+                clone.season = _rename_with_digits(arg, len(part.season))
+            elif action == "digits":
+                clone.season = _rename_with_digits(part.season, int(arg))
+            updated.append(clone)
+    elif component == "episode":
+        action, _, arg = number_action.partition(":")
+        if action == "range":
+            start = int(arg)
+            # Renumber DISTINCT episodes per season, not per file. This keeps
+            # language variants of the same episode paired (E01.ja and E01.en
+            # both become the same new number) and renumbers each season
+            # independently from `start` instead of letting one season's count
+            # bleed into the next.
+            season_maps: dict[str, dict[int, int]] = {}
+            for part in parts:
+                eps = season_maps.setdefault(part.season, {})
+                eps.setdefault(int(part.episode), 0)
+            for eps in season_maps.values():
+                for offset, ep in enumerate(sorted(eps)):
+                    eps[ep] = start + offset
+            for part in parts:
+                clone = replace(part)
+                new_ep = season_maps[part.season][int(part.episode)]
+                clone.episode = _rename_with_digits(str(new_ep), len(part.episode))
+                updated.append(clone)
+        else:
+            for part in parts:
+                clone = replace(part)
+                if action == "prefix":
+                    clone.episode_prefix = arg
+                elif action == "digits":
+                    clone.episode = _rename_with_digits(part.episode, int(arg))
+                updated.append(clone)
+    return updated
+
+
+def _rename_plan_for_parts(parts: list[_RenameParts]) -> list[tuple[Path, Path]]:
+    plan = [(part.path, part.path.with_name(part.render())) for part in parts]
+    return [(src, dst) for src, dst in plan if src != dst]
+
+
+def _rename_plan(
+    parts: list[_RenameParts],
+    *,
+    component: str,
+    value: str = "",
+    number_action: str = "",
+) -> list[tuple[Path, Path]]:
+    return _rename_plan_for_parts(_rename_transform_parts(
+        parts,
+        component=component,
+        value=value,
+        number_action=number_action,
+    ))
+
+
+def _rename_collision_errors(plan: list[tuple[Path, Path]], *, copy_mode: bool = False) -> list[str]:
+    errors: list[str] = []
+    destinations: dict[Path, Path] = {}
+    sources = {src for src, _dst in plan}
+    for src, dst in plan:
+        previous = destinations.get(dst)
+        if previous is not None and previous != src:
+            errors.append(f"multiple files would become {dst.name}")
+        destinations[dst] = src
+        if dst.exists() and (copy_mode or dst not in sources):
+            errors.append(f"{dst.name} already exists")
+    return sorted(set(errors))
+
+
+def _rename_apply_plan(plan: list[tuple[Path, Path]]) -> None:
+    """Apply a checked rename plan without clobbering source files.
+
+    A direct A->B, B->C loop can lose B on POSIX because rename replaces
+    the destination. Moving every source to a temporary sibling first makes
+    range shifts and swaps safe.
+    """
+    temporary: list[tuple[Path, Path, Path]] = []
+    token = f".getsubtitle-renaming-{os.getpid()}"
+    for idx, (src, dst) in enumerate(plan, start=1):
+        tmp = src.with_name(f"{src.name}{token}-{idx}.tmp")
+        while tmp.exists():
+            idx += 1
+            tmp = src.with_name(f"{src.name}{token}-{idx}.tmp")
+        temporary.append((src, tmp, dst))
+    try:
+        for src, tmp, _dst in temporary:
+            src.rename(tmp)
+        for _src, tmp, dst in temporary:
+            tmp.rename(dst)
+    finally:
+        # If the second phase partially failed, do not leave obvious temp
+        # names behind when their original source name is still available.
+        for src, tmp, _dst in temporary:
+            if tmp.exists() and not src.exists():
+                try:
+                    tmp.rename(src)
+                except OSError:
+                    pass
+
+
+def _rename_copy_plan(plan: list[tuple[Path, Path]]) -> None:
+    for src, dst in plan:
+        shutil.copy2(src, dst)
+
+
+def _wizard_rename_change_details(component: str, sample: _RenameParts) -> tuple[str, str]:
+    if component in {"title", "language", "modifiers", "extension"}:
+        prompt = {
+            "title": "New title",
+            "language": "New language token (e.g. ja, ko, ja-furigana-ko)",
+            "modifiers": "New modifiers (dot-separated; empty removes modifiers)",
+            "extension": "New extension (without dot)",
+        }[component]
+        value = _wizard_prompt(prompt, "")
+        if component != "modifiers" and not value.strip():
+            print("Empty value; rename cancelled.")
+            return "", ""
+        return value, ""
+
+    while True:
+        print()
+        print("How should it be changed?")
+        print("    1) Change prefix (e.g. S -> Season, E -> Ep)")
+        if component == "season":
+            print("    2) Change season number (e.g. 03 -> 04)")
+            print("    3) Change digits (e.g. 03 -> 003)")
+        else:
+            print("    2) Change range (e.g. 01-12 -> 13-24)")
+            print("    3) Change digits (e.g. 01 -> 001)")
+        action_pick = _wizard_prompt("Number", "2").strip()
+        try:
+            if action_pick == "1":
+                new_prefix = _wizard_prompt(
+                    "New prefix",
+                    sample.season_prefix if component == "season" else sample.episode_prefix,
+                )
+                return "", f"prefix:{new_prefix}"
+            if action_pick == "2" and component == "season":
+                new_number = _wizard_prompt("New season number", str(int(sample.season)))
+                if not new_number.isdigit():
+                    print("Season number must be numeric; rename cancelled.")
+                    return "", ""
+                return "", f"number:{new_number}"
+            if action_pick == "2":
+                first = _wizard_prompt("First episode number in the new range", str(int(sample.episode)))
+                if not first.isdigit():
+                    print("Episode number must be numeric; rename cancelled.")
+                    return "", ""
+                return "", f"range:{first}"
+            if action_pick == "3":
+                digits = _wizard_prompt(
+                    "Number of digits",
+                    str(len(sample.season if component == "season" else sample.episode)),
+                )
+                if not digits.isdigit() or int(digits) < 1:
+                    print("Digits must be a positive number; rename cancelled.")
+                    return "", ""
+                return "", f"digits:{digits}"
+            print("Invalid change type; rename cancelled.")
+            return "", ""
+        except _WizardBack:
+            print("    Going back to the previous rename choice.")
+            continue
+
+
+def _wizard_q_rename(state: _WizardState) -> None:
+    source = Path(state.source).expanduser()
+    parts = _rename_discover_parts(source)
+    if not parts:
+        print("No renameable subtitle filenames found.")
+        print("Expected shape: Title - S03E01.ja.furigana-hiragana.vtt")
+        return
+    # Surface subtitle files we could not parse so the user isn't surprised
+    # that some files in the folder are left untouched.
+    if source.is_dir():
+        skipped = [
+            p.name for p in sorted(source.iterdir())
+            if p.is_file()
+            and p.suffix.lower() in _RENAME_SUBTITLE_EXTS
+            and _rename_parse_parts(p) is None
+        ]
+        if skipped:
+            print()
+            print(f"Skipping {len(skipped)} file(s) that don't match the")
+            print("  'Title - S03E05.lang.ext' shape (left untouched):")
+            for name in skipped[:5]:
+                print(f"    {name}")
+            if len(skipped) > 5:
+                print(f"    ... and {len(skipped) - 5} more")
+    groups = _rename_group_variations(parts)
+    step = "variation"
+    selected_parts: list[_RenameParts] = []
+    draft_parts: list[_RenameParts] = []
+    candidate_parts: list[_RenameParts] = []
+    handled_components: set[str] = set()
+    component_back_step = "variation"
+    component = ""
+    value = ""
+    number_action = ""
+    plan: list[tuple[Path, Path]] = []
+    copy_mode = True
+    component_map = {
+        "1": ("title", "Title"),
+        "2": ("season", "Season"),
+        "3": ("episode", "Episode"),
+        "4": ("language", "Language"),
+        "5": ("modifiers", "Modifiers"),
+        "6": ("extension", "Extension (rename only; does not convert format)"),
+    }
+
+    while True:
+        try:
+            if step == "variation":
+                print()
+                print(f"Found {len(groups)} variation{'s' if len(groups) != 1 else ''} of files in the folder.")
+                for idx, (label, group) in enumerate(groups, start=1):
+                    count = f"  ({len(group)} file{'s' if len(group) != 1 else ''})"
+                    print(f"    {idx}) {label}{count}")
+                raw = _wizard_prompt("Which one would you like to work on? (1/2/3 or all)", "all")
+                selected = _rename_parse_selection(raw, len(groups))
+                if not selected:
+                    print("No valid selection; rename cancelled.")
+                    return
+                selected_parts = _rename_selected_parts(groups, selected)
+                draft_parts = list(selected_parts)
+                candidate_parts = list(draft_parts)
+                plan = []
+                handled_components = set()
+                component_back_step = "variation"
+                step = "component"
+                continue
+
+            if step == "component":
+                sample = draft_parts[0]
+                print()
+                print("Example:")
+                print(f"  {sample.path.name}")
+                print("  " + "-" * min(72, max(12, len(sample.path.name))))
+                print("  {Title} - {Season}{Episode}.{Language}.{Modifiers}.{Extension}")
+                print()
+                print("What needs to be changed?")
+                for number, (key, label) in component_map.items():
+                    suffix = " (already handled)" if key in handled_components else ""
+                    print(f"    {number}) {label}{suffix}")
+                available_numbers = [
+                    number for number, (key, _label) in component_map.items()
+                    if key not in handled_components
+                ]
+                if not available_numbers:
+                    print("All filename fields have already been handled; choose apply/copy.")
+                    step = "apply_mode"
+                    continue
+                default_component = "2" if "season" not in handled_components else available_numbers[0]
+                pick = _wizard_prompt("Number", default_component).strip()
+                selected_component = component_map.get(pick[:1])
+                component = selected_component[0] if selected_component else ""
+                if not component:
+                    print("Invalid component; rename cancelled.")
+                    return
+                if component in handled_components:
+                    print("That filename field was already handled in this rename batch. Choose another field.")
+                    continue
+                step = "details"
+                continue
+
+            if step == "details":
+                sample = draft_parts[0]
+                value, number_action = _wizard_rename_change_details(component, sample)
+                if component != "modifiers" and not value and not number_action:
+                    return
+                candidate_parts = _rename_transform_parts(
+                    draft_parts,
+                    component=component,
+                    value=value,
+                    number_action=number_action,
+                )
+                plan = _rename_plan_for_parts(candidate_parts)
+                if not plan:
+                    print("Nothing would change.")
+                    return
+                step = "apply_mode"
+                continue
+
+            if step == "apply_mode":
+                print()
+                print(f"Planned rename: {len(plan)} file(s)")
+                for src, dst in plan[:20]:
+                    print(f"  {src.name}")
+                    print(f"    -> {dst.name}")
+                if len(plan) > 20:
+                    print(f"  ... and {len(plan) - 20} more")
+                print()
+                print("What next?")
+                print("    1) Looks good — apply now")
+                print("    2) Keep this change and change another field")
+                print("    3) Discard this change and choose another field")
+                print("    4) Cancel")
+                next_pick = _wizard_prompt("Number", "1").strip()
+                if next_pick.startswith("2"):
+                    draft_parts = list(candidate_parts)
+                    handled_components.add(component)
+                    plan = _rename_plan_for_parts(draft_parts)
+                    component = ""
+                    value = ""
+                    number_action = ""
+                    component_back_step = "apply_mode" if plan else "variation"
+                    step = "component"
+                    continue
+                if next_pick.startswith("3"):
+                    # Discarding a previewed change must NOT lock the field —
+                    # the user may want to retry it with a different value.
+                    candidate_parts = list(draft_parts)
+                    plan = _rename_plan_for_parts(draft_parts)
+                    component = ""
+                    value = ""
+                    number_action = ""
+                    component_back_step = "apply_mode" if plan else "variation"
+                    step = "component"
+                    continue
+                if next_pick.startswith("4"):
+                    print("Operation cancelled.")
+                    return
+                step = "apply_kind"
+                continue
+
+            if step == "apply_kind":
+                print()
+                print("How should it be applied?")
+                print("    1) Copy and apply (keep the original files)")
+                print("    2) Rename the original files")
+                apply_pick = _wizard_prompt("Number", "1").strip()
+                copy_mode = not apply_pick.startswith("2")
+                step = "confirm"
+                continue
+
+            if step == "confirm":
+                operation = "copy" if copy_mode else "rename"
+                errors = _rename_collision_errors(plan, copy_mode=copy_mode)
+                if errors:
+                    print()
+                    print("Operation cancelled because of filename conflicts:")
+                    for err in errors:
+                        print(f"  - {err}")
+                    return
+                confirm_question = "Create these renamed copies?" if copy_mode else "Rename the original files?"
+                if not _wizard_yesno(confirm_question, default=False):
+                    print("Operation cancelled.")
+                    return
+                try:
+                    if copy_mode:
+                        _rename_copy_plan(plan)
+                        print(f"Copied {len(plan)} renamed file(s).")
+                    else:
+                        _rename_apply_plan(plan)
+                        print(f"Renamed {len(plan)} file(s).")
+                except OSError as exc:
+                    # No traceback for a filesystem failure mid-apply. Tell the
+                    # user plainly and warn that state may be partial.
+                    print(f"Could not finish the {operation}: {exc}")
+                    print("    Some files may not have been changed. Re-run rename")
+                    print("    to see the current state before trying again.")
+                return
+        except _WizardBack:
+            previous = {
+                "variation": None,
+                "component": component_back_step,
+                "details": "component",
+                "apply_mode": "details",
+                "apply_kind": "apply_mode",
+                "confirm": "apply_mode",
+            }[step]
+            if previous is None:
+                raise
+            step = previous
+            print("    Going back to the previous rename step.")
 
 
 def _wizard_next_q(state: _WizardState) -> str:
@@ -14063,6 +14786,7 @@ def _wizard_qcount_before(state: _WizardState, target_label: str) -> int:
     re-asked heading keeps its forward-pass number."""
     skip = {
         "scope":        "fetch" not in state.steps,
+        "rename":       "rename" not in state.steps,
         "filename_numbering": not _wizard_should_ask_filename_numbering(state),
         "translate":    "translate" not in state.steps,
         "reading_aids": "modify" not in state.steps,
@@ -14090,20 +14814,22 @@ def _wizard_q0_steps(state: _WizardState) -> None:
     print("    2) Translate — fill any missing language with AI translation")
     print("    3) Modify    — clean up cues, add reading aids (furigana/pinyin/…)")
     print("    4) Merge     — stack multiple languages into one study file")
+    print("    5) Rename    — batch-rename existing subtitle filenames")
     print()
     print("    Default: fetch + modify + merge (no AI translation).")
     print("    Common shortcuts: '4' for merge-only, '3' for modify-only,")
-    print("    '2' for AI-translation-only, '3,4' for modify + merge.")
+    print("    '2' for AI-translation-only, '3,4' for modify + merge,")
+    print("    '5' for rename-only.")
     raw = _wizard_prompt(
         "Numbers (comma-separated), 'a' for all, or Enter for default",
         "1,3,4",
     ).strip().lower()
     if raw in ("a", "all"):
-        state.steps = set(_VALID_STEPS)
+        state.steps = set(_PIPELINE_STEPS)
         return
-    mapping = {"1": "fetch", "2": "translate", "3": "modify", "4": "merge",
+    mapping = {"1": "fetch", "2": "translate", "3": "modify", "4": "merge", "5": "rename",
                "fetch": "fetch", "translate": "translate",
-               "modify": "modify", "merge": "merge"}
+               "modify": "modify", "merge": "merge", "rename": "rename"}
     picked: set[str] = set()
     for tok in raw.split(","):
         tok = tok.strip()
@@ -14116,6 +14842,9 @@ def _wizard_q0_steps(state: _WizardState) -> None:
         picked.add(step)
     if not picked:
         raise CliError("interactive: pick at least one step.")
+    if "rename" in picked and len(picked) > 1:
+        print("    Rename is a separate maintenance workflow; using rename only.")
+        picked = {"rename"}
     state.steps = picked
     # If only a single verb is selected, surface what the wizard will
     # ask next so the user feels oriented before answering Q2.
@@ -14132,9 +14861,13 @@ def _wizard_q1_source(state: _WizardState) -> None:
         # No URL/title branch — the local-path branch is the only one
         # that makes sense for modify/merge/translate alone.
         state.source_kind = "path"
-        print(f"{_wizard_next_q(state)} Folder or file to process.")
-        print("    Drop a folder of .srt files, a single .srt file, or any path")
-        print("    your selected step(s) should operate on.")
+        if state.steps == {"rename"}:
+            print(f"{_wizard_next_q(state)} Folder or file to rename.")
+            print("    Drop a season folder or one subtitle file.")
+        else:
+            print(f"{_wizard_next_q(state)} Folder or file to process.")
+            print("    Drop a folder of .srt files, a single .srt file, or any path")
+            print("    your selected step(s) should operate on.")
         while True:
             src = _wizard_prompt("Folder or file path")
             try:
@@ -14147,7 +14880,9 @@ def _wizard_q1_source(state: _WizardState) -> None:
                 state.season = str(file_episode[0])
                 state.episode = str(file_episode[1])
                 print(f"    Selected episode: {_episode_label_se(file_episode[0], file_episode[1])}")
-            if path.is_file() and state.steps & {"merge"}:
+            if path.is_file() and state.steps == {"rename"}:
+                pass
+            elif path.is_file() and state.steps & {"merge"}:
                 print("    File selected; using its folder so matching sidecar subtitles can be found.")
                 path = path.parent
                 _videos, subtitles, _season_dirs, truncated = _wizard_media_counts(path)
@@ -14495,7 +15230,7 @@ def _wizard_q5_scope(state: _WizardState) -> None:
         state.season = _wizard_prompt("Season or range (e.g. 1, 2-3, all)", "1")
         state.episode = _wizard_prompt("Episode or range within each season (e.g. 5, 1-10, all)", "1")
     elif pick == "3":
-        state.season = _wizard_prompt("Season (e.g. 1)", "1")
+        state.season = state.season or "1"
         state.episode = "all"
         # Non-anime TV needs TMDB to expand -e all. Heads-up only.
         if state.source_kind == "title" or (
@@ -14679,6 +15414,39 @@ def _wizard_q10_output(state: _WizardState) -> None:
         state.output = _wizard_prompt("Output folder", "~/Downloads/GetSubtitle")
 
 
+def _wizard_plain_plan(state: _WizardState) -> list[str]:
+    """A few plain-language lines describing what the workflow will do, so
+    the user sees the intent at a glance instead of decoding the full CLI
+    flag string."""
+    langs = ", ".join(state.languages)
+    src = state.source_title or state.source or "your files"
+    steps = state.steps
+    if "rename" in steps:
+        return [f"Rename subtitle files in {src}"]
+    scope = ""
+    if state.season and state.episode:
+        scope = f"  (season {state.season}, episode {state.episode})"
+    elif state.season:
+        scope = f"  (season {state.season})"
+    lines: list[str] = []
+    if "fetch" in steps:
+        lines.append(f"Fetch {langs} for {src}{scope}")
+    else:
+        lines.append(f"Use local {langs} files in {src}")
+    if "translate" in steps and state.mt_engine:
+        lines.append(f"Fill gaps with {state.mt_engine.title()} AI translation")
+    if "modify" in steps:
+        if state.reading_aids:
+            lines.append(f"Add reading aids: {', '.join(state.reading_aids)}")
+        else:
+            lines.append("Clean up cues (single line, strip broadcast noise)")
+    if "merge" in steps:
+        fmt = (state.format or "srt").upper()
+        lines.append(f"Stack {langs} into one {fmt} study file")
+    lines.append(f"Save to {state.output or 'the source folder'}")
+    return lines
+
+
 def _wizard_q11_action(state: _WizardState) -> str:
     """Final action. Returns one of 'run', 'save', 'restart', 'quit', 'edit'."""
     # Fixed-width separator. Stretching to the CLI command produces
@@ -14689,6 +15457,13 @@ def _wizard_q11_action(state: _WizardState) -> str:
     toml_str = _wizard_emit_toml(state)
     rule = "=" * 70
     print()
+    # Plain-language plan first — the human "what's going to happen" before
+    # any flag soup, so beginners don't have to parse the CLI string.
+    print(rule)
+    print("Here's the plan:")
+    print(rule)
+    for ln in _wizard_plain_plan(state):
+        print(f"  • {ln}")
     # Smart-defaults block: the five questions the wizard no longer
     # asks. Surfaced so users see (and can revise) what was auto-picked.
     notes = getattr(state, "_smart_defaults_notes", None) or {}
@@ -14749,6 +15524,7 @@ _WIZARD_STEPS: list[tuple[str, "callable"]] = [
     ("languages",     _wizard_q2_languages),
     ("translate",     _wizard_q6_translate),
     ("reading_aids",  _wizard_q7_reading_aids),
+    ("rename",        _wizard_q_rename),
 ]
 
 
@@ -14804,8 +15580,11 @@ def _wizard_apply_smart_defaults(state: _WizardState) -> dict[str, str]:
 
 
 def _wizard_step_skip(label: str, state: _WizardState) -> bool:
+    if "rename" in state.steps:
+        return label != "rename" and label not in {"steps", "source"}
     skip = {
         "scope":        "fetch" not in state.steps,
+        "rename":       True,
         "filename_numbering": not _wizard_should_ask_filename_numbering(state),
         "translate":    "translate" not in state.steps,
         "reading_aids": "modify" not in state.steps,
@@ -14913,6 +15692,9 @@ def _run_wizard_with_back_nav(state: _WizardState) -> tuple[_WizardState, str]:
         _wizard_save_draft(state)
         visible_history.append(label)
         step_index += 1
+    if state.steps == {"rename"}:
+        state.final_action = "rename_done"
+        return state, "rename_done"
     # Five questions the wizard no longer asks (display order, master
     # timing, cleanup preset, output format, output folder) are now
     # filled in here. The returned notes are surfaced in the Q-banner
@@ -15582,7 +16364,12 @@ def interactive_main(argv: list[str] | None = None) -> int:
             state, action = _run_wizard(state)
         except _WizardAbort:
             print()
-            print("Cancelled. (Your answers are saved at " + str(_wizard_draft_path()) + ".)")
+            if _wizard_has_recoverable_draft(state):
+                _wizard_save_draft(state)
+                print("Cancelled. (Your answers are saved at " + str(_wizard_draft_path()) + ".)")
+            else:
+                _wizard_clear_draft()
+                print("Cancelled.")
             return 130
 
         if action == "restart":
@@ -15592,6 +16379,9 @@ def interactive_main(argv: list[str] | None = None) -> int:
             print(_WIZARD_INTRO.strip())
             print("════════════════════════════════════════")
             continue
+        if action == "rename_done":
+            _wizard_clear_draft()
+            return 0
         if action == "quit":
             _wizard_clear_draft()
             print("Quit.")
@@ -15729,6 +16519,8 @@ def main(argv: list[str] | None = None) -> int:
         return setup_main(raw_argv[1:])
     if raw_argv[0] == "doctor":
         return doctor_main(raw_argv[1:])
+    if raw_argv[0] == "run":
+        return run_main(raw_argv[1:])
     # Topic-help dispatch — handled before argparse so we own the help UX.
     if _is_topic_help_request(raw_argv):
         return _show_topic_help(raw_argv)
@@ -15907,7 +16699,11 @@ def main(argv: list[str] | None = None) -> int:
     if media.netflix_id:
         print(f"Netflix: {media.netflix_id}")
 
-    jimaku_provider = JimakuProvider(get_jimaku_api_key()) if media.anilist_id and "ja" in langs else None
+    jimaku_provider = (
+        JimakuProvider(get_jimaku_api_key())
+        if "ja" in langs and (media.anilist_id or media.tmdb_id or media_title_queries(media))
+        else None
+    )
     subdl_api_key = get_subdl_api_key(prompt_if_missing=False) if (media.imdb_id or media.tmdb_id) else None
     wyzie_api_key = (
         get_provider_api_key("wyzie", prompt_if_missing=not bool(subdl_api_key))
