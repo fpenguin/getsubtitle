@@ -2483,9 +2483,10 @@ class WyzieProvider:
         ext = "." + fmt.lstrip(".")
         if ext not in SUB_EXTENSIONS:
             return None
-        name = str(item.get("fileName") or item.get("release") or f"{media.title or media_id}.{language}{ext}")
-        if not Path(name).suffix:
-            name += ext
+        name = normalized_subtitle_download_name(
+            str(item.get("fileName") or item.get("release") or f"{media.title or media_id}.{language}{ext}"),
+            ext,
+        )
         return SubtitleFile(
             provider=self.name,
             language=language,
@@ -2657,9 +2658,10 @@ class SubDLProvider:
         ext = "." + fmt.lstrip(".")
         if ext not in SUB_EXTENSIONS and ext not in ARCHIVE_EXTENSIONS:
             return None
-        name = str(item.get("name") or item.get("release_name") or f"{media.title or 'subdl'}.S{media.season}E{episode}.{language}{ext}")
-        if not Path(name).suffix:
-            name += ext
+        name = normalized_subtitle_download_name(
+            str(item.get("name") or item.get("release_name") or f"{media.title or 'subdl'}.S{media.season}E{episode}.{language}{ext}"),
+            ext,
+        )
         return SubtitleFile(
             provider=self.name,
             language=language,
@@ -4491,6 +4493,23 @@ def _episode_for_output_filename(episode: str, episode_filename_start: int | Non
 TEXT_SUBTITLE_EXTENSIONS = {".srt", ".vtt", ".ass", ".ssa", ".smi"}
 
 
+def normalized_subtitle_download_name(name: str, ext: str) -> str:
+    """Ensure provider/release names end with a real subtitle extension.
+
+    Some provider APIs return a release-like filename such as
+    `Show.S01E03.1080p` while separately telling us the payload format is
+    SRT. If we keep `.1080p` as the final suffix, later modify/merge scans
+    correctly ignore it as a non-subtitle file. Preserve the release text,
+    but append the known subtitle extension.
+    """
+    ext = "." + ext.lstrip(".").lower()
+    text = str(name or "subtitle").strip() or "subtitle"
+    suffix = Path(text).suffix.lower()
+    if suffix not in SUB_EXTENSIONS and suffix not in ARCHIVE_EXTENSIONS:
+        text += ext
+    return text
+
+
 def prepare_downloaded_subtitle_bytes(raw: bytes, ext: str, name: str) -> bytes:
     """Return UTF-8 text subtitle bytes, or reject obviously damaged files.
 
@@ -4546,7 +4565,9 @@ def save_subtitle(
 ) -> list[Path]:
     dest_dir.mkdir(parents=True, exist_ok=True)
     raw = download_bytes(sub.url, headers=sub.download_headers)
-    ext = Path(sub.name).suffix.lower() or ".srt"
+    ext = Path(sub.name).suffix.lower()
+    if ext not in SUB_EXTENSIONS and ext not in ARCHIVE_EXTENSIONS:
+        ext = ".srt"
     raw = prepare_downloaded_subtitle_bytes(raw, ext, sub.name)
     saved: list[Path] = []
 
@@ -7322,6 +7343,7 @@ _EPISODE_PATTERNS = (
     re.compile(r"\b(\d{1,2})x(\d{1,3})\b", re.I),
 )
 _BARE_EPISODE_PATTERN = re.compile(r"(?:^|[.\s_-])[Ee](\d{1,3})(?:\b|[.\s_-])", re.I)
+_RELEASE_EPISODE_PATTERN = re.compile(r"\s-\s*(\d{1,3})(?:\s+END)?\s*(?=[\[(])", re.I)
 # Single-language token before .srt, with optional ".mt" suffix for
 # machine-translated files. Sonarr-style HI/CC/SDH/forced tags between the
 # language code and `.srt` are stripped so .ja.hi.srt parses as lang=ja, not
@@ -7415,6 +7437,20 @@ def parse_episode_marker(name: str) -> tuple[int, int] | None:
     return None
 
 
+def infer_release_episode_number(name: str) -> int | None:
+    """Return a bare release episode number from names like `Title - 01 (...)`.
+
+    This is intentionally *not* part of parse_episode_marker's normal path:
+    a bare number after a dash can mean a title/year/release number. We only
+    use it later when a folder already has parseable episode context.
+    """
+    m = _RELEASE_EPISODE_PATTERN.search(name)
+    if not m:
+        return None
+    episode = int(m.group(1))
+    return episode if episode > 0 else None
+
+
 def is_filesystem_metadata_name(name: str) -> bool:
     """Skip macOS AppleDouble resource-fork sidecars and similar metadata.
 
@@ -7495,6 +7531,122 @@ def scan_srt_files(
     return out
 
 
+def _script_counts_for_file(path: Path, *, max_chars: int = 50_000) -> dict[str, int]:
+    try:
+        text = path.read_text(encoding="utf-8", errors="ignore")[:max_chars]
+    except Exception:
+        return {"hangul": 0, "kana": 0, "han": 0}
+    return {
+        "hangul": len(re.findall(r"[\uac00-\ud7af\u1100-\u11ff\u3130-\u318f]", text)),
+        "kana": len(re.findall(r"[\u3040-\u30ff]", text)),
+        "han": len(re.findall(r"[\u4e00-\u9fff]", text)),
+    }
+
+
+def infer_subtitle_language_from_script(path: Path, requested_langs: set[str]) -> str | None:
+    """Infer CJK subtitle language from script only when confidence is high.
+
+    No LLM, no translation: Hangul strongly implies Korean, kana implies
+    Japanese, and Han-only text is accepted only when exactly one Chinese-ish
+    requested language is in play.
+    """
+    counts = _script_counts_for_file(path)
+    hangul = counts["hangul"]
+    kana = counts["kana"]
+    han = counts["han"]
+    cjk_total = hangul + kana + han
+    if cjk_total < 20:
+        return None
+    if "ko" in requested_langs and hangul >= 20 and hangul / cjk_total >= 0.80:
+        return "ko"
+    if "ja" in requested_langs and kana >= 20 and hangul == 0 and kana / max(kana + han, 1) >= 0.25:
+        return "ja"
+    chinese_requested = [lang for lang in ("zh", "yue") if lang in requested_langs]
+    if len(chinese_requested) == 1 and han >= 20 and hangul == 0 and kana == 0:
+        return chinese_requested[0]
+    return None
+
+
+def scan_srt_files_for_merge(
+    paths: list[Path],
+    *,
+    requested_langs: list[str],
+    include_furigana: bool = False,
+) -> tuple[list[tuple[Path, int, int, str, bool]], list[tuple[Path, int, int, str, str]]]:
+    """Scan SRTs and conservatively repair release-style filenames for merge.
+
+    Normal parsing stays strict. This helper adds/repairs only files whose
+    release-style episode (`Title - 01 (...)`) can be mapped onto an episode
+    already present in parseable files from the same folder.
+    """
+    requested = {lang.lower() for lang in requested_langs if not is_pseudo_lang(lang)}
+    scanned = scan_srt_files(paths, include_furigana=include_furigana)
+    episode_to_seasons: dict[int, set[int]] = {}
+    for _path, season, episode, _lang, _is_mt in scanned:
+        if episode > 0:
+            episode_to_seasons.setdefault(episode, set()).add(season)
+
+    def context_key_for_release_episode(path: Path) -> tuple[int, int] | None:
+        episode = infer_release_episode_number(path.name)
+        if episode is None:
+            return None
+        seasons = episode_to_seasons.get(episode)
+        if not seasons or len(seasons) != 1:
+            return None
+        return next(iter(seasons)), episode
+
+    repaired: list[tuple[Path, int, int, str, bool]] = []
+    inferred: list[tuple[Path, int, int, str, str]] = []
+    occupied: set[tuple[int, int, str]] = set()
+    scanned_paths: set[Path] = set()
+
+    for path, season, episode, lang, is_mt in scanned:
+        scanned_paths.add(path)
+        replacement_key = None
+        if (season, episode) == (0, 0):
+            replacement_key = context_key_for_release_episode(path)
+        if replacement_key and lang in requested:
+            season, episode = replacement_key
+            inferred.append((path, season, episode, lang, "filename episode"))
+        key = (season, episode, lang)
+        if key not in occupied:
+            repaired.append((path, season, episode, lang, is_mt))
+            occupied.add(key)
+
+    discovered: list[Path] = []
+    for root in paths:
+        if root.is_file() and root.suffix.lower() == ".srt" and not is_filesystem_metadata_name(root.name):
+            discovered.append(root)
+        elif root.is_dir():
+            discovered.extend(
+                p for p in sorted(root.rglob("*.srt"))
+                if not is_filesystem_metadata_name(p.name)
+            )
+    for path in discovered:
+        if path in scanned_paths:
+            continue
+        if not include_furigana and is_furigana_output_name(path.name):
+            continue
+        if is_combined_output_name(path.name):
+            continue
+        key = context_key_for_release_episode(path)
+        if key is None:
+            continue
+        lang = infer_subtitle_language_from_script(path, requested)
+        if lang is None:
+            continue
+        season, episode = key
+        occupied_key = (season, episode, lang)
+        if occupied_key in occupied:
+            continue
+        repaired.append((path, season, episode, lang, False))
+        occupied.add(occupied_key)
+        inferred.append((path, season, episode, lang, "script language"))
+
+    repaired.sort(key=lambda row: (row[1], row[2], row[3], str(row[0])))
+    return repaired, inferred
+
+
 def group_srts_by_episode(
     scanned: list[tuple[Path, int, int, str, bool]],
 ) -> dict[tuple[int, int], dict[str, Path]]:
@@ -7551,6 +7703,8 @@ def scan_subtitle_files_extended(
     format_hints: dict[str, str] | None = None,
     include_furigana: bool = False,
     pseudo_langs: list[str] | None = None,
+    requested_langs: list[str] | None = None,
+    inferred_out: list[tuple[Path, int, int, str, str]] | None = None,
 ) -> list[tuple[Path, int, int, str, bool, str]]:
     """Walk paths and find subtitle files in SRT, VTT, ASS/SSA, and optionally SAMI.
 
@@ -7573,8 +7727,18 @@ def scan_subtitle_files_extended(
     pseudo_langs = [p for p in (pseudo_langs or []) if is_pseudo_lang(p)]
     out: list[tuple[Path, int, int, str, bool, str]] = []
 
-    # SRT (delegate to existing scanner).
-    for tup in scan_srt_files(paths, include_furigana=include_furigana):
+    # SRT. For merge we can conservatively repair release-style filenames
+    # when requested languages provide enough context; otherwise delegate to
+    # the strict existing scanner.
+    if requested_langs:
+        scanned_srt, inferred = scan_srt_files_for_merge(
+            paths, requested_langs=requested_langs, include_furigana=include_furigana
+        )
+        if inferred_out is not None:
+            inferred_out.extend(inferred)
+    else:
+        scanned_srt = scan_srt_files(paths, include_furigana=include_furigana)
+    for tup in scanned_srt:
         out.append(tup + ("srt",))
 
     # VTT.
@@ -8321,18 +8485,21 @@ def combine_main(argv: list[str]) -> int:
     # use the extended scanner that also finds .vtt, .ass/.ssa, .smi, and
     # multi-variant reading-aid side files. Otherwise stay on the
     # SRT-only fast path for behavior parity.
+    inferred_scan: list[tuple[Path, int, int, str, str]] = []
     if _effective_format_hints or pseudo_langs:
         scanned_ext = scan_subtitle_files_extended(
             paths,
             format_hints=_effective_format_hints,
             pseudo_langs=pseudo_langs,
+            requested_langs=langs,
+            inferred_out=inferred_scan,
         )
         grouped = group_subtitle_files_with_hints(
             scanned_ext, format_hints=_effective_format_hints,
         )
         scanned_count = len(scanned_ext)
     else:
-        scanned = scan_srt_files(paths)
+        scanned, inferred_scan = scan_srt_files_for_merge(paths, requested_langs=langs)
         grouped = group_srts_by_episode(scanned)
         scanned_count = len(scanned)
     output_dir_arg = Path(args.output).expanduser() if args.output else None
@@ -8340,6 +8507,12 @@ def combine_main(argv: list[str]) -> int:
     episode_threshold = float(sync_preset["episode_success"])
 
     print(f"Scanned: {scanned_count} subtitle file(s) across {len(paths)} path(s)")
+    if inferred_scan:
+        print(f"Auto-detected: {len(inferred_scan)} subtitle file(s)")
+        for path, season, episode, lang, reason in inferred_scan[:8]:
+            print(f"  {_episode_label_se(season, episode)} {lang}: {path.name}  ({reason})")
+        if len(inferred_scan) > 8:
+            print(f"  ... and {len(inferred_scan) - 8} more")
     if not grouped:
         print("No (season, episode, language) groups detected. Nothing to combine.")
         return 1
@@ -9817,6 +9990,10 @@ def build_fetch_parser() -> argparse.ArgumentParser:
                    help="PATH only: walk each immediate subdir and treat it as a separate show.")
     p.add_argument("--profile", default=None, choices=["ja", "ko", "en"],
                    help="PATH only: override auto-detected profile for every show.")
+    p.add_argument("--title", metavar="TEXT",
+                   help="PATH only: override the movie/show title used for online subtitle lookup.")
+    p.add_argument("--anilist", type=int, metavar="ID",
+                   help="PATH/URL: AniList ID override for anime title lookup.")
     p.add_argument("--run", action="store_true",
                    help="PATH only: actually run. Default is dry-run.")
     p.add_argument("-h", "--help", action="store_true",
@@ -9844,7 +10021,12 @@ def fetch_main(argv: list[str]) -> int:
     if _looks_like_url(args.target):
         if args.subdirectory:
             raise CliError("--subdirectory only applies to PATH targets, not URLs.")
-        return main([args.target] + rest)
+        url_rest = list(rest)
+        if args.title:
+            url_rest += ["--title", args.title]
+        if args.anilist:
+            url_rest += ["--anilist", str(args.anilist)]
+        return main([args.target] + url_rest)
 
     # PATH form.
     target_path = Path(args.target).expanduser()
@@ -9904,6 +10086,8 @@ def fetch_main(argv: list[str]) -> int:
                 target=target, show_folder=show_folder, season=season,
                 profile=profile, dry_run=dry_run,
                 fetch_langs_override=requested_langs,
+                title_override=args.title,
+                anilist_override=args.anilist,
             )
             rc_total = rc or rc_total
             total_targets += 1
@@ -9946,7 +10130,9 @@ def _batch_describe_target(target: "Path", show_folder: "Path", season: int | No
 
 def _batch_fetch_one(target: "Path", show_folder: "Path", season: int | None,
                      profile: str, dry_run: bool,
-                     fetch_langs_override: list[str] | None = None) -> int:
+                     fetch_langs_override: list[str] | None = None,
+                     title_override: str | None = None,
+                     anilist_override: int | None = None) -> int:
     """Run fetch for one disk target (folder or bare file).
 
     Fetch-only — does NOT auto-translate. Users wanting MT to fill missing
@@ -9955,7 +10141,7 @@ def _batch_fetch_one(target: "Path", show_folder: "Path", season: int | None,
     """
     _batch_heading(_batch_describe_target(target, show_folder, season, profile))
 
-    title = show_folder.stem if show_folder.is_file() else show_folder.name
+    title = (title_override or "").strip() or (show_folder.stem if show_folder.is_file() else show_folder.name)
     is_folder = target.is_dir()
     output_dir = target if is_folder else target.parent
 
@@ -9973,6 +10159,8 @@ def _batch_fetch_one(target: "Path", show_folder: "Path", season: int | None,
         sys.executable, "-m", "getsubtitle",
     ] if not shutil.which("getsubtitle") else ["getsubtitle"]
     fetch_cmd += ["--title", title]
+    if anilist_override:
+        fetch_cmd += ["--anilist", str(anilist_override)]
     if season is not None:
         fetch_cmd += ["-s", str(season)]
     fetch_cmd += ["-e", episode_arg, "-l", ",".join(fetch_langs),
@@ -11995,6 +12183,156 @@ def subtitle_found_episodes_by_lang(
 def total_found_subtitles(requested_langs: list[str], results: list[SearchResult]) -> int:
     found_by_lang = subtitle_found_episodes_by_lang(requested_langs, results)
     return sum(len(found_by_lang.get(lang, set())) for lang in requested_langs)
+
+
+def subtitle_missing_episodes_by_lang(
+    requested_langs: list[str],
+    episodes: list[str],
+    results: list[SearchResult],
+) -> dict[str, list[str]]:
+    found_by_lang = subtitle_found_episodes_by_lang(requested_langs, results)
+    return {
+        lang: [ep for ep in episodes if ep not in found_by_lang.get(lang, set())]
+        for lang in requested_langs
+    }
+
+
+def subtitle_search_coverage_ratio(
+    requested_langs: list[str],
+    episodes: list[str],
+    results: list[SearchResult],
+) -> float:
+    total_expected = len(requested_langs) * len(episodes)
+    if total_expected <= 0:
+        return 0.0
+    return total_found_subtitles(requested_langs, results) / total_expected
+
+
+def print_partial_subtitle_search_summary(
+    media: MediaInfo,
+    requested_langs: list[str],
+    episodes: list[str],
+    results: list[SearchResult],
+) -> None:
+    found_by_lang = subtitle_found_episodes_by_lang(requested_langs, results)
+    missing_by_lang = subtitle_missing_episodes_by_lang(requested_langs, episodes, results)
+    title = media.title or media.source_url or "Unknown title"
+    rule = "═" * 38
+    print()
+    print(rule)
+    print("Subtitle Search Complete")
+    print(rule)
+    print("Show:")
+    print(f"  {title}")
+    print("Downloaded:")
+    label_width = max((len(_display_lang(lang)) for lang in requested_langs), default=0)
+    for lang in requested_langs:
+        found_count = len(found_by_lang.get(lang, set()))
+        total_count = len(episodes)
+        status = "✓" if found_count == total_count else "⚠"
+        print(f"  {_display_lang(lang):<{label_width}}  {status} {found_count}/{total_count}")
+    missing_lines = [
+        f"{_display_lang(lang)} {summarize_episode_labels(missing)}"
+        for lang, missing in missing_by_lang.items()
+        if missing
+    ]
+    if missing_lines:
+        print("Missing:")
+        for line in missing_lines:
+            print(f"  {line}")
+
+
+def handle_partial_subtitle_coverage_recovery(
+    media: MediaInfo,
+    requested_langs: list[str],
+    episodes: list[str],
+    results: list[SearchResult],
+    warnings: list[str],
+    *,
+    manual_search_mode: str,
+    manual_search_open: str,
+    expected_output_dir: Path | None = None,
+    show_details: bool = False,
+) -> bool:
+    """Concise recovery flow for partial search coverage.
+
+    Partial coverage is usually a usable result, so default to continuing.
+    Details and manual-source links are progressive-disclosure options instead
+    of a long diagnostic dump before download.
+    """
+    print_partial_subtitle_search_summary(media, requested_langs, episodes, results)
+    interactive = sys.stdin.isatty()
+    missing_by_lang = subtitle_missing_episodes_by_lang(requested_langs, episodes, results)
+    missing_langs = [lang for lang, missing in missing_by_lang.items() if missing]
+    suggestions = [] if manual_search_mode == "off" else build_manual_search_suggestions(media, missing_langs)
+
+    if show_details:
+        print_subtitle_search_technical_details(
+            requested_langs,
+            episodes,
+            results,
+            warnings,
+            media=media,
+            expected_output_dir=expected_output_dir,
+            include_manual_sources=bool(suggestions),
+        )
+        return True
+    if not interactive:
+        if suggestions and manual_search_open != "never":
+            print("Tip: run again with --manual-search-open always to open subtitle sources for the missing episodes.")
+        print("Continuing with available subtitles.")
+        return True
+    if yes_no_prompt("Continue anyway?", default=True):
+        return True
+
+    while True:
+        print()
+        print("How would you like to fill the gaps?")
+        print("  1) Open subtitle sources")
+        print("  2) Translate missing episodes")
+        print("  3) Continue with available subtitles")
+        print("  4) Show technical details")
+        choice = input("Number [3] > ").strip().lower()
+        if not choice:
+            choice = "3"
+        if choice == "1":
+            if suggestions:
+                print_opening_subtitle_sources(suggestions, media)
+                if manual_search_open != "never":
+                    open_manual_search_suggestions(suggestions)
+                print("Done.")
+            else:
+                print("No configured manual-search suggestions for the missing languages.")
+            return True
+        if choice == "2":
+            target = shlex.quote(str(expected_output_dir)) if expected_output_dir is not None else "FOLDER"
+            source_candidates = [
+                lang for lang in requested_langs
+                if not missing_by_lang.get(lang)
+            ]
+            source = source_candidates[0] if source_candidates else requested_langs[0]
+            print("Translate missing episodes later with:")
+            for lang in missing_langs:
+                if lang == source:
+                    continue
+                print(f"  getsubtitle translate {target} -l {lang} --mt-source {source}")
+            if len(missing_langs) == 1 and missing_langs[0] == source:
+                print(f"  getsubtitle translate {target} -l {','.join(missing_langs)}")
+            return True
+        if choice == "3":
+            return True
+        if choice == "4":
+            print_subtitle_search_technical_details(
+                requested_langs,
+                episodes,
+                results,
+                warnings,
+                media=media,
+                expected_output_dir=expected_output_dir,
+                include_manual_sources=bool(suggestions),
+            )
+            continue
+        print("Please enter 1, 2, 3, or 4.")
 
 
 def print_planned_downloads(planned: list[tuple[str, str, SubtitleFile]]) -> None:
@@ -15967,6 +16305,7 @@ class _WizardState:
     question and a single emitter rule, so the emitters stay declarative."""
     source: str = ""                       # Q1: URL or path
     source_title: str = ""                 # optional title resolved by Q1 picker
+    source_anilist_id: str = ""            # optional AniList ID resolved by Q1 picker
     source_kind: str = ""                  # "url" | "path" | "title"
     languages: list[str] = field(default_factory=list)        # Q2
     order: list[str] = field(default_factory=list)            # Q3
@@ -16098,6 +16437,7 @@ def _wizard_apply_crunchyroll_watch_clarification(state: _WizardState, url: str)
             state.source = f"https://anilist.co/anime/{helper}/"
             state.source_kind = "url"
             state.source_title = ""
+            state.source_anilist_id = helper
             state.is_movie = False
             print(f"    Using AniList anime ID: {helper}")
             return True
@@ -16105,6 +16445,8 @@ def _wizard_apply_crunchyroll_watch_clarification(state: _WizardState, url: str)
             state.source = helper
             state.source_kind = "url"
             state.source_title = ""
+            anilist_id, _parsed_title = parse_anilist_input(helper)
+            state.source_anilist_id = str(anilist_id) if anilist_id else ""
             state.is_movie = _wizard_url_is_movie(helper)
             print(f"    Searching for: {_wizard_describe_url_source(helper)}")
             return True
@@ -16120,6 +16462,7 @@ def _wizard_apply_crunchyroll_watch_clarification(state: _WizardState, url: str)
             state.source = helper
             state.source_kind = "title"
             state.source_title = ""
+            state.source_anilist_id = ""
             try:
                 state.is_movie = _wizard_yesno(
                     "Is this a movie? (No = TV show / anime)", default=False
@@ -16134,6 +16477,7 @@ def _wizard_apply_crunchyroll_watch_clarification(state: _WizardState, url: str)
         state.source = picked_url
         state.source_kind = "url"
         state.source_title = _wizard_title_from_candidate_label(label)
+        state.source_anilist_id = _wizard_anilist_id_from_candidate(picked_url, provider, label)
         state.is_movie = picked_is_movie or _wizard_url_is_movie(picked_url)
         print(f"    Matched title: {label} [{provider}]")
         return True
@@ -16250,6 +16594,63 @@ def _wizard_title_from_candidate_label(label: str) -> str:
     return text.strip()
 
 
+def _wizard_anilist_id_from_candidate(url: str, provider: str, label: str = "") -> str:
+    if provider == "anilist":
+        anilist_id, _parsed_title = parse_anilist_input(url)
+        if anilist_id:
+            return str(anilist_id)
+        m = re.search(r"\bAniList:\s*(\d+)\b", label)
+        if m:
+            return m.group(1)
+    return ""
+
+
+def _wizard_candidate_from_metadata_input(raw: str) -> tuple[str, str, str, bool] | None:
+    """Turn a pasted metadata URL or AniList ID into a title-picker result."""
+    text = _wizard_strip_wrapping_quotes(raw.strip())
+    if not text:
+        return None
+    anilist_id, _parsed_title = parse_anilist_input(text)
+    if anilist_id:
+        try:
+            info = fetch_anilist_info(anilist_id)
+        except CliError:
+            info = None
+        if info:
+            title = info.title or str(anilist_id)
+            label = f"AniList: {anilist_id}: {title} ({info.episodes or '?'} eps)"
+            return f"https://anilist.co/anime/{anilist_id}/", "anilist", label, info.is_movie()
+        return f"https://anilist.co/anime/{anilist_id}/", "anilist", f"AniList: {anilist_id}", False
+    if not _looks_like_url(text):
+        return None
+    try:
+        media = infer_media(text)
+    except CliError:
+        return None
+    provider = media.provider or provider_from_host(urllib.parse.urlparse(text).netloc)
+    is_movie = bool(media.is_movie or _wizard_url_is_movie(text))
+    if media.anilist_id:
+        try:
+            info = fetch_anilist_info(media.anilist_id)
+        except CliError:
+            info = None
+        if info:
+            media.title = info.title or media.title
+            is_movie = info.is_movie()
+    title = media.title or title_from_source_url(text) or _wizard_describe_url_source(text)
+    if provider == "tmdb" and media.tmdb_id:
+        kind = "Movie" if is_movie or "/movie/" in text.lower() else "TV"
+        label = f"TMDB {kind}: {title}"
+        provider = "tmdb-movie" if kind == "Movie" else "tmdb-tv"
+    elif provider == "imdb":
+        label = f"IMDb: {title}"
+    elif provider == "anilist" and media.anilist_id:
+        label = f"AniList: {media.anilist_id}: {title}"
+    else:
+        label = f"{provider.upper()}: {title}" if provider else title
+    return text, provider or "url", label, is_movie
+
+
 def _wizard_pick_title_candidate(title: str) -> tuple[str, str, str, bool] | None | str:
     """Pick a title hit. Return shape:
       - (url, provider, label, is_movie) — user picked a candidate
@@ -16274,8 +16675,23 @@ def _wizard_pick_title_candidate(title: str) -> tuple[str, str, str, bool] | Non
         print()
         print("    1) Re-enter a different title")
         print("    2) Use exactly what I typed (advanced; may fail)")
-        pick = _wizard_read_choice("Number", ["1", "2"], "1")
-        return None if pick == "2" else "retry"
+        while True:
+            pick = _wizard_prompt("Number, URL, ID, or title", "1").strip()
+            if pick == "1" or not pick:
+                return "retry"
+            if pick == "2":
+                return None
+            metadata_candidate = _wizard_candidate_from_metadata_input(pick)
+            if metadata_candidate:
+                return metadata_candidate
+            cleaned = _wizard_strip_wrapping_quotes(pick)
+            if cleaned:
+                print(f"    Searching for: {cleaned!r}")
+                followup = _wizard_pick_title_candidate(cleaned)
+                if followup == "retry":
+                    return "retry"
+                return followup
+            print("    Please enter 1, 2, a metadata URL, AniList ID, or title.")
     print()
     print("    Possible matches:")
     for i, row in enumerate(rows, start=1):
@@ -16302,6 +16718,170 @@ def _wizard_pick_title_candidate(title: str) -> tuple[str, str, str, bool] | Non
             print("    the folder/file option, or pick one of the numbered title matches.")
         else:
             print(f"    Please enter 1-{len(rows)}, 0, or r.")
+
+
+def _wizard_path_fetch_title_guess(path: Path) -> str:
+    """Best local-title guess for a path-based fetch.
+
+    Folder fetch eventually shells out to the normal title/URL fetcher. If
+    the folder is a Plex season folder, the parent folder is the show title;
+    if the user selected a single episode file, reuse the same show/season
+    inference as batch fetch. This is only a starting point — the wizard
+    confirms it before a path fetch runs.
+    """
+    filename_guess = _wizard_title_guess_from_video_filenames(path)
+    if filename_guess:
+        return filename_guess
+    if path.is_file() and path.suffix.lower() in _BATCH_VIDEO_EXTS:
+        show_folder, _season = detect_show_and_season_for_video_file(path)
+        return show_folder.stem if show_folder.is_file() else show_folder.name
+    if path.is_file():
+        return path.stem
+    if parse_season_from_folder_name(path.name) is not None and path.parent.exists():
+        return path.parent.name
+    return path.name
+
+
+def _wizard_clean_video_filename_title(name: str) -> str:
+    text = Path(name).stem
+    text = re.sub(r"^(?:\[[^\]]+\]|\([^)]+\))\s*", "", text).strip()
+    text = re.sub(
+        r"\s+(?:S\d{1,2}E\d{1,3}|s\d{1,2}e\d{1,3})(?:\b|[ ._-]).*$",
+        "",
+        text,
+    ).strip()
+    text = re.sub(r"\s+-\s+(?:E)?\d{1,3}(?:\b|[ ._-]).*$", "", text).strip()
+    text = re.sub(r"\s+E\d{1,3}(?:\b|[ ._-]).*$", "", text).strip()
+    text = re.sub(r"\s{2,}", " ", text)
+    return text.strip(" ._-")
+
+
+def _wizard_title_guess_from_video_filenames(path: Path) -> str:
+    if path.is_file():
+        candidates = [path] if path.suffix.lower() in _BATCH_VIDEO_EXTS else []
+    elif path.is_dir():
+        candidates = [
+            p for p in path.rglob("*")
+            if p.is_file() and p.suffix.lower() in _BATCH_VIDEO_EXTS
+        ][:24]
+    else:
+        candidates = []
+    counts: dict[str, int] = {}
+    display: dict[str, str] = {}
+    for video in candidates:
+        title = _wizard_clean_video_filename_title(video.name)
+        if not title or len(title) < 3:
+            continue
+        key = _norm_title_key(title)
+        if not key:
+            continue
+        counts[key] = counts.get(key, 0) + 1
+        display.setdefault(key, title)
+    if not counts:
+        return ""
+    best = sorted(counts, key=lambda key: (-counts[key], len(display[key]), display[key].lower()))[0]
+    return display[best]
+
+
+def _wizard_path_has_videos(path: Path) -> bool:
+    videos, _subtitles, _season_dirs, _truncated = _wizard_media_counts(path)
+    return videos > 0
+
+
+def _wizard_confirm_path_fetch_title(state: _WizardState, path: Path) -> None:
+    """Ask for a stronger title before fetching from a local video folder.
+
+    Without this, a folder named in another language/transliteration (for
+    example a Korean local title for Japanese anime) can reach the final
+    review and fail late as `AniList returned no matches`. The user has far
+    better context here, so let them correct the title or paste an ID while
+    still preserving the local folder as the output/work target.
+    """
+    if "fetch" not in state.steps or not _wizard_path_has_videos(path):
+        return
+    guess = _wizard_path_fetch_title_guess(path).strip()
+    if not guess:
+        return
+    print()
+    print("    Online subtitle search needs a movie/show title.")
+    print(f"    Folder title guess: {guess}")
+    print()
+    print("    1) Search/confirm this title")
+    print("    2) Enter a different title, AniList ID, or metadata URL")
+    print("    3) Use the folder name as-is (advanced; may fail)")
+    while True:
+        pick = _wizard_read_choice("Number", ["1", "2", "3"], "1")
+        if pick == "3":
+            state.source_title = guess
+            state.source_anilist_id = ""
+            return
+        query = guess
+        if pick == "2":
+            query = _wizard_prompt("Title, AniList ID, or metadata URL").strip()
+            query = _wizard_strip_wrapping_quotes(query)
+            if not query:
+                print("    Please enter a title, AniList ID, or metadata URL.")
+                continue
+        if query.isdigit():
+            try:
+                info = fetch_anilist_info(int(query))
+            except CliError as exc:
+                print(f"    {exc}")
+                continue
+            state.source_title = info.title or query
+            state.source_anilist_id = query
+            state.is_movie = info.is_movie()
+            print(f"    Matched title: AniList {query}: {state.source_title}")
+            return
+        if _looks_like_url(query):
+            metadata_candidate = _wizard_candidate_from_metadata_input(query)
+            if metadata_candidate:
+                picked_url, provider, label, picked_is_movie = metadata_candidate
+                state.source_title = _wizard_title_from_candidate_label(label)
+                state.source_anilist_id = _wizard_anilist_id_from_candidate(picked_url, provider, label)
+                state.is_movie = picked_is_movie
+                print(f"    Matched title: {label} [{provider}]")
+                return
+            try:
+                media = infer_media(query)
+            except CliError as exc:
+                print(f"    Could not read that metadata URL: {exc}")
+                print("    Try a plain title or AniList ID.")
+                continue
+            if not media.title:
+                print("    Could not read a title from that URL. Try a plain title.")
+                continue
+            state.source_title = media.title
+            state.source_anilist_id = str(media.anilist_id) if media.anilist_id else ""
+            state.is_movie = bool(media.is_movie)
+            print(f"    Matched title: {media.title}")
+            return
+        print(f"    Searching for: {query!r}")
+        try:
+            picked = _wizard_pick_title_candidate(query)
+        except _WizardBack:
+            print("    Going back to title confirmation.")
+            continue
+        if picked == "retry":
+            continue
+        if picked is None:
+            state.source_title = query
+            state.source_anilist_id = ""
+            try:
+                state.is_movie = _wizard_yesno(
+                    "Is this a movie? (No = TV show / anime)", default=False
+                )
+            except _WizardBack:
+                state.source_title = ""
+                print("    Going back to title confirmation.")
+                continue
+            return
+        _picked_url, provider, label, picked_is_movie = picked
+        state.source_title = _wizard_title_from_candidate_label(label)
+        state.source_anilist_id = _wizard_anilist_id_from_candidate(_picked_url, provider, label)
+        state.is_movie = picked_is_movie
+        print(f"    Matched title: {label} [{provider}]")
+        return
 
 
 _PIPELINE_STEPS = ("fetch", "translate", "modify", "merge")
@@ -17140,6 +17720,7 @@ def _wizard_q1_source(state: _WizardState) -> None:
     def restart_source_picker_after_entry_back() -> None:
         state.source = ""
         state.source_title = ""
+        state.source_anilist_id = ""
         state.source_kind = ""
         state.is_movie = False
         state._qcount = _wizard_qcount_before(state, "source")
@@ -17189,6 +17770,8 @@ def _wizard_q1_source(state: _WizardState) -> None:
     if state.source_kind == "url":
         if direct_source_value:
             state.source = direct_source_value
+            anilist_id, _parsed_title = parse_anilist_input(direct_source_value)
+            state.source_anilist_id = str(anilist_id) if anilist_id else ""
             state.is_movie = _wizard_url_is_movie(direct_source_value)
             print(f"    Searching for: {_wizard_describe_url_source(direct_source_value)}")
             if _wizard_apply_crunchyroll_watch_clarification(state, direct_source_value):
@@ -17205,6 +17788,8 @@ def _wizard_q1_source(state: _WizardState) -> None:
                 raise
             if _looks_like_url(src):
                 state.source = src
+                anilist_id, _parsed_title = parse_anilist_input(src)
+                state.source_anilist_id = str(anilist_id) if anilist_id else ""
                 state.is_movie = _wizard_url_is_movie(src)
                 print(f"    Searching for: {_wizard_describe_url_source(src)}")
                 if _wizard_apply_crunchyroll_watch_clarification(state, src):
@@ -17239,6 +17824,7 @@ def _wizard_q1_source(state: _WizardState) -> None:
             if picked is None:
                 # No matches OR user explicitly chose to keep raw text.
                 state.source = title
+                state.source_anilist_id = ""
                 # Title-text input is genuinely ambiguous; ask once so we
                 # can skip Q6 (and avoid Season Unknown / S00E00 on disk).
                 try:
@@ -17253,6 +17839,7 @@ def _wizard_q1_source(state: _WizardState) -> None:
                 picked_url, provider, label, picked_is_movie = picked
                 state.source = picked_url
                 state.source_title = _wizard_title_from_candidate_label(label)
+                state.source_anilist_id = _wizard_anilist_id_from_candidate(picked_url, provider, label)
                 state.source_kind = "url"
                 # Trust the picker's own movie tag — TMDB /movie/ and
                 # AniList format=MOVIE both flow through here. URL-shape
@@ -17277,6 +17864,15 @@ def _wizard_q1_source(state: _WizardState) -> None:
             continue
         state.source = str(path)
         print(f"    Searching for: {description}")
+        try:
+            _wizard_confirm_path_fetch_title(state, path)
+        except _WizardBack:
+            state.source = ""
+            state.source_title = ""
+            state.source_anilist_id = ""
+            state.is_movie = False
+            print("    Going back to folder or file path.")
+            continue
         return
 
 
@@ -17565,80 +18161,6 @@ def _wizard_offer_fetch_for_missing_local_languages(state: _WizardState) -> None
     else:
         print("    Tip: restart with `getsubtitle -i`, choose Fetch, and use a")
         print("    catalog URL/title so getsubtitle can look online for missing tracks.")
-
-
-def _wizard_q3_order(state: _WizardState) -> None:
-    """Confirm display order; only branch into custom-order on 'no'."""
-    if len(state.languages) <= 1:
-        state.order = list(state.languages)
-        return
-    default_order = ",".join(state.languages)
-    print()
-    print("Q5. Subtitle display order (top → bottom on screen).")
-    print(f"    Default: {default_order}")
-    if len(state.languages) >= 2:
-        language_names = {
-            "ja": "Japanese",
-            "ko": "Korean",
-            "en": "English",
-            "es": "Spanish",
-            "fr": "French",
-            "de": "German",
-            "it": "Italian",
-            "pt": "Portuguese",
-            "zh": "Chinese",
-            "yue": "Cantonese",
-            "th": "Thai",
-            "ar": "Arabic",
-            "hi": "Hindi",
-            "ru": "Russian",
-        }
-        top_code = state.languages[0]
-        bottom_code = state.languages[1]
-        top = language_names.get(top_code, top_code.upper())
-        bottom = language_names.get(bottom_code, bottom_code.upper())
-        print(f"    '{top_code},{bottom_code}' = {top} on top, {bottom} below.")
-    keep = _wizard_yesno(f"Keep order {default_order}?", default=True)
-    if keep:
-        state.order = list(state.languages)
-        return
-    raw = _wizard_prompt("Custom order (comma-separated, top → bottom)", default_order)
-    order = [p.strip().lower() for p in raw.split(",") if p.strip()]
-    order = [LANGUAGE_ALIASES.get(p, p) for p in order]
-    # Must be a permutation of Q3's languages.
-    if set(order) != set(state.languages):
-        raise CliError(
-            "interactive: display order must contain the same languages as Q3 "
-            f"({','.join(state.languages)})."
-        )
-    state.order = order
-
-
-def _wizard_q4_master(state: _WizardState) -> None:
-    if len(state.order) <= 1:
-        state.master = ""
-        return
-    # Q5 inherits its choices from Q4's order list. The smart "first
-    # learner-priority match" heuristic confused users (Korean learner
-    # collecting en,ja,ko sees option 2 = Japanese). Cleaner: offer
-    # first-displayed (the common case) and a custom override over the
-    # collected languages.
-    print()
-    print("Q6. Which language controls cue timing (the 'master' track)?")
-    # List one option per collected language so the user doesn't have to
-    # navigate a "Custom" branch. The first-displayed is the recommendation.
-    for i, code in enumerate(state.order, start=1):
-        tail = "  (recommended — first displayed)" if i == 1 else ""
-        print(f"    {i}) {code}{tail}")
-    n = len(state.order)
-    pick = _wizard_prompt("Number", "1").strip()
-    if pick.isdigit() and 1 <= int(pick) <= n:
-        idx = int(pick) - 1
-        # First-displayed is the default — leave master empty so the
-        # downstream 'first lang wins' logic keeps working.
-        state.master = "" if idx == 0 else state.order[idx]
-    else:
-        state.master = ""
 
 
 def _wizard_edit_display_order(state: _WizardState) -> None:
@@ -17993,13 +18515,6 @@ def _wizard_q7_reading_aids(state: _WizardState) -> None:
         print("    Before you run: backend not implemented yet for: " + ", ".join(deferred_seen))
         print("    These are accepted in the generated TOML so you can re-run once")
         print("    the backend ships. Saving / printing the workflow is safe.")
-
-
-def _wizard_q8_asbplayer(state: _WizardState) -> None:
-    print()
-    print("Q10. Apply learner-friendly cleanup? (single-line cues + strip")
-    print("    broadcast noise like ➡). Works in any player.")
-    state.asbplayer = _wizard_yesno("Apply cleanup preset?", default=True)
 
 
 def _wizard_needs_japanese_ruby(state: _WizardState) -> bool:
@@ -18459,6 +18974,7 @@ def _wizard_clear_step_answer(state: _WizardState, label: str) -> None:
     elif label == "source":
         state.source = ""
         state.source_title = ""
+        state.source_anilist_id = ""
         state.source_kind = ""
         state.is_movie = False
         state.convert_smi = False
@@ -18797,6 +19313,10 @@ def _wizard_emit_cli(state: _WizardState) -> list[str]:
             argv += ["--fetch", state.source]
             if state.source_title:
                 argv += ["--title", state.source_title]
+        if state.source_anilist_id and (
+            state.source_kind != "url" or "anilist.co" not in state.source.lower()
+        ):
+            argv += ["--anilist", state.source_anilist_id]
         if state.source_kind in ("url", "title") and state.season:
             argv += ["--season", state.season]
         if state.source_kind in ("url", "title") and state.episode:
@@ -18950,6 +19470,8 @@ def _wizard_emit_toml(state: _WizardState) -> str:
             lines.append(f'source = "{state.source}"')
             if state.source_title:
                 lines.append(f'title = "{state.source_title}"')
+        if state.source_anilist_id:
+            lines.append(f'anilist = "{state.source_anilist_id}"')
         if state.source_kind in ("url", "title"):
             if state.season:
                 lines.append(f'season = "{state.season}"')
@@ -20429,8 +20951,21 @@ def main(argv: list[str] | None = None) -> int:
 
     expected_dir = output_dir(Path(args.output).expanduser(), media, media.season, args.layout)
     total_found = total_found_subtitles(langs, search_results)
+    total_expected = len(langs) * len(episodes)
     if not planned and search_results and total_found == 0:
         handle_no_subtitles_found_recovery(
+            media,
+            langs,
+            episodes,
+            search_results,
+            warnings,
+            manual_search_mode=args.manual_search,
+            manual_search_open=args.manual_search_open,
+            expected_output_dir=expected_dir,
+            show_details=bool(args.debug_providers),
+        )
+    elif search_results and 0 < total_found < total_expected:
+        handle_partial_subtitle_coverage_recovery(
             media,
             langs,
             episodes,
@@ -20451,25 +20986,15 @@ def main(argv: list[str] | None = None) -> int:
             expected_output_dir=expected_dir,
             warnings=warnings,
         )
-        print_search_results(search_results)
-        print_low_confidence_next_steps(search_results)
-        print_warnings(warnings)
-        print_missing_subtitle_next_steps(
-            langs,
-            episodes,
-            search_results,
-            media=media,
-            expected_output_dir=expected_dir,
-        )
-        maybe_print_manual_search_suggestions(
-            media,
-            langs,
-            episodes,
-            search_results,
-            mode=args.manual_search,
-            open_mode=args.manual_search_open,
-            expected_output_dir=expected_dir,
-        )
+        if args.debug_providers:
+            print_subtitle_search_technical_details(
+                langs,
+                episodes,
+                search_results,
+                warnings,
+                media=media,
+                expected_output_dir=expected_dir,
+            )
     fetch_issues = [
         f"{r.language} {episode_label(r.episode)}: {r.status}"
         + (f" — {r.error}" if r.error else "")

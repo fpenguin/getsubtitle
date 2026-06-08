@@ -56,7 +56,7 @@ Q2. Where should we get subtitles from?                             Progress [â—
     1) Re-enter a different title
     2) Use exactly what I typed (advanced; may fail)
 
-  Number [1 | b=back | q=quit] > 2
+  Number, URL, ID, or title [1 | b=back | q=quit] > 2
   Is this a movie? (No = TV show / anime) [y/N | b=back | q=quit] > n
 
 ------------------------------------------------------------------------------------------------

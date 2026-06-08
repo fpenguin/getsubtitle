@@ -465,6 +465,96 @@ def test_no_subtitle_recovery_timeout_recommends_retry_first(monkeypatch, capsys
     assert "Download subtitles manually." not in out
 
 
+def test_partial_subtitle_recovery_defaults_to_continue(monkeypatch, capsys, tmp_path):
+    import io
+
+    class TtyInput(io.StringIO):
+        def isatty(self):
+            return True
+
+    media = MODULE["MediaInfo"](
+        source_url="https://anilist.co/anime/145665/",
+        provider="anilist",
+        title="NieR:Automata Ver1.1a",
+        title_aliases=["NieR Automata Ver1.1a"],
+        season="1",
+    )
+    results = [
+        *(MODULE["SearchResult"]("ja", str(ep), "jimaku", "found") for ep in range(1, 13)),
+        *(MODULE["SearchResult"]("ko", str(ep), "wyzie", "error", error="Network timeout for https://sub.wyzie.io/search") for ep in range(1, 3)),
+        *(MODULE["SearchResult"]("ko", str(ep), "wyzie", "found") for ep in range(3, 13)),
+    ]
+    g = MODULE["handle_partial_subtitle_coverage_recovery"].__globals__
+    monkeypatch.setattr(g["sys"], "stdin", TtyInput("\n"))
+
+    keep_going = MODULE["handle_partial_subtitle_coverage_recovery"](
+        media,
+        ["ja", "ko"],
+        [str(ep) for ep in range(1, 13)],
+        results,
+        ["ko episode 1: Network timeout for https://sub.wyzie.io/search"],
+        manual_search_mode="on-missing",
+        manual_search_open="ask",
+        expected_output_dir=tmp_path / "NieR Automata Ver1.1a",
+    )
+    out = capsys.readouterr().out
+
+    assert keep_going is True
+    assert "Subtitle Search Complete" in out
+    assert "Japanese  ✓ 12/12" in out
+    assert "Korean    ⚠ 10/12" in out
+    assert "Missing:\n  Korean E01-E02" in out
+    assert "Continue anyway? [Y/n]" in out
+    assert "Try these subtitle sources:" not in out
+    assert "Network timeout" not in out
+
+
+def test_partial_subtitle_recovery_details_are_opt_in(monkeypatch, capsys, tmp_path):
+    import io
+
+    class TtyInput(io.StringIO):
+        def isatty(self):
+            return True
+
+    media = MODULE["MediaInfo"](
+        source_url="https://anilist.co/anime/145665/",
+        provider="anilist",
+        title="NieR:Automata Ver1.1a",
+        title_aliases=["NieR Automata Ver1.1a"],
+        season="1",
+    )
+    results = [
+        MODULE["SearchResult"](
+            "ja",
+            "1",
+            "jimaku",
+            "found",
+            file=MODULE["SubtitleFile"]("jimaku", "ja", "NieR Automata Ver1.1a - S00E01.ja.srt", "mock://ja"),
+        ),
+        MODULE["SearchResult"]("ko", "1", "wyzie", "error", error="Network timeout for https://sub.wyzie.io/search"),
+    ]
+    g = MODULE["handle_partial_subtitle_coverage_recovery"].__globals__
+    monkeypatch.setattr(g["sys"], "stdin", TtyInput("n\n4\n3\n"))
+
+    MODULE["handle_partial_subtitle_coverage_recovery"](
+        media,
+        ["ja", "ko"],
+        ["1"],
+        results,
+        ["ko episode 1: Network timeout for https://sub.wyzie.io/search"],
+        manual_search_mode="on-missing",
+        manual_search_open="ask",
+        expected_output_dir=tmp_path / "NieR Automata Ver1.1a",
+    )
+    out = capsys.readouterr().out
+
+    assert "How would you like to fill the gaps?" in out
+    assert "Show technical details" in out
+    assert "Search results:" in out
+    assert "Warnings:" in out
+    assert "Network timeout" in out
+
+
 def test_no_subtitle_recovery_yes_opens_sources_without_diagnostic_dump(monkeypatch, capsys, tmp_path):
     import io
 
@@ -1546,7 +1636,8 @@ def test_url_form_uses_subdl_fallback_without_wyzie_key():
     text = out.getvalue()
     assert rc == 0
     assert "SubDL: retrying" in text
-    assert "ko: Found 1/1" in text
+    assert "Subtitle Search Complete" in text
+    assert "Korean: 1 / 1 episode" in text
     assert "WYZIE_API_KEY" not in text
     assert any("api.subdl.com" in call for call in calls)
 
@@ -1827,6 +1918,27 @@ def test_save_subtitle_episode_filename_start_shifts_output_episode_number():
         scope["download_bytes"] = saved_dl
 
 
+def test_save_subtitle_unknown_release_suffix_defaults_to_srt(tmp_path):
+    scope = MODULE["save_subtitle"].__globals__
+    saved_dl = scope["download_bytes"]
+    try:
+        scope["download_bytes"] = lambda url, headers=None: b"1\n00:00:01,000 --> 00:00:02,000\nhi\n"
+        sub = MODULE["SubtitleFile"](
+            provider="wyzie",
+            language="ko",
+            name="NieR Automata Ver1.1a.S01E03.1080p",
+            url="mock://",
+        )
+        media = MODULE["MediaInfo"](source_url="x", provider="anilist", title="NieR Automata Ver1.1a")
+        saved = MODULE["save_subtitle"](sub, tmp_path, media, "0", "3")
+    finally:
+        scope["download_bytes"] = saved_dl
+
+    assert saved[0].name == "NieR Automata Ver1.1a - S00E03.ko.srt"
+    assert saved[0].suffix == ".srt"
+    assert MODULE["parse_srt_filename"](saved[0].name) == (0, 3, "ko", False)
+
+
 def test_is_combined_output_name_detects_hyphenated_lang():
     cob = MODULE["is_combined_output_name"]
     assert cob("Show.S01E07.ja-ko.srt") is True
@@ -1914,6 +2026,75 @@ def test_scan_srt_files_ignores_macos_appledouble_sidecars_and_parses_bare_e():
         sidecar.write_bytes(b"\x00\x05\x16\x07Mac OS X metadata")
         scanned = MODULE["scan_srt_files"]([root])
     assert scanned == [(good, 1, 1, "ko", False)]
+
+
+def test_scan_srt_files_for_merge_infers_release_style_cjk_subtitles(tmp_path):
+    root = tmp_path
+    ja_text = (
+        "1\n00:00:06,000 --> 00:00:08,000\n"
+        "ここからセクター２！\n"
+    )
+    ko_text = (
+        "1\n00:00:05,000 --> 00:00:07,000\n"
+        "여기부터 섹터 2! 한국어 자막 테스트입니다. 다음 대사도 한국어입니다.\n"
+    )
+    (root / "NieR Automata Ver1.1a - S00E01.ja.srt").write_text(ja_text, encoding="utf-8")
+    (root / "NieR Automata Ver1.1a - S00E02.ja.srt").write_text(ja_text, encoding="utf-8")
+    # No language token: infer Korean from Hangul content and episode from
+    # the release-style "- 01 (...)" marker.
+    (root / "[Ohys-Raws] NieR Automata Ver1.1a - 01 (BS11 1280x720 x264 AAC).srt").write_text(
+        ko_text, encoding="utf-8"
+    )
+    # Has .ko.srt but normal parsing would classify it as movie S00E00;
+    # merge repair should remap it to the contextual S00E02.
+    (root / "[Ohys-Raws] NieR Automata Ver1.1a - 02 (BS11 1280x720 x264 AAC).ko.srt").write_text(
+        ko_text, encoding="utf-8"
+    )
+
+    scanned, inferred = MODULE["scan_srt_files_for_merge"]([root], requested_langs=["ja", "ko"])
+    grouped = MODULE["group_srts_by_episode"](scanned)
+
+    assert grouped[(0, 1)]["ko"].name == "[Ohys-Raws] NieR Automata Ver1.1a - 01 (BS11 1280x720 x264 AAC).srt"
+    assert grouped[(0, 2)]["ko"].name == "[Ohys-Raws] NieR Automata Ver1.1a - 02 (BS11 1280x720 x264 AAC).ko.srt"
+    assert {(season, ep, lang, reason) for _path, season, ep, lang, reason in inferred} == {
+        (0, 1, "ko", "script language"),
+        (0, 2, "ko", "filename episode"),
+    }
+
+
+def test_extended_scan_uses_merge_inference_for_pseudo_lang_workflows(tmp_path):
+    root = tmp_path
+    (root / "NieR Automata Ver1.1a - S00E01.ja.srt").write_text(
+        "1\n00:00:06,000 --> 00:00:08,000\nここからセクター２！\n",
+        encoding="utf-8",
+    )
+    (root / "[Ohys-Raws] NieR Automata Ver1.1a - 01 (BS11 1280x720 x264 AAC).srt").write_text(
+        "1\n00:00:05,000 --> 00:00:07,000\n"
+        "여기부터 섹터 2! 한국어 자막 테스트입니다. 다음 대사도 한국어입니다.\n",
+        encoding="utf-8",
+    )
+
+    scanned = MODULE["scan_subtitle_files_extended"](
+        [root],
+        pseudo_langs=["ja-hiragana"],
+        requested_langs=["ja-hiragana", "ja", "ko"],
+    )
+
+    assert any(path.name.startswith("[Ohys-Raws]") and season == 0 and episode == 1 and lang == "ko"
+               for path, season, episode, lang, _is_mt, _fmt in scanned)
+
+
+def test_scan_srt_files_for_merge_does_not_infer_without_episode_context(tmp_path):
+    root = tmp_path
+    (root / "[Ohys-Raws] Unknown - 01 (BS11 1280x720 x264 AAC).srt").write_text(
+        "1\n00:00:05,000 --> 00:00:07,000\n여기부터 섹터 2! 한국어 자막 테스트입니다. 다음 대사도 한국어입니다.\n",
+        encoding="utf-8",
+    )
+
+    scanned, inferred = MODULE["scan_srt_files_for_merge"]([root], requested_langs=["ja", "ko"])
+
+    assert scanned == []
+    assert inferred == []
 
 
 def test_group_srts_prefers_non_mt_when_both_exist():
@@ -2242,6 +2423,54 @@ def test_combine_cues_applies_constant_offset_before_matching():
     assert rates["ko"] == 1.0
     assert combined[0].text_lines == ["A", "A ko"]
     assert combined[1].text_lines == ["B", "B ko"]
+
+
+def test_combine_cues_accepts_realistic_offset_with_extra_target_cues():
+    SrtCue = MODULE["SrtCue"]
+
+    def cue(index: int, start_ms: int, end_ms: int, text: str) -> object:
+        def stamp(ms: int) -> str:
+            seconds, milli = divmod(ms, 1000)
+            minutes, sec = divmod(seconds, 60)
+            hours, minute = divmod(minutes, 60)
+            return f"{hours:02d}:{minute:02d}:{sec:02d},{milli:03d}"
+
+        return SrtCue(str(index), f"{stamp(start_ms)} --> {stamp(end_ms)}", [text])
+
+    # Shape based on a real NieR Automata pair:
+    # - Japanese starts about 1 second after Korean.
+    # - The two releases have different cue counts.
+    # - Extra target-only signs / sound-effect cues should not drag the
+    #   episode-level match rate below the auto threshold.
+    master = [
+        cue(i + 1, 6381 + i * 10_000, 9000 + i * 10_000, f"ja {i + 1}")
+        for i in range(12)
+    ]
+    target = [
+        cue(1, 1000, 3000, "ko opening sign"),
+        cue(2, 5349, 6170, "ko 1"),
+        cue(3, 15381, 16200, "ko 2"),
+        cue(4, 25381, 26200, "ko 3"),
+        cue(5, 35381, 36200, "ko 4"),
+        cue(6, 40100, 41500, "ko extra sound effect"),
+        cue(7, 45381, 46200, "ko 5"),
+        cue(8, 55381, 56200, "ko 6"),
+        cue(9, 65381, 66200, "ko 7"),
+        cue(10, 75381, 76200, "ko 8"),
+        cue(11, 85381, 86200, "ko 9"),
+        cue(12, 95381, 96200, "ko 10"),
+        cue(13, 130000, 132000, "ko ending sign"),
+    ]
+
+    offset = MODULE["estimate_timing_offset_ms"](master, target, MODULE["SYNC_PRESETS"]["auto"])
+    combined, rates = MODULE["combine_cues"](
+        master, {"ko": target}, ["ja", "ko"], "ja", MODULE["SYNC_PRESETS"]["auto"],
+    )
+    assert offset == 1000
+    assert rates["ko"] > MODULE["SYNC_PRESETS"]["auto"]["episode_success"]
+    assert combined[0].text_lines == ["ja 1", "ko 1"]
+    assert combined[9].text_lines == ["ja 10", "ko 10"]
+    assert combined[10].text_lines == ["ja 11"]
 
 
 def test_combine_cues_stacks_japanese_furigana_without_flattening_other_langs():
@@ -5327,6 +5556,45 @@ def test_fetch_main_path_form_respects_explicit_languages_over_profile_defaults(
     assert "fetch: -l ja,ko (requested)" in text
 
 
+def test_fetch_main_path_form_respects_title_override():
+    import tempfile, io, contextlib
+    from pathlib import Path
+    scope = MODULE["fetch_main"].__globals__
+    saved_run = scope["subprocess"].run
+    saved_detect = scope["detect_profile_from_title"]
+    captured: list[list[str]] = []
+
+    class _FakeResult:
+        returncode = 0
+
+    def fake_run(args, **kwargs):
+        captured.append(args)
+        return _FakeResult()
+
+    scope["subprocess"].run = fake_run
+    scope["detect_profile_from_title"] = lambda title, year=None: "ja"
+    try:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "니아 오토마타"
+            root.mkdir()
+            (root / "[Ohys-Raws] NieR Automata Ver1.1a - 01.mp4").touch()
+            with _isolated_config(None), contextlib.redirect_stdout(io.StringIO()):
+                rc = MODULE["main"]([
+                    "fetch", str(root), "--languages", "ja,ko",
+                    "--title", "NieR Automata Ver1.1a", "--anilist", "145665", "--run",
+                ])
+        assert rc == 0
+    finally:
+        scope["subprocess"].run = saved_run
+        scope["detect_profile_from_title"] = saved_detect
+
+    assert len(captured) == 1
+    cmd = captured[0]
+    assert cmd[cmd.index("--title") + 1] == "NieR Automata Ver1.1a"
+    assert cmd[cmd.index("--anilist") + 1] == "145665"
+    assert cmd[cmd.index("-l") + 1] == "ja,ko"
+
+
 def test_fetch_main_explicit_season_folder_fetches_once_with_parent_title():
     import tempfile, io, contextlib
     from pathlib import Path
@@ -5466,6 +5734,37 @@ def test_fetch_main_url_form_delegates_to_main_download_flow():
         assert "-l" in captured[0]
     finally:
         fetch_main_globals["main"] = real_main
+
+
+def test_fetch_main_url_form_preserves_title_override():
+    import io, contextlib
+    captured: list[list[str]] = []
+    real_main = MODULE["main"]
+    fetch_main_globals = MODULE["fetch_main"].__globals__
+
+    def fake_main(argv):
+        captured.append(list(argv))
+        return 0
+
+    fetch_main_globals["main"] = fake_main
+    try:
+        with _isolated_config(None), contextlib.redirect_stdout(io.StringIO()):
+            rc = MODULE["fetch_main"]([
+                "https://example.com/title/blocked",
+                "-l", "ja",
+                "--title", "Known Title",
+                "--anilist", "145665",
+            ])
+        assert rc == 0
+    finally:
+        fetch_main_globals["main"] = real_main
+
+    assert captured == [[
+        "https://example.com/title/blocked",
+        "-l", "ja",
+        "--title", "Known Title",
+        "--anilist", "145665",
+    ]]
 
 
 def test_fetch_main_url_with_subdirectory_is_an_error():
@@ -6846,7 +7145,15 @@ def test_merge_l_accepts_format_hints_in_bare_cli():
     captured_paths: list = []
     scope = MODULE["combine_main"].__globals__
     saved_scanner = scope["scan_subtitle_files_extended"]
-    def fake_scanner(paths, *, format_hints=None, include_furigana=False, pseudo_langs=None):
+    def fake_scanner(
+        paths,
+        *,
+        format_hints=None,
+        include_furigana=False,
+        pseudo_langs=None,
+        requested_langs=None,
+        inferred_out=None,
+    ):
         captured_hints.update(format_hints or {})
         captured_paths.extend(paths)
         return []   # empty → "no episodes" path; we just want to verify the hint extraction
@@ -9868,6 +10175,73 @@ def test_wizard_source_picker_treats_free_text_as_title_search():
     assert "Matched title: TMDB Movie: The Simpsons Movie (2007)" in out
 
 
+def test_wizard_path_fetch_asks_for_better_title_override(tmp_path):
+    import contextlib
+    import io
+    s = MODULE["_WizardState"](steps={"fetch", "modify", "merge"})
+    root = tmp_path / "니아 오토마타"
+    root.mkdir()
+    (root / "[Ohys-Raws] NieR Automata Ver1.1a - 01.mp4").touch()
+
+    fn = MODULE["_wizard_q1_source"]
+    fn_g = fn.__globals__
+    saved_prompt = fn_g["_wizard_prompt"]
+    saved_picker = fn_g["_wizard_pick_title_candidate"]
+    saved_yesno = fn_g["_wizard_yesno"]
+
+    answers = iter([
+        "3",                 # source kind: local path
+        str(root),           # folder path
+        "2",                 # enter a better title
+        "NieR Automata Ver1.1a",
+    ])
+
+    def fake_prompt(label, default=None, **kwargs):
+        return next(answers)
+
+    try:
+        fn_g["_wizard_prompt"] = fake_prompt
+        fn_g["_wizard_pick_title_candidate"] = lambda title: (
+            "https://anilist.co/anime/145665/",
+            "anilist",
+            "AniList: 145665: NieR:Automata Ver1.1a / ニーア オートマタ Ver1.1a (2023, 12 eps)",
+            False,
+        )
+        fn_g["_wizard_yesno"] = lambda _q, default=False: False
+        with contextlib.redirect_stdout(io.StringIO()) as buf:
+            fn(s)
+        out = buf.getvalue()
+    finally:
+        fn_g["_wizard_prompt"] = saved_prompt
+        fn_g["_wizard_pick_title_candidate"] = saved_picker
+        fn_g["_wizard_yesno"] = saved_yesno
+
+    assert s.source_kind == "path"
+    assert s.source == str(root)
+    assert s.source_title == "NieR:Automata Ver1.1a"
+    assert s.source_anilist_id == "145665"
+    assert "Online subtitle search needs a movie/show title." in out
+    assert "Folder title guess: NieR Automata Ver1.1a" in out
+    cli = MODULE["_wizard_emit_cli_string"](s)
+    assert f"--fetch {MODULE['shlex'].quote(str(root))}" in cli
+    assert "--title 'NieR:Automata Ver1.1a'" in cli
+    assert "--anilist 145665" in cli
+    toml = MODULE["_wizard_emit_toml"](s)
+    assert 'title = "NieR:Automata Ver1.1a"' in toml
+    assert 'anilist = "145665"' in toml
+
+
+def test_wizard_path_fetch_title_guess_prefers_video_filename(tmp_path):
+    root = tmp_path / "니아 오토마타"
+    root.mkdir()
+    for ep in range(1, 4):
+        (root / f"[Ohys-Raws] NieR Automata Ver1.1a - {ep:02d} (BS11 1280x720 x264 AAC).mp4").touch()
+
+    guess = MODULE["_wizard_path_fetch_title_guess"](root)
+
+    assert guess == "NieR Automata Ver1.1a"
+
+
 def test_wizard_crunchyroll_watch_url_asks_for_stronger_source_when_metadata_fails():
     import contextlib
     import io
@@ -10244,6 +10618,40 @@ def test_wizard_title_candidate_no_hits_can_force_raw(monkeypatch, capsys):
     assert "Use exactly what I typed (advanced; may fail)" in out
 
 
+def test_wizard_title_candidate_no_hits_accepts_pasted_anilist_url(monkeypatch, capsys):
+    import io
+    fn = MODULE["_wizard_pick_title_candidate"]
+    fn_g = fn.__globals__
+    info_cls = MODULE["AniListInfo"]
+    monkeypatch.setitem(fn_g, "_wizard_title_candidates", lambda title: [])
+    monkeypatch.setitem(fn_g, "get_provider_api_key", lambda provider: "tmdb-key")
+    monkeypatch.setitem(
+        fn_g,
+        "fetch_anilist_info",
+        lambda anilist_id: info_cls(
+            id=anilist_id,
+            title="NieR:Automata Ver1.1a",
+            episodes=12,
+            format="TV",
+        ),
+    )
+    monkeypatch.setattr(fn_g["sys"], "stdin", type("TtyInput", (io.StringIO,), {
+        "isatty": lambda self: True,
+    })("https://anilist.co/anime/145665/NieRAutomata-Ver11a/\n"))
+
+    result = fn("니아 오토마타")
+    out = capsys.readouterr().out
+
+    assert result == (
+        "https://anilist.co/anime/145665/",
+        "anilist",
+        "AniList: 145665: NieR:Automata Ver1.1a (12 eps)",
+        False,
+    )
+    assert "No title matches found." in out
+    assert "Please enter one of: 1, 2." not in out
+
+
 def test_mediainfo_movie_skips_season_subdir():
     """output_dir flattens the layout for movies: archive layout becomes
     base/Title/ instead of base/Title/Season XX/."""
@@ -10309,12 +10717,13 @@ def test_save_subtitle_movie_filename_has_no_season_episode():
         scope["download_bytes"] = saved_dl
 
 
-def test_wizard_q11_banner_uses_fixed_70_char_rule():
-    """The Q11 banner '=' rule is a fixed 70 chars. Stretching to the CLI
-    command width produced ~190-char rules that wrap on standard 80-col
-    terminals; 70 fits any terminal with room to spare and the CLI command
-    soft-wraps below it instead. CLI form and TOML preview both appear
-    inside the banner; no 'About to run' confirm."""
+def test_wizard_q11_banner_uses_terminal_width_rule():
+    """The exact divider width is copy/UI, but it must stay terminal-sized.
+
+    Stretching to the CLI command width once produced ~190-char rules that
+    wrapped on standard terminals. The durable behavior is "reasonable
+    divider, no oversized divider"; wording and exact width can evolve.
+    """
     import io, contextlib
     s = MODULE["_WizardState"](
         source="https://www.themoviedb.org/movie/8392",
@@ -10332,7 +10741,7 @@ def test_wizard_q11_banner_uses_fixed_70_char_rule():
     fn_g = MODULE["_wizard_q11_action"].__globals__
     saved_input = fn_g.get("input")
     try:
-        _seq = iter(["3", "1"])  # 3 = show exact command/workflow, then run
+        _seq = iter(["3", "1"])  # show exact command/workflow, then run
         fn_g["input"] = lambda *a, **k: next(_seq, "1")
         with contextlib.redirect_stdout(buf):
             MODULE["_wizard_q11_action"](s)
@@ -10340,11 +10749,13 @@ def test_wizard_q11_banner_uses_fixed_70_char_rule():
         if saved_input is not None:
             fn_g["input"] = saved_input
     out = buf.getvalue()
-    rule = "=" * 70
-    assert rule in out
-    # No oversize rule.
-    assert "=" * 80 not in out
-    # CLI + workflow preview appear once option 6 is chosen.
+    divider_lines = [
+        line for line in out.splitlines()
+        if line and set(line) == {"="}
+    ]
+    assert divider_lines
+    assert max(len(line) for line in divider_lines) < 80
+    # CLI + workflow preview appear once the details option is chosen.
     assert cli in out
     assert "Workflow file" in out
     assert "About to run" not in out
@@ -11386,32 +11797,6 @@ def test_episode_label_se_returns_movie_for_zero_zero():
     assert label(1, 7) == "S01E07"
 
 
-def test_wizard_q4_master_lists_one_option_per_language():
-    """Q6 used to be 'first / custom'; now shows one option per language."""
-    import io, contextlib
-    fn_g = MODULE["_wizard_q4_master"].__globals__
-    saved = fn_g.get("input")
-    try:
-        # Pick the 3rd language explicitly via '3'.
-        fn_g["input"] = lambda *a, **k: "3"
-        s = MODULE["_WizardState"](
-            languages=["en", "ja", "ko", "zh", "yue"],
-            order=["en", "ja", "ko", "zh", "yue"],
-        )
-        buf = io.StringIO()
-        with contextlib.redirect_stdout(buf):
-            MODULE["_wizard_q4_master"](s)
-        out = buf.getvalue()
-        # All five languages appear as labeled options.
-        for num, code in zip("12345", ["en", "ja", "ko", "zh", "yue"]):
-            assert f"{num}) {code}" in out
-        assert "Custom" not in out
-        assert s.master == "ko"
-    finally:
-        if saved is not None:
-            fn_g["input"] = saved
-
-
 def test_wizard_q7_reading_aids_no_reading_aid_is_option_one_default():
     """Q9 has 'No reading aid (skip)' as option 1 (default) and the
     actual reading-aid options shift to 2..n+1."""
@@ -11881,28 +12266,6 @@ def test_wizard_q7_reading_aid_example_is_script_appropriate():
     finally:
         if saved_input is not None:
             fn_g["input"] = saved_input
-
-
-def test_wizard_q8_preset_description_is_short():
-    """Q9 used to be a 6-line essay about specific players. The shorter
-    version is at most 3 lines including the prompt label."""
-    import io, contextlib
-    fn_g = MODULE["_wizard_q8_asbplayer"].__globals__
-    saved_input = fn_g.get("input")
-    try:
-        fn_g["input"] = lambda *a, **k: "n"
-        s = MODULE["_WizardState"]()
-        buf = io.StringIO()
-        with contextlib.redirect_stdout(buf):
-            MODULE["_wizard_q8_asbplayer"](s)
-    finally:
-        if saved_input is not None:
-            fn_g["input"] = saved_input
-    out = buf.getvalue()
-    # Count non-empty body lines (exclude blank line + the prompt itself).
-    body = [ln for ln in out.splitlines()
-            if ln.strip() and "Apply cleanup preset?" not in ln]
-    assert len(body) <= 3, f"Q9 body too long: {body!r}"
 
 
 def test_wizard_q9_format_describes_vtt_and_ass_player_fit():

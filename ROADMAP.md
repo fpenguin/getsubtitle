@@ -98,6 +98,22 @@ final multi-language subtitle is readable enough to use for study.
 - v1.0 should not require users to understand provider internals, subtitle
   formats, or TOML before getting one useful multi-language subtitle file.
 
+## v0.9.6.3 — what's new
+
+- **Safer local-folder merge repair.** Merge can now conservatively use
+  release-style subtitle filenames such as `Show - 01 (...).srt` when the
+  folder already contains parseable episode context and the requested
+  language can be inferred confidently from script. This fixes common
+  Japanese/Korean local folders where one language is named cleanly and the
+  other came from a release archive without `.ko.srt` / `.ja.srt` tokens.
+- **Better timing guardrails.** Added regression coverage for realistic
+  subtitle pairs with a small constant offset, different cue counts, and
+  extra target-only cues so auto-sync keeps accepting good merges without
+  lowering thresholds for bad matches.
+- **Transparent auto-detection.** Merge reports the repaired subtitle files
+  it used before planning outputs, so users can see when GetSubtitle inferred
+  an episode or language from local files.
+
 ## v0.9.6.2 — what's new
 
 - **Netflix Helper design spec.** Added `NetflixHelper.md`, a standalone
