@@ -116,29 +116,31 @@ Q6. Subtitle text size?                                             Progress [�
 
   Number [1 | b=back | q=quit] >
 
-======================================================================
-Here's the plan:
-======================================================================
-  • Use local ja, en files in {TMP}/Show
+------------------------------------------------------------------------------------------------
+Review your workflow                                                Progress [◼◼◼◼◼◼◼◼◼◼◼◼◻] 99%
+
+Plan
+  • Use local ja, en files in:
+    {TMP}/Show
   • Clean up cues (single line, strip broadcast noise)
-  • Stack ja, en into one SRT file → *.ja-en.srt
+  • Stack ja, en into one SRT file: *.ja-en.srt
   • Use subtitle text size: Regular
-  • Save to {TMP}/Show
-======================================================================
-Smart defaults filled in for you (edit via 'Edit a single answer'):
-======================================================================
+  • Save to:
+    {TMP}/Show
+
+Smart defaults
   Display order   ja, en  (top → bottom on screen)
   Timing master   ja  (first language)
   Cleanup preset  on  (single-line cues + strip broadcast noise)
-  Output folder   {TMP}/Show  (beside source)
-======================================================================
+  Output folder   beside source
 
-    1) Run it now
-    2) Save as a reusable workflow file
-    3) Edit a single answer
-    4) Start over from beginning
-    5) Quit
-    6) Show the exact command & workflow file
+What next?
+  1) Run it now
+  2) Save as a reusable workflow file
+  3) Change something
+  4) Start over
+  5) Quit
+  6) Show exact command and workflow file
 
   Number [1 | b=back | q=quit] > 5
 Quit.

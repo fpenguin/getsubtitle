@@ -50,17 +50,14 @@ Q3. Enter the URL.                                                  Progress [�
 ------------------------------------------------------------------------------------------------
 Q4. What episode scope?                                             Progress [◼◼◼◼◼◼◻◻◻◻◻◻◻] 44%
 
-    1) One TV episode — Season 1 Episode 1
-    2) A specific season + episode (or range)
-    3) Whole season, every episode (-e all)
-    4) Auto — let getsubtitle infer from the URL/title metadata
+    1) Specific season + episode (or range)
+       Defaults to Season 1 Episode 1.
+    2) Whole season, every episode (-e all)
+    3) Auto — let getsubtitle infer from the URL/title metadata
        (anime URLs typically resolve to single episodes; movies to a
         single item; TV without -e usually picks S01E01)
 
-  Number [4 | b=back | q=quit] > 1
-    This selected source looks like a TV/show result, not a movie.
-    If you meant a movie, type 'b' and choose the movie result from title search.
-    For this TV/show source, I will use Season 1 Episode 1.
+  Number [3 | b=back | q=quit] > 3
 
 ------------------------------------------------------------------------------------------------
 Q5. Which subtitle languages do you want to collect?                Progress [◼◼◼◼◼◼◼◻◻◻◻◻◻] 56%
@@ -147,51 +144,49 @@ Q9. Subtitle text size?                                             Progress [�
 
   Number [1 | b=back | q=quit] >
 
-======================================================================
-Here's the plan:
-======================================================================
-  • Fetch ja, en for https://www.imdb.com/title/tt28299608/  (season 1, episode 1)
+------------------------------------------------------------------------------------------------
+Review your workflow                                                Progress [◼◼◼◼◼◼◼◼◼◼◼◼◻] 99%
+
+Plan
+  • Fetch ja, en for:
+    https://www.imdb.com/title/tt28299608/
   • Clean up cues (single line, strip broadcast noise)
-  • Stack ja, en into one SRT file → *.ja-en.srt
+  • Stack ja, en into one SRT file: *.ja-en.srt
   • Use subtitle text size: Regular
-  • Save to ~/Downloads/GetSubtitle
-======================================================================
-Before running:
-======================================================================
-  ⚠ Japanese subtitles can be harder to find automatically; manual search or translation may be needed.
-======================================================================
-Smart defaults filled in for you (edit via 'Edit a single answer'):
-======================================================================
+  • Save to:
+    ~/Downloads/GetSubtitle
+
+Heads up
+  ⚠ Japanese subtitles can be harder to find automatically; manual
+    search or translation may be needed.
+
+Smart defaults
   Display order   ja, en  (top → bottom on screen)
   Timing master   ja  (first language)
   Cleanup preset  on  (single-line cues + strip broadcast noise)
   Output folder   ~/Downloads/GetSubtitle
-======================================================================
 
-    1) Run it now
-    2) Save as a reusable workflow file
-    3) Edit a single answer
-    4) Start over from beginning
-    5) Quit
-    6) Show the exact command & workflow file
+What next?
+  1) Run it now
+  2) Save as a reusable workflow file
+  3) Change something
+  4) Start over
+  5) Quit
+  6) Show exact command and workflow file
 
   Number [2 | b=back | q=quit] > 2
 
 
   Save to (relative paths OK) [getsubtitle-workflow.toml] > {TMP}/saved.toml
-Saved: {TMP}/saved.toml
 
-Your saved.toml runs the same workflow as this command:
-  # getsubtitle --fetch https://www.imdb.com/title/tt28299608/ --season 1 --episode 1 --languages ja,en --no-engine --modify --season 1 --episode 1 --strip-cc-noise --single-line --merge --languages ja,en --season 1 --episode 1 --format srt --font-size regular --output ~/Downloads/GetSubtitle
+Saved workflow:
+  {TMP}/saved.toml
 
-Run it later with:
+Run later:
   getsubtitle --config {TMP}/saved.toml
 
-You can recycle this TOML and override saved settings with extra CLI flags.
-For example, reuse the same language, reading-aid, translation, and merge
-choices on another show or season:
-  getsubtitle --config {TMP}/saved.toml --source 'https://www.imdb.com/title/tt1234567/' --season 3 --episode all --output "$HOME/Downloads/GetSubtitle/TV Show/Season 03"
+    1) Show exact command
+    2) Open containing folder
+    3) Done
 
-CLI flags win over matching TOML settings, so the file can stay as a reusable template.
-
-  Open folder containing saved.toml? [Y/n] > n
+  Number [3] > n

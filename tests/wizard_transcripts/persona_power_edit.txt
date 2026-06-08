@@ -116,33 +116,35 @@ Q6. Subtitle text size?                                             Progress [�
 
   Number [1 | b=back | q=quit] >
 
-======================================================================
-Here's the plan:
-======================================================================
-  • Use local ja, en files in {TMP}/Show
+------------------------------------------------------------------------------------------------
+Review your workflow                                                Progress [◼◼◼◼◼◼◼◼◼◼◼◼◻] 99%
+
+Plan
+  • Use local ja, en files in:
+    {TMP}/Show
   • Clean up cues (single line, strip broadcast noise)
-  • Stack ja, en into one SRT file → *.ja-en.srt
+  • Stack ja, en into one SRT file: *.ja-en.srt
   • Use subtitle text size: Regular
-  • Save to {TMP}/Show
-======================================================================
-Smart defaults filled in for you (edit via 'Edit a single answer'):
-======================================================================
+  • Save to:
+    {TMP}/Show
+
+Smart defaults
   Display order   ja, en  (top → bottom on screen)
   Timing master   ja  (first language)
   Cleanup preset  on  (single-line cues + strip broadcast noise)
-  Output folder   {TMP}/Show  (beside source)
-======================================================================
+  Output folder   beside source
 
-    1) Run it now
-    2) Save as a reusable workflow file
-    3) Edit a single answer
-    4) Start over from beginning
-    5) Quit
-    6) Show the exact command & workflow file
+What next?
+  1) Run it now
+  2) Save as a reusable workflow file
+  3) Change something
+  4) Start over
+  5) Quit
+  6) Show exact command and workflow file
 
   Number [1 | b=back | q=quit] > 3
 
-Your answers so far:
+Current settings
   1) steps: modify + merge
   2) source: path — {TMP}/Show
   3) languages: ja, en
@@ -172,7 +174,7 @@ Q1. What would you like to do?
   Numbers or ranges, or Enter for default [1-4 | q=quit] > 3
     Selected: modify.
 
-Your answers so far:
+Current settings
   1) steps: modify
   2) source: path — {TMP}/Show
   3) languages: ja, en
@@ -182,38 +184,37 @@ Your answers so far:
 
   Number to change (1-6), or 'done' [done | b=back | q=quit] > done
 
-======================================================================
-Here's the plan:
-======================================================================
-  • Use local ja, en files in {TMP}/Show
-  • Clean up cues (single line, strip broadcast noise)
-  • Save to {TMP}/Show
-======================================================================
+------------------------------------------------------------------------------------------------
+Review your workflow                                                Progress [◼◼◼◼◼◼◼◼◼◼◼◼◻] 99%
 
-    1) Run it now
-    2) Save as a reusable workflow file
-    3) Edit a single answer
-    4) Start over from beginning
-    5) Quit
-    6) Show the exact command & workflow file
+Plan
+  • Use local ja, en files in:
+    {TMP}/Show
+  • Clean up cues (single line, strip broadcast noise)
+  • Save to:
+    {TMP}/Show
+
+What next?
+  1) Run it now
+  2) Save as a reusable workflow file
+  3) Change something
+  4) Start over
+  5) Quit
+  6) Show exact command and workflow file
 
   Number [1 | b=back | q=quit] > 2
 
 
   Save to (relative paths OK) [getsubtitle-workflow.toml] > {TMP}/edited.toml
-Saved: {TMP}/edited.toml
 
-Your edited.toml runs the same workflow as this command:
-  # getsubtitle modify {TMP}/Show --strip-cc-noise --single-line
+Saved workflow:
+  {TMP}/edited.toml
 
-Run it later with:
+Run later:
   getsubtitle --config {TMP}/edited.toml
 
-You can recycle this TOML and override saved settings with extra CLI flags.
-For example, reuse the same language, reading-aid, translation, and merge
-choices on another show or season:
-  getsubtitle --config {TMP}/edited.toml --source 'https://www.imdb.com/title/tt1234567/' --season 3 --episode all --output "$HOME/Downloads/GetSubtitle/TV Show/Season 03"
+    1) Show exact command
+    2) Open containing folder
+    3) Done
 
-CLI flags win over matching TOML settings, so the file can stay as a reusable template.
-
-  Open folder containing edited.toml? [Y/n] > n
+  Number [3] > n

@@ -105,28 +105,30 @@ Q5. Subtitle text size?                                             Progress [�
 
   Number [1 | b=back | q=quit] >
 
-======================================================================
-Here's the plan:
-======================================================================
-  • Use local ja, en files in {TMP}/Show
-  • Stack ja, en into one SRT file → *.ja-en.srt
+------------------------------------------------------------------------------------------------
+Review your workflow                                                Progress [◼◼◼◼◼◼◼◼◼◼◼◼◻] 99%
+
+Plan
+  • Use local ja, en files in:
+    {TMP}/Show
+  • Stack ja, en into one SRT file: *.ja-en.srt
   • Use subtitle text size: Regular
-  • Save to {TMP}/Show
-======================================================================
-Smart defaults filled in for you (edit via 'Edit a single answer'):
-======================================================================
+  • Save to:
+    {TMP}/Show
+
+Smart defaults
   Display order   ja, en  (top → bottom on screen)
   Timing master   ja  (first language)
   Cleanup preset  on  (single-line cues + strip broadcast noise)
-  Output folder   {TMP}/Show  (beside source)
-======================================================================
+  Output folder   beside source
 
-    1) Run it now
-    2) Save as a reusable workflow file
-    3) Edit a single answer
-    4) Start over from beginning
-    5) Quit
-    6) Show the exact command & workflow file
+What next?
+  1) Run it now
+  2) Save as a reusable workflow file
+  3) Change something
+  4) Start over
+  5) Quit
+  6) Show exact command and workflow file
 
   Number [1 | b=back | q=quit] > 1
 
@@ -135,6 +137,7 @@ Preflight check — 1 item(s) to know about:
       Why: Optional — the run works, but may fail or look worse without it.
       Fix: Check the folder path, extract MKV subtitles, or fetch/download subtitles first.
 
+------------------------------------------------------------------------------------------------
 Running:
   getsubtitle merge {TMP}/Show --languages ja,en --format srt --font-size regular --output {TMP}/Show
 
@@ -143,11 +146,6 @@ Running:
 Workflow summary
 ======================================================================
 Completed successfully
-Source: {TMP}/Show
-Scope: auto / not specified
-Languages requested: ja, en
-Output folder: {TMP}/Show
-Preflight warnings: 1
 
 Next steps:
   1. Merge later with: getsubtitle merge {TMP}/Show -l ja,en

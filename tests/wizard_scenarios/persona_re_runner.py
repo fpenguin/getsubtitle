@@ -1,9 +1,8 @@
 """Persona: experienced user wants a reusable workflow file.
 
-User completes the wizard with a URL source (so save is the default
-action), picks `save`, types a save path. The "Equivalent workflow
-file (save as .toml):" banner must appear in the Q12 transcript,
-and after saving the wizard prints the `--config` reuse hint."""
+User completes the wizard with a URL source, picks `save`, and types a
+save path. The post-save success path should stay short: show the saved
+file, the `--config` command, and the optional details menu."""
 
 from wizard_harness import Scenario
 
@@ -27,11 +26,10 @@ SCENARIO = Scenario(
     ],
     expect_state={"steps": {"fetch", "modify", "merge"}},
     expect_stdout_contains=[
-        # The exact command/TOML now live behind action 6; the Save flow's
-        # reuse guidance is what a saver actually sees.
+        "Saved workflow:",
         "getsubtitle --config",
-        "Run it later with:",
-        "You can recycle this TOML",
+        "Run later:",
+        "Show exact command",
     ],
     expect_main_call_count=0,
 )

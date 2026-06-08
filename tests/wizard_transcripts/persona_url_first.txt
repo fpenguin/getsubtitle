@@ -50,18 +50,15 @@ Q3. Enter the URL.                                                  Progress [�
 ------------------------------------------------------------------------------------------------
 Q4. What episode scope?                                             Progress [◼◼◼◼◼◼◻◻◻◻◻◻◻] 50%
 
-    1) One TV episode — Season 1 Episode 1
-    2) A specific season + episode (or range)
-    3) Whole season, every episode (-e all)
-    4) Auto — let getsubtitle infer from the URL/title metadata
+    1) Specific season + episode (or range)
+       Defaults to Season 1 Episode 1.
+    2) Whole season, every episode (-e all)
+    3) Auto — let getsubtitle infer from the URL/title metadata
        (anime URLs typically resolve to single episodes; movies to a
         single item; TV without -e usually picks S01E01)
 
-  Number [4 | b=back | q=quit] > 2
-
-  Season or range (e.g. 1, 2-3, all) [1 | b=back | q=quit] > 1
-
-  Episode or range within each season (e.g. 5, 1-10, all) [1 | b=back | q=quit] > 1
+  Number [3 | b=back | q=quit] > 2
+    (Note: -e all on non-anime TV requires a TMDB key. Run `getsubtitle --set-key tmdb` later if needed.)
 
 ------------------------------------------------------------------------------------------------
 Q5. Which subtitle languages do you want to collect?                Progress [◼◼◼◼◼◼◼◼◻◻◻◻◻] 64%
@@ -72,6 +69,14 @@ Q5. Which subtitle languages do you want to collect?                Progress [�
       ja,en : Japanese on top and English below (optional furigana support)
       ko,en,es : Korean on top, then English and Spanish (optional romanization support)
       japanese,korean,english,spanish : 2-letter codes and full language names both work
+
+  Languages (comma-separated) [ja,en | b=back | q=quit] > 1
+    I don't recognize: 1
+    Use 2-letter codes or full names, like ja,en or japanese,korean,english.
+
+  Languages (comma-separated) [ja,en | b=back | q=quit] > 1
+    I don't recognize: 1
+    Use 2-letter codes or full names, like ja,en or japanese,korean,english.
 
   Languages (comma-separated) [ja,en | b=back | q=quit] > ja,en
 
@@ -126,57 +131,52 @@ Q7. Final output format.                                            Progress [�
 
     Suggested default: VTT — VTT supports true Japanese ruby in browsers/asbplayer; local players vary.
 
-    Reading-aid notes:
-      VTT can show true ruby above Japanese text in browsers/asbplayer.
-      SRT/SMI/ASS use fallback reading-aid layouts instead.
-
   Final format [3 | b=back | q=quit] >
 
-======================================================================
-Here's the plan:
-======================================================================
-  • Fetch ja, en for https://www.imdb.com/title/tt28299608/  (season 1, episode 1)
+------------------------------------------------------------------------------------------------
+Review your workflow                                                Progress [◼◼◼◼◼◼◼◼◼◼◼◼◻] 99%
+
+Plan
+  • Fetch ja, en for:
+    https://www.imdb.com/title/tt28299608/  (season 1, episode all)
   • Add reading aids: ja:hiragana
-  • Stack ja, en into one VTT file → *.ja-en.vtt
-  • Save to ~/Downloads/GetSubtitle
-======================================================================
-Before running:
-======================================================================
-  ⚠ Japanese subtitles can be harder to find automatically; manual search or translation may be needed.
-  ⚠ VTT reading aids work best in browsers/asbplayer; local player support varies.
-======================================================================
-Smart defaults filled in for you (edit via 'Edit a single answer'):
-======================================================================
+  • Stack ja, en into one VTT file: *.ja-en.vtt
+  • Save to:
+    ~/Downloads/GetSubtitle
+
+Heads up
+  ⚠ Japanese subtitles can be harder to find automatically; manual
+    search or translation may be needed.
+  ⚠ VTT reading aids work best in browsers/asbplayer; local player
+    support varies.
+
+Smart defaults
   Display order   ja, en  (top → bottom on screen)
   Timing master   ja  (first language)
   Cleanup preset  on  (single-line cues + strip broadcast noise)
   Output folder   ~/Downloads/GetSubtitle
-======================================================================
 
-    1) Run it now
-    2) Save as a reusable workflow file
-    3) Edit a single answer
-    4) Start over from beginning
-    5) Quit
-    6) Show the exact command & workflow file
+What next?
+  1) Run it now
+  2) Save as a reusable workflow file
+  3) Change something
+  4) Start over
+  5) Quit
+  6) Show exact command and workflow file
 
   Number [2 | b=back | q=quit] >
 
 
   Save to (relative paths OK) [getsubtitle-workflow.toml] > {TMP}/url-first.toml
-Saved: {TMP}/url-first.toml
 
-Your url-first.toml runs the same workflow as this command:
-  # getsubtitle --fetch https://www.imdb.com/title/tt28299608/ --season 1 --episode 1 --languages ja,en --no-engine --modify --season 1 --episode 1 --strip-cc-noise --single-line --reading ja:hiragana --reading-format vtt --merge --languages ja,en --season 1 --episode 1 --reading ja:hiragana --format vtt --output ~/Downloads/GetSubtitle
+Saved workflow:
+  {TMP}/url-first.toml
 
-Run it later with:
+Run later:
   getsubtitle --config {TMP}/url-first.toml
 
-You can recycle this TOML and override saved settings with extra CLI flags.
-For example, reuse the same language, reading-aid, translation, and merge
-choices on another show or season:
-  getsubtitle --config {TMP}/url-first.toml --source 'https://www.imdb.com/title/tt1234567/' --season 3 --episode all --output "$HOME/Downloads/GetSubtitle/TV Show/Season 03"
+    1) Show exact command
+    2) Open containing folder
+    3) Done
 
-CLI flags win over matching TOML settings, so the file can stay as a reusable template.
-
-  Open folder containing url-first.toml? [Y/n] > n
+  Number [3] > n

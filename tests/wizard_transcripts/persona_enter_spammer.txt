@@ -132,29 +132,31 @@ Q8. Subtitle text size?                                             Progress [�
 
   Number [1 | b=back | q=quit] >
 
-======================================================================
-Here's the plan:
-======================================================================
-  • Fetch ja, en for {TMP}/Foo
+------------------------------------------------------------------------------------------------
+Review your workflow                                                Progress [◼◼◼◼◼◼◼◼◼◼◼◼◻] 99%
+
+Plan
+  • Fetch ja, en for:
+    {TMP}/Foo
   • Clean up cues (single line, strip broadcast noise)
-  • Stack ja, en into one SRT file → *.ja-en.srt
+  • Stack ja, en into one SRT file: *.ja-en.srt
   • Use subtitle text size: Regular
-  • Save to {TMP}/Foo
-======================================================================
-Smart defaults filled in for you (edit via 'Edit a single answer'):
-======================================================================
+  • Save to:
+    {TMP}/Foo
+
+Smart defaults
   Display order   ja, en  (top → bottom on screen)
   Timing master   ja  (first language)
   Cleanup preset  on  (single-line cues + strip broadcast noise)
-  Output folder   {TMP}/Foo  (beside source)
-======================================================================
+  Output folder   beside source
 
-    1) Run it now
-    2) Save as a reusable workflow file
-    3) Edit a single answer
-    4) Start over from beginning
-    5) Quit
-    6) Show the exact command & workflow file
+What next?
+  1) Run it now
+  2) Save as a reusable workflow file
+  3) Change something
+  4) Start over
+  5) Quit
+  6) Show exact command and workflow file
 
   Number [1 | b=back | q=quit] >
 
@@ -163,6 +165,7 @@ Preflight check — 1 item(s) to know about:
       Why: Heads-up — no action needed before running.
       Fix: Fast scan checked 2 subtitle candidate(s).
 
+------------------------------------------------------------------------------------------------
 Running:
   getsubtitle --fetch {TMP}/Foo --languages ja,en --modify --strip-cc-noise --single-line --merge --languages ja,en --format srt --font-size regular --output {TMP}/Foo
 
@@ -171,11 +174,6 @@ Running:
 Workflow summary
 ======================================================================
 Completed successfully
-Source: {TMP}/Foo
-Scope: auto / not specified
-Languages requested: ja, en
-Output folder: {TMP}/Foo
-Preflight info: 1
 
 Next steps:
   1. Merge later with: getsubtitle merge {TMP}/Foo -l ja,en

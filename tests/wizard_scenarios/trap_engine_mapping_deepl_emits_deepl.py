@@ -14,7 +14,7 @@ SCENARIO = Scenario(
         "1,2,3,4",      # all four steps so translate Q fires
         "2",            # URL source
         "https://www.imdb.com/title/tt28299608/",
-        "1",            # scope: movie
+        "3",            # scope: auto
         "ja,en",
         "4",            # Q6 translate engine: DeepL
         "1",            # reading aids — skip

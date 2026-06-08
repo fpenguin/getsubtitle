@@ -1,7 +1,7 @@
-"""Trap: after the user saves a workflow TOML, the wizard must surface
-the reuse hint that explains `--config FILE.toml` AND show how CLI
-overrides layer on top (e.g. `--source URL --output PATH`). Then it
-must offer to open the folder containing the file."""
+"""Trap: after the user saves a workflow TOML, the wizard must keep the
+success path short while making details available on demand. Choosing
+"Show exact command" should reveal the `--config FILE.toml` reuse hint
+and how CLI overrides layer on top (e.g. `--source URL --output PATH`)."""
 
 from wizard_harness import Scenario
 
@@ -20,14 +20,16 @@ SCENARIO = Scenario(
         "",             # font size — regular
         "2",            # action: save
         "{TMP}/Reusable.toml",  # save filename
-        "n",            # decline opening the save folder
+        "1",            # show exact command/details
+        "2",            # open containing folder
+        "3",            # done
     ],
     expect_state={"steps": {"modify", "merge"}},
     expect_stdout_contains=[
         "getsubtitle --config",
         "--source",
         "--output",
-        "Open folder containing Reusable.toml?",
+        "Open containing folder",
         "CLI flags win over matching TOML settings",
     ],
     # 'save' must not dispatch main().

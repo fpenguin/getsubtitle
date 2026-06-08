@@ -14,7 +14,7 @@ SCENARIO = Scenario(
         "1,3,4",        # fetch + modify + merge
         "2",            # URL source
         "https://www.crunchyroll.com/watch/GZ7UDVKPD/miraculous-comeback",
-        "2",            # explicit scope
+        "1",            # specific season + episode/range
         "3",            # Season 3
         "1-13",         # Subtitle-source numbering for Season 3
         "2",            # output filenames should match page numbering

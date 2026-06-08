@@ -28,11 +28,13 @@
 # order: fetch → translate → modify → merge → output → experimental.
 #
 # DO NOT put API keys here. Keys live in macOS Keychain or in environment
-# variables (JIMAKU_API_KEY, WYZIE_API_KEY, SUBDL_API_KEY, DEEPL_API_KEY, TMDB_API_KEY).
+# variables (JIMAKU_API_KEY, WYZIE_API_KEY, SUBDL_API_KEY, DEEPL_API_KEY,
+# TMDB_API_KEY).
 #
 # ───────────────────────────────────────────────────────────────────────
 # Quickstart recipes — pick the closest match and copy that block. The
-# active values below are tuned for an English speaker learning Japanese.
+# active values below are a simple Japanese-learning example; change them
+# for Korean, Spanish, Chinese, Cantonese, or your own language pair.
 #
 # (1) English speaker learning Japanese (default below)
 #       [fetch]
@@ -174,9 +176,10 @@ auto_unload = true
 # "en:fr" = "llama3.2:3b"
 
 
-# ─── [modify] ─── cleanup applied to downloaded subtitle files ─────────
-# These run automatically after fetch (so the SRTs landing on disk are
-# already cleaned), and again whenever you call `getsubtitle modify`.
+# ─── [modify] ─── cleanup applied when Modify runs ────────────────────
+# These apply when a workflow includes Modify — for example
+# `getsubtitle modify`, `getsubtitle -i` with Modify selected, or a
+# pipeline that includes `--modify`.
 
 [modify]
 
@@ -207,15 +210,16 @@ strip_cc_noise = true
 # Which file formats to generate for the reading-aid side files. One of:
 #   "srt"    — broadly compatible, inline parenthetical readings.
 #              Safest fallback. One file per episode.
-#   "vtt"    — ruby <ruby><rt> markup. Best for Japanese furigana in
-#              asbplayer/browser study when Settings > Misc > Subtitles >
-#              Subtitle HTML = Render.
+#   "vtt"    — ruby <ruby><rt> markup. Best for browser/asbplayer Japanese
+#              ruby when Settings > Misc > Subtitles > Subtitle HTML =
+#              Render. Local video-player support varies.
 #   "ass"    — stacked-line ASS. Best local-player choice for Korean,
 #              Mandarin, and Cantonese readings above the original script.
 #   "all"    — generate all three (srt + ass + vtt) — useful when you
 #              want different formats for different downstream uses.
 # Comma-lists also work: "srt,vtt"
-# Default: "srt"
+# Default: "srt". The interactive wizard may recommend a different final
+# merge format based on your reading aid and viewing environment.
 reading_format = "srt"
 
 

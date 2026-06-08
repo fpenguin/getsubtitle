@@ -38,6 +38,7 @@ ANIME_IDS_URL = "https://raw.githubusercontent.com/Kometa-Team/Anime-IDs/master/
 SUBDIVX_BASE = "https://www.subdivx.com"
 SUBDIVX_SEARCH_URL = SUBDIVX_BASE + "/inc/ajax.php"
 ADDIC7ED_BASE = "https://www.addic7ed.com"
+CRUNCHYROLL_AUTH_API = "https://www.crunchyroll.com/auth/v1/token"
 ADDIC7ED_KOREAN_LANG_ID = 22  # Addic7ed's internal numeric ID for Korean.
 ADDIC7ED_BROWSER_UA = (
     "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
@@ -58,6 +59,9 @@ ASS_FURIGANA_SCALE_X = round(100 * ASS_BASE_FONT_SIZE / ASS_FURIGANA_FONT_SIZE)
 ASS_FONT_NAME = "monospace"
 ANSI_RED = "\033[31m"
 ANSI_RESET = "\033[0m"
+JSON_REQUEST_TIMEOUT_SECONDS = 20
+PROVIDER_SEARCH_TIMEOUT_SECONDS = 6
+SUBTITLE_DOWNLOAD_TIMEOUT_SECONDS = 60
 
 
 class CliError(Exception):
@@ -316,6 +320,19 @@ class ManualSearchSuggestion:
 
 
 @dataclass
+class CrunchyrollMetadata:
+    title: str
+    url: str
+    crunchyroll_id: str
+    content_type: str = ""
+    series_id: str | None = None
+    episode_title: str | None = None
+    season: str = "auto"
+    episode: str = "auto"
+    is_movie: bool = False
+
+
+@dataclass
 class ProviderDebugRecord:
     provider: str
     episode: str
@@ -426,7 +443,13 @@ def add_media_title_aliases(media: MediaInfo, aliases: Iterable[str | None]) -> 
     ]
 
 
-def request_json(url: str, *, headers: dict[str, str] | None = None, data: dict | None = None) -> object:
+def request_json(
+    url: str,
+    *,
+    headers: dict[str, str] | None = None,
+    data: dict | None = None,
+    timeout: int | float = JSON_REQUEST_TIMEOUT_SECONDS,
+) -> object:
     payload = None
     req_headers = {
         "User-Agent": "getsubtitle/0.1",
@@ -439,7 +462,7 @@ def request_json(url: str, *, headers: dict[str, str] | None = None, data: dict 
         req_headers["Content-Type"] = "application/json"
     req = urllib.request.Request(url, data=payload, headers=req_headers)
     try:
-        with urllib.request.urlopen(req, timeout=20) as res:
+        with urllib.request.urlopen(req, timeout=timeout) as res:
             return json.loads(res.read().decode("utf-8"))
     except urllib.error.HTTPError as e:
         body = e.read().decode("utf-8", errors="replace")
@@ -685,7 +708,7 @@ def download_bytes(url: str, headers: dict[str, str] | None = None) -> bytes:
         request_headers.update(headers)
     req = urllib.request.Request(url, headers=request_headers)
     try:
-        with urllib.request.urlopen(req, timeout=60) as res:
+        with urllib.request.urlopen(req, timeout=SUBTITLE_DOWNLOAD_TIMEOUT_SECONDS) as res:
             return res.read()
     except urllib.error.HTTPError as e:
         body = e.read().decode("utf-8", errors="replace")
@@ -1549,6 +1572,22 @@ def infer_from_crunchyroll_url(url: str) -> MediaInfo:
         if re.fullmatch(r"[A-Z0-9]{6,}", parts[1]):
             crunchyroll_id = parts[1]
 
+    metadata = crunchyroll_metadata_from_url(url)
+    if metadata:
+        media = MediaInfo(
+            source_url=metadata.url or url,
+            provider="crunchyroll",
+            title=metadata.title,
+            episode=metadata.episode,
+            season=metadata.season,
+            is_movie=metadata.is_movie,
+        )
+        add_media_title_aliases(media, [metadata.episode_title])
+        setattr(media, "crunchyroll_id", metadata.crunchyroll_id)
+        if metadata.series_id:
+            setattr(media, "crunchyroll_series_id", metadata.series_id)
+        return media
+
     html = request_text(url)
     if html:
         if "Just a moment..." in html and "challenges.cloudflare.com" in html:
@@ -1587,6 +1626,206 @@ def infer_from_crunchyroll_url(url: str) -> MediaInfo:
     if crunchyroll_id:
         setattr(media, "crunchyroll_id", crunchyroll_id)
     return media
+
+
+def crunchyroll_path_parts(url: str) -> list[str]:
+    return [p for p in urllib.parse.urlparse(url).path.split("/") if p]
+
+
+def crunchyroll_object_id_from_url(url: str) -> str | None:
+    parsed = urllib.parse.urlparse(url)
+    if "crunchyroll.com" not in parsed.netloc.lower():
+        return None
+    parts = crunchyroll_path_parts(url)
+    if len(parts) >= 2 and parts[0] in {"watch", "series"} and re.fullmatch(r"[A-Z0-9]{6,}", parts[1]):
+        return parts[1]
+    return None
+
+
+def crunchyroll_watch_id_from_url(url: str) -> str | None:
+    parsed = urllib.parse.urlparse(url)
+    if "crunchyroll.com" not in parsed.netloc.lower():
+        return None
+    parts = crunchyroll_path_parts(url)
+    if len(parts) >= 2 and parts[0] == "watch" and re.fullmatch(r"[A-Z0-9]{6,}", parts[1]):
+        return parts[1]
+    return None
+
+
+def crunchyroll_watch_slug_from_url(url: str) -> str:
+    parts = crunchyroll_path_parts(url)
+    if len(parts) >= 3 and parts[0] == "watch":
+        return parts[2]
+    return ""
+
+
+def request_json_browser(
+    url: str,
+    *,
+    headers: dict[str, str] | None = None,
+    data: dict[str, str] | None = None,
+    method: str = "GET",
+    timeout: int | float = PROVIDER_SEARCH_TIMEOUT_SECONDS,
+) -> object:
+    """Browser-like JSON request used for public metadata pages that reject
+    vanilla urllib TLS/HTTP fingerprints. This is not used for login, subtitle
+    downloads, or bypassing site restrictions."""
+    try:
+        from curl_cffi import requests as curl_requests
+    except ImportError as exc:
+        raise CliError("curl_cffi is required for Crunchyroll metadata lookup. Run: pip install curl_cffi") from exc
+
+    request_headers = {
+        "Accept": "application/json",
+        "Accept-Language": "en-US,en;q=0.9",
+    }
+    if headers:
+        request_headers.update(headers)
+    try:
+        response = curl_requests.request(
+            method,
+            url,
+            headers=request_headers,
+            data=data,
+            timeout=timeout,
+            impersonate="chrome",
+        )
+    except Exception as exc:
+        raise CliError(f"Network error for {redact_url(url)}: {exc}") from exc
+    if response.status_code >= 400:
+        body = response.text or ""
+        raise CliError(f"HTTP {response.status_code} from {redact_url(url)}: {body[:300]}")
+    try:
+        return response.json()
+    except ValueError as exc:
+        raise CliError(f"Invalid JSON from {redact_url(url)}") from exc
+
+
+def crunchyroll_anonymous_token() -> str | None:
+    data = request_json_browser(
+        CRUNCHYROLL_AUTH_API,
+        method="POST",
+        headers={"Content-Type": "application/x-www-form-urlencoded"},
+        data={"grant_type": "client_id", "client_id": "cr_web"},
+        timeout=PROVIDER_SEARCH_TIMEOUT_SECONDS,
+    )
+    if not isinstance(data, dict):
+        return None
+    token = data.get("access_token")
+    return token.strip() if isinstance(token, str) and token.strip() else None
+
+
+def crunchyroll_content_object(crunchyroll_id: str) -> dict | None:
+    if not crunchyroll_id:
+        return None
+    token = crunchyroll_anonymous_token()
+    if not token:
+        return None
+    url = (
+        "https://www.crunchyroll.com/content/v2/cms/objects/"
+        f"{urllib.parse.quote(crunchyroll_id)}?locale=en-US"
+    )
+    data = request_json_browser(
+        url,
+        headers={"Authorization": f"Bearer {token}"},
+        timeout=PROVIDER_SEARCH_TIMEOUT_SECONDS,
+    )
+    if not isinstance(data, dict):
+        return None
+    rows = data.get("data")
+    if isinstance(rows, list) and rows and isinstance(rows[0], dict):
+        return rows[0]
+    return None
+
+
+def _crunchyroll_series_url(series_id: str, slug_title: str | None = None) -> str:
+    slug = (slug_title or "").strip() or series_id
+    return f"https://www.crunchyroll.com/series/{series_id}/{slug}"
+
+
+def crunchyroll_metadata_from_url(url: str) -> CrunchyrollMetadata | None:
+    crunchyroll_id = crunchyroll_object_id_from_url(url)
+    if not crunchyroll_id:
+        return None
+    try:
+        obj = crunchyroll_content_object(crunchyroll_id)
+    except CliError:
+        return None
+    if not obj:
+        return None
+
+    content_type = str(obj.get("type") or "")
+    title = str(obj.get("title") or "").strip()
+    slug_title = str(obj.get("slug_title") or "").strip()
+    episode_title: str | None = None
+    season = "auto"
+    episode = "auto"
+    is_movie = content_type in {"movie", "movie_listing"}
+    series_id = crunchyroll_id
+    series_slug = slug_title
+
+    episode_meta = obj.get("episode_metadata")
+    if isinstance(episode_meta, dict):
+        episode_title = title or None
+        series_id = str(episode_meta.get("series_id") or crunchyroll_id).strip()
+        series_slug = str(episode_meta.get("series_slug_title") or series_slug).strip()
+        series_title = str(episode_meta.get("series_title") or "").strip()
+        if series_title:
+            title = series_title
+        season_number = episode_meta.get("season_number")
+        episode_number = episode_meta.get("episode_number") or episode_meta.get("episode")
+        if season_number is not None:
+            season = str(int(season_number)) if str(season_number).isdigit() else str(season_number)
+        if episode_number is not None:
+            episode = str(int(episode_number)) if str(episode_number).isdigit() else str(episode_number)
+        # Crunchyroll represents some movies as a one-item episode listing.
+        # If the series and episode titles are the same and the season is 0,
+        # treat it as a single movie-like item for cleaner filenames.
+        if season == "0" and title and episode_title and _norm_title_key(title) == _norm_title_key(episode_title):
+            is_movie = True
+
+    series_meta = obj.get("series_metadata")
+    if isinstance(series_meta, dict):
+        series_id = str(obj.get("id") or series_id).strip()
+        series_slug = str(obj.get("slug_title") or series_slug).strip()
+        title = str(obj.get("title") or title).strip()
+
+    if not title:
+        title = slug_to_title(series_slug or crunchyroll_id)
+    series_url = _crunchyroll_series_url(series_id, series_slug) if series_id else (url or "")
+    return CrunchyrollMetadata(
+        title=title,
+        url=series_url,
+        crunchyroll_id=crunchyroll_id,
+        content_type=content_type,
+        series_id=series_id or None,
+        episode_title=episode_title,
+        season=season,
+        episode=episode,
+        is_movie=is_movie,
+    )
+
+
+def apply_crunchyroll_metadata(media: MediaInfo) -> bool:
+    if media.provider != "crunchyroll":
+        return False
+    metadata = crunchyroll_metadata_from_url(media.source_url or "")
+    if not metadata:
+        return False
+    media.source_url = metadata.url or media.source_url
+    media.title = metadata.title or media.title
+    if metadata.season and media.season in {"", "auto", None}:
+        media.season = metadata.season
+    if metadata.episode and media.episode in {"", "auto", None}:
+        media.episode = metadata.episode
+    media.is_movie = media.is_movie or metadata.is_movie
+    add_media_title_aliases(media, [metadata.episode_title])
+    print("Crunchyroll metadata lookup:")
+    print(f"  Found series: {media.title}")
+    if metadata.episode_title:
+        print(f"  Episode title: {metadata.episode_title}")
+    print(f"  Using: {metadata.url}")
+    return True
 
 
 def netflix_id_from_url(url: str) -> str | None:
@@ -2041,7 +2280,11 @@ class JimakuProvider:
 
     def _search_entries(self, params: dict[str, object]) -> list[dict]:
         q = urllib.parse.urlencode(params)
-        entries = request_json(f"{JIMAKU_API}/entries/search?{q}", headers=self._headers())
+        entries = request_json(
+            f"{JIMAKU_API}/entries/search?{q}",
+            headers=self._headers(),
+            timeout=PROVIDER_SEARCH_TIMEOUT_SECONDS,
+        )
         if not isinstance(entries, list):
             raise CliError("Unexpected Jimaku response.")
         return [entry for entry in entries if isinstance(entry, dict)]
@@ -2156,7 +2399,7 @@ class JimakuProvider:
         url = f"{JIMAKU_API}/entries/{entry_id}/files"
         if episode not in {"all", "auto"}:
             url += "?" + urllib.parse.urlencode({"episode": episode})
-        files = request_json(url, headers=self._headers())
+        files = request_json(url, headers=self._headers(), timeout=PROVIDER_SEARCH_TIMEOUT_SECONDS)
         if not isinstance(files, list):
             raise CliError("Unexpected Jimaku response.")
         subs = []
@@ -2219,7 +2462,7 @@ class WyzieProvider:
     def _fetch(self, params: dict[str, str]) -> list[dict]:
         url = WYZIE_API + "?" + urllib.parse.urlencode(params)
         try:
-            data = request_json(url)
+            data = request_json(url, timeout=PROVIDER_SEARCH_TIMEOUT_SECONDS)
         except CliError as e:
             if "No subtitles found" in str(e):
                 return []
@@ -2384,7 +2627,7 @@ class SubDLProvider:
         if cache_key in self._cache:
             return self._cache[cache_key]
         url = SUBDL_API + "?" + urllib.parse.urlencode(params)
-        data = request_json(url)
+        data = request_json(url, timeout=PROVIDER_SEARCH_TIMEOUT_SECONDS)
         if not isinstance(data, dict):
             raise CliError("Unexpected SubDL response.")
         if data.get("status") is False:
@@ -4435,24 +4678,65 @@ def has_kanji(text: str) -> bool:
 EXISTING_READING_RE = re.compile(r"([\u4e00-\u9fff々〆ヶ]+)[(（]([ぁ-ゖァ-ヺーa-zA-Z0-9 -]+)[)）]")
 
 
-# Map our public Japanese reading-mode names onto pykakasi's per-token
-# field keys. pykakasi.convert() returns entries with at least:
-#   orig    — the original token
-#   hira    — hiragana reading
-#   kana    — katakana reading
-#   hepburn — Hepburn romaji reading
-# Keeping the mapping in one place lets every ja helper stay consistent.
-_PYKAKASI_KEY_FOR_MODE: dict[str, str] = {
-    "hiragana": "hira",
-    "katakana": "kana",
-    "romaji": "hepburn",
-}
+@dataclass
+class JapaneseReadingToken:
+    surface: str
+    hira: str
+    kana: str
+    romaji: str
+    pos: tuple[str, ...] = field(default_factory=tuple)
 
 
-def _pykakasi_reading_key(mode: str) -> str:
-    """Pick the right pykakasi field for a Japanese reading mode.
-    Unknown modes default to hiragana — the historical fallback."""
-    return _PYKAKASI_KEY_FOR_MODE.get(mode, "hira")
+_SUDACHI_TOKENIZER = None
+_SUDACHI_SPLIT_MODE = None
+
+
+def _sudachi_missing_error() -> CliError:
+    return CliError(
+        "Japanese reading aids need SudachiPy and SudachiDict-core.\n"
+        "  Quick install: python3 -m pip install sudachipy sudachidict_core\n"
+        "  Or reinstall with the extra: pip install -e \".[furigana]\"\n"
+        "  See: getsubtitle --help reading"
+    )
+
+
+def _sudachi() -> tuple[object, object]:
+    global _SUDACHI_TOKENIZER, _SUDACHI_SPLIT_MODE
+    if _SUDACHI_TOKENIZER is not None and _SUDACHI_SPLIT_MODE is not None:
+        return _SUDACHI_TOKENIZER, _SUDACHI_SPLIT_MODE
+    try:
+        from sudachipy import dictionary, tokenizer  # type: ignore
+    except Exception as e:
+        raise _sudachi_missing_error() from e
+    try:
+        _SUDACHI_TOKENIZER = dictionary.Dictionary().create()
+        _SUDACHI_SPLIT_MODE = tokenizer.Tokenizer.SplitMode.C
+    except Exception as e:
+        raise _sudachi_missing_error() from e
+    return _SUDACHI_TOKENIZER, _SUDACHI_SPLIT_MODE
+
+
+def _japanese_reading_tokens(text: str) -> list[JapaneseReadingToken]:
+    tokenizer_obj, split_mode = _sudachi()
+    tokens: list[JapaneseReadingToken] = []
+    for morpheme in tokenizer_obj.tokenize(text, split_mode):
+        surface = morpheme.surface()
+        pos = tuple(morpheme.part_of_speech())
+        kana = morpheme.reading_form() or surface
+        if kana == "*" or (pos and pos[0] == "補助記号"):
+            kana = surface
+        hira = kana_to_hiragana(kana)
+        romaji = kana_to_romaji(hira, surface=surface)
+        tokens.append(JapaneseReadingToken(surface, hira, kana, romaji, pos))
+    return tokens
+
+
+def _reading_for_mode(token: JapaneseReadingToken, mode: str) -> str:
+    if mode == "katakana":
+        return token.kana
+    if mode == "romaji":
+        return token.romaji
+    return token.hira
 
 
 def strip_inline_furigana(text: str) -> str:
@@ -4542,32 +4826,47 @@ def _join_romaji_tokens(tokens: list[str]) -> str:
     return out.strip()
 
 
+def _join_japanese_romaji_tokens(tokens: list[JapaneseReadingToken]) -> str:
+    out = ""
+    previous: JapaneseReadingToken | None = None
+    for token in tokens:
+        text = token.romaji if token.romaji and token.romaji != token.surface else token.surface
+        if not text:
+            continue
+        attaches_as_auxiliary = (
+            token.pos
+            and token.pos[0] == "助動詞"
+            and previous is not None
+            and previous.pos
+            and previous.pos[0] in {"動詞", "形容詞", "助動詞"}
+        )
+        attach_to_previous = (
+            token.surface[0] in ROMAJI_NO_SPACE_BEFORE
+            or (token.pos and token.pos[0] == "接尾辞")
+            or attaches_as_auxiliary
+            or (previous is not None and previous.pos and previous.pos[0] in {"接頭辞"})
+        )
+        if not out:
+            out = text
+        elif attach_to_previous or out[-1] in ROMAJI_NO_SPACE_AFTER:
+            out += text
+        else:
+            out += " " + text
+        previous = token
+    return out.strip()
+
+
 def japanese_full_sentence_reading(text: str, mode: str) -> str:
     """Return a full Japanese reading line for romaji-style learner rows."""
-    try:
-        import pykakasi  # type: ignore
-    except Exception as e:
-        raise CliError(
-            "Furigana needs the pykakasi package.\n"
-            "  Quick install: python3 -m pip install pykakasi\n"
-            "  Or reinstall with the extra: pip install -e \".[furigana]\"\n"
-            "  See: getsubtitle --help reading"
-        ) from e
-
     text = EXISTING_READING_RE.sub(lambda m: m.group(1), strip_subtitle_markup(text))
-    kakasi = pykakasi.kakasi()
-    converted = kakasi.convert(text)
+    converted = _japanese_reading_tokens(text)
+    if mode == "romaji":
+        return _join_japanese_romaji_tokens(converted)
     chunks: list[str] = []
-    for c in converted:
-        surface = c.get("orig", "")
-        reading = c.get(_pykakasi_reading_key(mode), "")
+    for token in converted:
+        surface = token.surface
+        reading = _reading_for_mode(token, mode)
         if reading and reading != surface and (has_kanji(surface) or mode == "romaji"):
-            if mode == "romaji" and surface and not has_kanji(surface):
-                particle = ROMAJI_LEADING_PARTICLES.get(surface[0])
-                if particle and reading.startswith(particle) and len(reading) > len(particle):
-                    chunks.append(particle)
-                    chunks.append(reading[len(particle):])
-                    continue
             chunks.append(reading)
         else:
             chunks.append(surface)
@@ -4577,54 +4876,38 @@ def japanese_full_sentence_reading(text: str, mode: str) -> str:
 
 
 def text_with_readings(text: str, mode: str) -> str:
-    try:
-        import pykakasi  # type: ignore
-    except Exception as e:
-        raise CliError(
-            "Furigana needs the pykakasi package.\n"
-            "  Quick install: python3 -m pip install pykakasi\n"
-            "  Or reinstall with the extra: pip install -e \".[furigana]\"\n"
-            "  See: getsubtitle --help reading"
-        ) from e
-
     protected_text, protected = protect_existing_readings(strip_subtitle_markup(text))
-    kakasi = pykakasi.kakasi()
-    converted = kakasi.convert(protected_text)
     chunks = []
-    for c in converted:
-        surface = c.get("orig", "")
-        reading = c.get(_pykakasi_reading_key(mode), "")
+    for token in _japanese_reading_tokens(protected_text):
+        surface = token.surface
+        reading = _reading_for_mode(token, mode)
         if surface and reading and surface != reading and has_kanji(surface):
-            chunks.append(f"{surface}（{reading}）")
+            prefix, kanji_reading, suffix = trim_kana_affixes_from_reading(surface, reading)
+            body = surface[len(prefix): len(surface) - len(suffix) if suffix else len(surface)] or surface
+            chunks.append(prefix)
+            chunks.append(f"{body}（{kanji_reading or reading}）")
+            chunks.append(suffix)
         else:
             chunks.append(surface)
     return restore_existing_readings("".join(chunks), protected)
 
 
 def text_with_ruby(text: str, mode: str) -> str:
-    try:
-        import pykakasi  # type: ignore
-    except Exception as e:
-        raise CliError(
-            "Furigana needs the pykakasi package.\n"
-            "  Quick install: python3 -m pip install pykakasi\n"
-            "  Or reinstall with the extra: pip install -e \".[furigana]\"\n"
-            "  See: getsubtitle --help reading"
-        ) from e
-
     clean_text = strip_subtitle_markup(text)
     if mode == "romaji":
         return html_escape(japanese_full_sentence_reading(clean_text, mode))
 
     protected_text, protected = protect_existing_readings_as_ruby(clean_text)
-    kakasi = pykakasi.kakasi()
-    converted = kakasi.convert(protected_text)
     chunks = []
-    for c in converted:
-        surface = c.get("orig", "")
-        reading = c.get(_pykakasi_reading_key(mode), "")
+    for token in _japanese_reading_tokens(protected_text):
+        surface = token.surface
+        reading = _reading_for_mode(token, mode)
         if surface and reading and surface != reading and has_kanji(surface):
-            chunks.append(ruby_tag(surface, reading))
+            prefix, kanji_reading, suffix = trim_kana_affixes_from_reading(surface, reading)
+            body = surface[len(prefix): len(surface) - len(suffix) if suffix else len(surface)] or surface
+            chunks.append(html_escape(prefix))
+            chunks.append(ruby_tag(body, kanji_reading or reading))
+            chunks.append(html_escape(suffix))
         else:
             chunks.append(html_escape(surface))
     return restore_existing_readings("".join(chunks), protected)
@@ -5662,24 +5945,12 @@ def srt_to_ruby_vtt(src: Path, mode: str, single_line: bool = False) -> Path:
 
 
 def reading_only(text: str, mode: str) -> str:
-    try:
-        import pykakasi  # type: ignore
-    except Exception as e:
-        raise CliError(
-            "Furigana needs the pykakasi package.\n"
-            "  Quick install: python3 -m pip install pykakasi\n"
-            "  Or reinstall with the extra: pip install -e \".[furigana]\"\n"
-            "  See: getsubtitle --help reading"
-        ) from e
-
     # Remove existing parenthetical readings so the reading line does not repeat them.
     text = EXISTING_READING_RE.sub(lambda m: m.group(1), strip_subtitle_markup(text))
-    kakasi = pykakasi.kakasi()
-    converted = kakasi.convert(text)
     chunks = []
-    for c in converted:
-        surface = c.get("orig", "")
-        reading = c.get(_pykakasi_reading_key(mode), "")
+    for token in _japanese_reading_tokens(text):
+        surface = token.surface
+        reading = _reading_for_mode(token, mode)
         if surface and reading and surface != reading and has_kanji(surface):
             chunks.append(reading)
         elif surface.strip():
@@ -5701,6 +5972,92 @@ def kana_to_hiragana(text: str) -> str:
         else:
             converted.append(ch)
     return "".join(converted)
+
+
+_KANA_ROMAJI_SINGLE: dict[str, str] = {
+    "あ": "a", "い": "i", "う": "u", "え": "e", "お": "o",
+    "か": "ka", "き": "ki", "く": "ku", "け": "ke", "こ": "ko",
+    "さ": "sa", "し": "shi", "す": "su", "せ": "se", "そ": "so",
+    "た": "ta", "ち": "chi", "つ": "tsu", "て": "te", "と": "to",
+    "な": "na", "に": "ni", "ぬ": "nu", "ね": "ne", "の": "no",
+    "は": "ha", "ひ": "hi", "ふ": "fu", "へ": "he", "ほ": "ho",
+    "ま": "ma", "み": "mi", "む": "mu", "め": "me", "も": "mo",
+    "や": "ya", "ゆ": "yu", "よ": "yo",
+    "ら": "ra", "り": "ri", "る": "ru", "れ": "re", "ろ": "ro",
+    "わ": "wa", "ゐ": "i", "ゑ": "e", "を": "wo", "ん": "n",
+    "が": "ga", "ぎ": "gi", "ぐ": "gu", "げ": "ge", "ご": "go",
+    "ざ": "za", "じ": "ji", "ず": "zu", "ぜ": "ze", "ぞ": "zo",
+    "だ": "da", "ぢ": "ji", "づ": "zu", "で": "de", "ど": "do",
+    "ば": "ba", "び": "bi", "ぶ": "bu", "べ": "be", "ぼ": "bo",
+    "ぱ": "pa", "ぴ": "pi", "ぷ": "pu", "ぺ": "pe", "ぽ": "po",
+    "ぁ": "a", "ぃ": "i", "ぅ": "u", "ぇ": "e", "ぉ": "o",
+    "ゔ": "vu",
+}
+
+
+_KANA_ROMAJI_DIGRAPHS: dict[str, str] = {
+    "きゃ": "kya", "きゅ": "kyu", "きょ": "kyo",
+    "ぎゃ": "gya", "ぎゅ": "gyu", "ぎょ": "gyo",
+    "しゃ": "sha", "しゅ": "shu", "しょ": "sho",
+    "じゃ": "ja", "じゅ": "ju", "じょ": "jo",
+    "ちゃ": "cha", "ちゅ": "chu", "ちょ": "cho",
+    "ぢゃ": "ja", "ぢゅ": "ju", "ぢょ": "jo",
+    "にゃ": "nya", "にゅ": "nyu", "にょ": "nyo",
+    "ひゃ": "hya", "ひゅ": "hyu", "ひょ": "hyo",
+    "びゃ": "bya", "びゅ": "byu", "びょ": "byo",
+    "ぴゃ": "pya", "ぴゅ": "pyu", "ぴょ": "pyo",
+    "みゃ": "mya", "みゅ": "myu", "みょ": "myo",
+    "りゃ": "rya", "りゅ": "ryu", "りょ": "ryo",
+    "ふぁ": "fa", "ふぃ": "fi", "ふぇ": "fe", "ふぉ": "fo",
+    "てぃ": "ti", "でぃ": "di", "とぅ": "tu", "どぅ": "du",
+    "うぃ": "wi", "うぇ": "we", "うぉ": "wo",
+    "ゔぁ": "va", "ゔぃ": "vi", "ゔぇ": "ve", "ゔぉ": "vo",
+}
+
+
+def kana_to_romaji(text: str, *, surface: str = "") -> str:
+    """Romanize Sudachi's kana reading with a compact Hepburn-ish mapping."""
+    hira = kana_to_hiragana(text)
+    if surface in {"は", "ハ"}:
+        return "wa"
+    if surface in {"へ", "ヘ"}:
+        return "e"
+    if surface in {"を", "ヲ"}:
+        return "wo"
+    out: list[str] = []
+    geminate = False
+    i = 0
+    while i < len(hira):
+        ch = hira[i]
+        if ch == "っ":
+            geminate = True
+            i += 1
+            continue
+        if ch == "ー":
+            if out:
+                for c in reversed(out[-1]):
+                    if c in "aeiou":
+                        out.append(c)
+                        break
+            i += 1
+            continue
+        piece = ""
+        if i + 1 < len(hira):
+            piece = _KANA_ROMAJI_DIGRAPHS.get(hira[i:i + 2], "")
+            if piece:
+                i += 2
+        if not piece:
+            piece = _KANA_ROMAJI_SINGLE.get(ch, ch)
+            i += 1
+        if geminate and piece:
+            consonant = piece[0]
+            if consonant not in "aeioun":
+                piece = consonant + piece
+            geminate = False
+        if out and out[-1] == "n" and piece and piece[0] in "aiueoyn":
+            out.append("'")
+        out.append(piece)
+    return "".join(out)
 
 
 def display_cells(text: str) -> int:
@@ -5760,27 +6117,15 @@ def trim_kana_affixes_from_reading(surface: str, reading: str) -> tuple[str, str
 
 
 def kanji_reading_line(text: str, mode: str) -> str:
-    try:
-        import pykakasi  # type: ignore
-    except Exception as e:
-        raise CliError(
-            "Furigana needs the pykakasi package.\n"
-            "  Quick install: python3 -m pip install pykakasi\n"
-            "  Or reinstall with the extra: pip install -e \".[furigana]\"\n"
-            "  See: getsubtitle --help reading"
-        ) from e
-
     if mode == "romaji":
         return japanese_full_sentence_reading(text, mode)
 
     text = EXISTING_READING_RE.sub(lambda m: m.group(1), strip_subtitle_markup(text))
-    kakasi = pykakasi.kakasi()
-    converted = kakasi.convert(text)
     chunks = []
     has_reading = False
-    for c in converted:
-        surface = c.get("orig", "")
-        reading = c.get(_pykakasi_reading_key(mode), "")
+    for token in _japanese_reading_tokens(text):
+        surface = token.surface
+        reading = _reading_for_mode(token, mode)
         if surface and reading and surface != reading and has_kanji(surface):
             prefix, kanji_reading, suffix = trim_kana_affixes_from_reading(surface, reading)
             chunks.append(visible_blank(prefix) if prefix else "")
@@ -5799,25 +6144,13 @@ def kanji_reading_pair_lines(text: str, mode: str) -> tuple[str, str] | None:
     of natural spacing in the Japanese text when a reading is wider than its
     kanji surface, but it greatly reduces drift in centered SRT renderers.
     """
-    try:
-        import pykakasi  # type: ignore
-    except Exception as e:
-        raise CliError(
-            "Furigana needs the pykakasi package.\n"
-            "  Quick install: python3 -m pip install pykakasi\n"
-            "  Or reinstall with the extra: pip install -e \".[furigana]\"\n"
-            "  See: getsubtitle --help reading"
-        ) from e
-
     text = EXISTING_READING_RE.sub(lambda m: m.group(1), strip_subtitle_markup(text))
-    kakasi = pykakasi.kakasi()
-    converted = kakasi.convert(text)
     reading_chunks: list[str] = []
     text_chunks: list[str] = []
     has_reading = False
-    for c in converted:
-        surface = c.get("orig", "")
-        reading = c.get(_pykakasi_reading_key(mode), "")
+    for token in _japanese_reading_tokens(text):
+        surface = token.surface
+        reading = _reading_for_mode(token, mode)
         if not surface:
             continue
         if reading and reading != surface and has_kanji(surface):
@@ -7760,7 +8093,7 @@ def apply_furigana_inline(cues: list[SrtCue], mode: str) -> None:
 
     Reuses the existing text_with_readings helper so combine output stays
     consistent with the standalone furigana SRT generator. Raises CliError
-    via text_with_readings if pykakasi isn't installed."""
+    via text_with_readings if SudachiPy isn't installed."""
     for cue in cues:
         cue.text_lines = [text_with_readings(line, mode) for line in cue.text_lines]
 
@@ -7855,8 +8188,8 @@ def _format_rate(rate: float) -> str:
 
 
 MERGED_WATERMARK_LINES = [
-    "Prepared with GetSubtitle on GitHub.",
-    "Media and subtitle rights remain with their respective copyright holders.",
+    "Created with GetSubtitle",
+    "Subtitles © their respective copyright holders",
 ]
 MERGED_WATERMARK_DURATION_MS = 4000
 MERGED_WATERMARK_GAP_MS = 500
@@ -9930,6 +10263,38 @@ def _pipeline_has_language_option(args: list[str]) -> bool:
     return option_was_passed(args, *_PIPELINE_LANGUAGE_FLAGS)
 
 
+def _pipeline_scope_options(fetch_options: list[str]) -> list[str]:
+    """Scope selected by URL/title fetch, propagated to downstream verbs.
+
+    A wizard-generated full pipeline only needs to show `--season/--episode`
+    once on the fetch block. Downstream verbs inherit those filters unless
+    they explicitly set their own scope.
+    """
+    out: list[str] = []
+    season = _pipeline_option_value(fetch_options, "--season", "-s")
+    episode = _pipeline_option_value(fetch_options, "--episode", "-e")
+    if season:
+        out += ["--season", season]
+    if episode:
+        out += ["--episode", episode]
+    return out
+
+
+def _pipeline_apply_inherited_scope(args: list[str], inherited_scope: list[str]) -> list[str]:
+    if not inherited_scope:
+        return args
+    out = list(args)
+    if not option_was_passed(out, "--season", "-s"):
+        season = _pipeline_option_value(inherited_scope, "--season", "-s")
+        if season:
+            out += ["--season", season]
+    if not option_was_passed(out, "--episode", "-e"):
+        episode = _pipeline_option_value(inherited_scope, "--episode", "-e")
+        if episode:
+            out += ["--episode", episode]
+    return out
+
+
 def _pipeline_url_fetch_output_target(fetch_target: str, fetch_options: list[str], output_root: str) -> str:
     title = _pipeline_option_value(fetch_options, "--title")
     try:
@@ -10075,6 +10440,7 @@ def pipeline_main(argv: list[str]) -> int:
     if "fetch" in blocks:
         fetch_target, fetch_options = _pipeline_resolve_target(blocks["fetch"])
     has_downstream = any(v in blocks for v in ("translate", "modify", "merge"))
+    inherited_scope = _pipeline_scope_options(fetch_options) if "fetch" in blocks else []
 
     # The "downstream target" — where translate/modify/merge operate — is:
     #   1. --output PATH if given
@@ -10161,7 +10527,7 @@ def pipeline_main(argv: list[str]) -> int:
         if downstream_target is None:
             raise CliError("--translate needs --output PATH or a PATH --fetch target.")
         _heading(f"translate {downstream_target}")
-        tr_args = _rewrite_translate_block(blocks["translate"])
+        tr_args = _pipeline_apply_inherited_scope(_rewrite_translate_block(blocks["translate"]), inherited_scope)
         if not _pipeline_has_language_option(tr_args):
             inherited_langs = (
                 _pipeline_language_value(fetch_options)
@@ -10181,7 +10547,8 @@ def pipeline_main(argv: list[str]) -> int:
         if downstream_target is None:
             raise CliError("--modify needs --output PATH or a PATH --fetch target.")
         _heading(f"modify {downstream_target}")
-        sub_argv = [downstream_target] + blocks["modify"]
+        modify_args = _pipeline_apply_inherited_scope(blocks["modify"], inherited_scope)
+        sub_argv = [downstream_target] + modify_args
         if shared_dry_run and "--dry-run" not in sub_argv:
             sub_argv.append("--dry-run")
         if shared_force and "--force" not in sub_argv:
@@ -10193,7 +10560,8 @@ def pipeline_main(argv: list[str]) -> int:
         if downstream_target is None:
             raise CliError("--merge needs --output PATH or a PATH --fetch target.")
         _heading(f"merge {downstream_target}")
-        sub_argv = [downstream_target] + blocks["merge"]
+        merge_args = _pipeline_apply_inherited_scope(blocks["merge"], inherited_scope)
+        sub_argv = [downstream_target] + merge_args
         if shared_source is not None and shared_output is not None and "--output" not in sub_argv:
             sub_argv += ["--output", shared_output]
         if shared_dry_run and "--dry-run" not in sub_argv:
@@ -11379,10 +11747,43 @@ def print_warnings(warnings: list[str]) -> None:
         return
     print()
     print(color_text("Warnings:", ANSI_RED))
-    print(color_text("┌" + "─" * 76, ANSI_RED))
+    grouped, ungrouped = group_repetitive_warnings(warnings)
+    if grouped:
+        for lang, items in grouped.items():
+            print(color_text(f"  {_display_lang(lang)} subtitles", ANSI_RED))
+            for problem, episodes in items.items():
+                print(color_text(f"    Episodes affected: {summarize_episode_labels(episodes)}", ANSI_RED))
+                print(color_text(f"    Problem: {friendly_warning_problem(problem)}", ANSI_RED))
+    if ungrouped:
+        print(color_text("┌" + "─" * 76, ANSI_RED))
+        for warning in ungrouped:
+            print(color_text(f"│ - {warning}", ANSI_RED))
+        print(color_text("└" + "─" * 76, ANSI_RED))
+
+
+def friendly_warning_problem(message: str) -> str:
+    text = str(message or "").strip()
+    if "Jimaku has no matching entry" in text:
+        return "Jimaku could not find a matching entry for this show."
+    if "Jimaku rate limit exceeded" in text:
+        return "Jimaku rate limit exceeded. Wait a bit, then retry."
+    return text
+
+
+def group_repetitive_warnings(warnings: list[str]) -> tuple[dict[str, dict[str, list[str]]], list[str]]:
+    grouped: dict[str, dict[str, list[str]]] = {}
+    ungrouped: list[str] = []
+    pattern = re.compile(r"^(?P<lang>[a-z]{2,3}) episode (?P<episode>[^:]+): (?P<message>.+)$", re.I)
     for warning in warnings:
-        print(color_text(f"│ - {warning}", ANSI_RED))
-    print(color_text("└" + "─" * 76, ANSI_RED))
+        match = pattern.match(str(warning))
+        if not match:
+            ungrouped.append(warning)
+            continue
+        lang = match.group("lang").lower()
+        episode = match.group("episode").strip()
+        message = match.group("message").strip()
+        grouped.setdefault(lang, {}).setdefault(message, []).append(episode)
+    return grouped, ungrouped
 
 
 def episode_sort_key(episode: str) -> tuple[int, int | str]:
@@ -11470,6 +11871,126 @@ def print_search_results(results: list[SearchResult]) -> None:
                 assert result.file is not None
                 reason = f" — {result.error}" if result.error else ""
                 print(f"    - {episode_label(result.episode)}: skipped {result.file.name} [{result.provider}]{reason}")
+
+
+def print_subtitle_search_outcome(
+    media: MediaInfo,
+    requested_langs: list[str],
+    episodes: list[str],
+    results: list[SearchResult],
+    planned: list[tuple[str, str, SubtitleFile]],
+    *,
+    expected_output_dir: Path | None = None,
+    warnings: list[str] | None = None,
+) -> None:
+    if not results:
+        return
+    found_by_lang = subtitle_found_episodes_by_lang(requested_langs, results)
+    total_found = total_found_subtitles(requested_langs, results)
+    title = media.title or media.source_url or "Unknown title"
+    issue_kind = subtitle_search_issue_kind(results, warnings or [])
+    heading = (
+        subtitle_search_issue_heading(issue_kind)
+        if total_found == 0
+        else "Subtitle Search Complete"
+    )
+    rule = "═" * 38
+    print()
+    print(rule)
+    print(heading)
+    print(rule)
+    print("Show:")
+    print(f"  {title}")
+    print("Requested:")
+    print("  " + ", ".join(_display_lang(lang) for lang in requested_langs))
+    print("Result:")
+    episode_word = "episode" if len(episodes) == 1 else "episodes"
+    label_width = max((len(_display_lang(lang)) for lang in requested_langs), default=0)
+    for lang in requested_langs:
+        label = _display_lang(lang) + ":"
+        print(f"  {label:<{label_width + 1}} {len(found_by_lang.get(lang, set()))} / {len(episodes)} {episode_word}")
+    cause = subtitle_search_issue_cause(issue_kind) if total_found == 0 else ""
+    if cause:
+        print("Possible cause:")
+        print(f"  {cause}")
+    terms = _manual_search_query_terms(media)
+    if total_found == 0 and len(terms) > 1:
+        print("Also try searching for:")
+        print(f"  {terms[1]}")
+
+
+def subtitle_search_issue_kind(results: list[SearchResult], warnings: list[str]) -> str:
+    messages = [
+        *(str(r.error or "") for r in results),
+        *(str(warning or "") for warning in warnings),
+    ]
+    lowered = "\n".join(messages).casefold()
+    has_error = any(r.status == "error" for r in results)
+    has_low_confidence = any(r.status == "skipped" and r.confidence == "low" for r in results)
+    if "rate limit" in lowered or "rate-limit" in lowered or "429" in lowered:
+        return "rate_limited"
+    if has_error:
+        if (
+            "network timeout" in lowered
+            or "network error" in lowered
+            or "timed out" in lowered
+            or re.search(r"http 5\d\d", lowered)
+        ):
+            return "provider_error"
+        return "provider_error"
+    if has_low_confidence:
+        return "low_confidence"
+    if (
+        "no matching entry" in lowered
+        or "broad lookup needs" in lowered
+        or "no imdb/tmdb id" in lowered
+        or "could not resolve" in lowered
+    ):
+        return "metadata_mismatch"
+    return "not_found"
+
+
+def subtitle_search_issue_heading(issue_kind: str) -> str:
+    if issue_kind == "rate_limited":
+        return "Subtitle search was rate-limited"
+    if issue_kind == "provider_error":
+        return "Could not search for subtitles"
+    if issue_kind == "metadata_mismatch":
+        return "Could not match this title in subtitle sources"
+    if issue_kind == "low_confidence":
+        return "Subtitle matches looked unrelated"
+    return "No subtitles found"
+
+
+def subtitle_search_issue_cause(issue_kind: str) -> str:
+    if issue_kind == "rate_limited":
+        return "A subtitle provider asked us to slow down."
+    if issue_kind == "provider_error":
+        return "A subtitle provider did not respond."
+    if issue_kind == "metadata_mismatch":
+        return "The title or metadata did not line up with a provider entry."
+    if issue_kind == "low_confidence":
+        return "Provider results did not look related to the requested title."
+    return ""
+
+
+def subtitle_found_episodes_by_lang(
+    requested_langs: list[str],
+    results: list[SearchResult],
+) -> dict[str, set[str]]:
+    return {
+        lang: {
+            r.episode
+            for r in results
+            if r.language == lang and r.status == "found"
+        }
+        for lang in requested_langs
+    }
+
+
+def total_found_subtitles(requested_langs: list[str], results: list[SearchResult]) -> int:
+    found_by_lang = subtitle_found_episodes_by_lang(requested_langs, results)
+    return sum(len(found_by_lang.get(lang, set())) for lang in requested_langs)
 
 
 def print_planned_downloads(planned: list[tuple[str, str, SubtitleFile]]) -> None:
@@ -11641,11 +12162,17 @@ def _wizard_print_run_summary(summary: _WizardRunSummary | None, rc: int) -> Non
     missing_any = any(
         s.missing or s.failures for s in summary.steps_by_name.values()
     )
+    show_details = not _wizard_is_interactive()
+    merge_outputs = summary.steps_by_name.get("merge", _WizardStepSummary()).outputs
     if rc == 0 and not missing_any:
         print("Completed successfully")
     else:
-        print("Completed partially")
-    if rc != 0:
+        print("Completed with issues")
+    if not show_details and (rc != 0 or missing_any):
+        print("Some subtitles were missing, or a provider reported an issue.")
+        print("Use the messages above to retry, search manually, or merge again.")
+
+    if show_details and rc != 0:
         # Standardised What / Why / How so a failed run is actionable.
         print(_format_failure(
             what="The workflow finished with issues (details per step below).",
@@ -11655,54 +12182,52 @@ def _wizard_print_run_summary(summary: _WizardRunSummary | None, rc: int) -> Non
             how="Check the 'issue:' lines below, then re-run after fixing — or "
                 "fill gaps with AI translation / manual search and merge again.",
         ))
-    print(f"Source: {summary.source or '(not set)'}")
-    print(f"Scope: {_wizard_scope_label(summary)}")
-    if summary.languages:
-        print(f"Languages requested: {', '.join(summary.languages)}")
-    if summary.order and summary.order != summary.languages:
-        print(f"Display order: {', '.join(summary.order)}")
-    if summary.output:
-        print(f"Output folder: {summary.output}")
-    if summary.preflight:
-        blockers = [g for g in summary.preflight if g[0] == "block"]
-        warnings = [g for g in summary.preflight if g[0] == "warn"]
-        infos = [g for g in summary.preflight if g[0] == "info"]
-        if blockers:
-            print(f"Preflight blockers: {len(blockers)}")
-        if warnings:
-            print(f"Preflight warnings: {len(warnings)}")
-        if infos:
-            print(f"Preflight info: {len(infos)}")
-    else:
-        print("Preflight: ready")
+    if show_details:
+        print(f"Source: {summary.source or '(not set)'}")
+        print(f"Scope: {_wizard_scope_label(summary)}")
+        if summary.languages:
+            print(f"Languages requested: {', '.join(summary.languages)}")
+        if summary.order and summary.order != summary.languages:
+            print(f"Display order: {', '.join(summary.order)}")
+        if summary.output:
+            print(f"Output folder: {summary.output}")
+        if summary.preflight:
+            blockers = [g for g in summary.preflight if g[0] == "block"]
+            warnings = [g for g in summary.preflight if g[0] == "warn"]
+            infos = [g for g in summary.preflight if g[0] == "info"]
+            if blockers:
+                print(f"Preflight blockers: {len(blockers)}")
+            if warnings:
+                print(f"Preflight warnings: {len(warnings)}")
+            if infos:
+                print(f"Preflight info: {len(infos)}")
+        else:
+            print("Preflight: ready")
 
-    order = ["fetch", "translate", "modify", "merge"]
-    for name in order:
-        step = summary.steps_by_name.get(name)
-        if not step:
-            continue
-        parts: list[str] = []
-        if step.scanned:
-            parts.append(f"scanned {step.scanned}")
-        if step.planned:
-            parts.append(f"planned {step.planned}")
-        if step.written:
-            parts.append(f"wrote {step.written}")
-        if step.skipped:
-            parts.append(f"skipped {step.skipped}")
-        if step.missing:
-            parts.append(f"missing/issues {len(step.missing)}")
-        if step.failures:
-            parts.append(f"failures {len(step.failures)}")
-        print(f"{name.capitalize()}: " + (", ".join(parts) if parts else "no work recorded"))
-        for item in _wizard_unique_preview(step.outputs):
-            print(f"  wrote: {Path(item).name}")
-        issue_preview = _wizard_unique_preview([*step.missing, *step.failures], limit=4)
-        for item in issue_preview:
-            print(f"  issue: {item}")
-
-    merge_outputs = summary.steps_by_name.get("merge", _WizardStepSummary()).outputs
-    missing_any = any(step.missing or step.failures for step in summary.steps_by_name.values())
+        order = ["fetch", "translate", "modify", "merge"]
+        for name in order:
+            step = summary.steps_by_name.get(name)
+            if not step:
+                continue
+            parts: list[str] = []
+            if step.scanned:
+                parts.append(f"scanned {step.scanned}")
+            if step.planned:
+                parts.append(f"planned {step.planned}")
+            if step.written:
+                parts.append(f"wrote {step.written}")
+            if step.skipped:
+                parts.append(f"skipped {step.skipped}")
+            if step.missing:
+                parts.append(f"missing/issues {len(step.missing)}")
+            if step.failures:
+                parts.append(f"failures {len(step.failures)}")
+            print(f"{name.capitalize()}: " + (", ".join(parts) if parts else "no work recorded"))
+            for item in _wizard_unique_preview(step.outputs):
+                print(f"  wrote: {Path(item).name}")
+            issue_preview = _wizard_unique_preview([*step.missing, *step.failures], limit=4)
+            for item in issue_preview:
+                print(f"  issue: {item}")
     print()
     print("Next steps:")
     next_step = 1
@@ -11855,29 +12380,29 @@ def maybe_print_manual_search_suggestions(
     if not suggestions:
         return
 
-    print("\nManual search suggestions:")
+    print("\nTry these subtitle sources:")
     print("  Some requested subtitles were not found automatically.")
-    print("  These links do not bypass login, ads, or site restrictions; download manually,")
-    print("  then point getsubtitle at the downloaded .smi/.srt/.ass files.")
     for idx, suggestion in enumerate(suggestions, start=1):
         print(f"  {idx}. [{suggestion.language}] {suggestion.label}")
         print(f"     {suggestion.url}")
         print(f"     {suggestion.note}")
+    print()
+    print("  Note: Some sites may require login, ads, or manual download.")
 
     convert_spec = "smi-to-srt"
     if missing_langs:
         convert_spec = f"{','.join(missing_langs)}:smi-to-srt"
-    print("\nAfter downloading manually:")
-    print("  1. Convert/clean the downloaded subtitle files:")
+    print("\nIf you find subtitles manually:")
+    print("  1. Convert subtitles if needed:")
     print(f"     getsubtitle modify ~/Downloads --convert {convert_spec}")
     if expected_output_dir is not None:
         expected = str(expected_output_dir)
-        print("  2. Move the matching subtitle files into the show folder:")
+        print("  2. Put them in:")
         print(f"     {shlex.quote(expected)}")
-        print("  3. Merge from that show folder:")
+        print("  3. Run merge:")
         print(f"     getsubtitle merge {shlex.quote(expected)} -l {','.join(requested_langs)}")
     else:
-        print("  2. Merge from the downloaded files:")
+        print("  2. Run merge from the downloaded files:")
         print(f"     getsubtitle merge ~/Downloads -l {','.join(requested_langs)}")
 
     should_open = False
@@ -11885,7 +12410,7 @@ def maybe_print_manual_search_suggestions(
         should_open = True
     elif open_mode == "ask" and sys.stdin.isatty():
         try:
-            answer = input("\nOpen these searches in your browser? [Y/n] ").strip().lower()
+            answer = input("\nOpen subtitle sources now? [Y/n] ").strip().lower()
             should_open = answer not in {"n", "no"}
         except EOFError:
             should_open = False
@@ -11895,6 +12420,220 @@ def maybe_print_manual_search_suggestions(
                 open_in_browser(suggestion.url)
             except CliError as e:
                 print(f"  (could not open {suggestion.label}: {e})")
+
+
+def print_opening_subtitle_sources(suggestions: list[ManualSearchSuggestion], media: MediaInfo) -> None:
+    if not suggestions:
+        return
+    print()
+    print("Opening:")
+    seen: set[str] = set()
+    google_seen = False
+    for suggestion in suggestions:
+        if "google" in suggestion.label.casefold():
+            if google_seen:
+                continue
+            google_seen = True
+            label = "Google subtitle searches"
+        else:
+            label = f"{suggestion.label} ({_display_lang(suggestion.language)})"
+        key = label.casefold()
+        if key in seen:
+            continue
+        seen.add(key)
+        print(f"  • {label}")
+    terms = _manual_search_query_terms(media)
+    if terms:
+        tip = terms[1] if len(terms) > 1 else terms[0]
+        print("Tip:")
+        print("  Search using:")
+        print(f"    {tip}")
+
+
+def open_manual_search_suggestions(suggestions: list[ManualSearchSuggestion]) -> None:
+    for suggestion in suggestions:
+        try:
+            open_in_browser(suggestion.url)
+        except CliError as e:
+            print(f"  (could not open {suggestion.label}: {e})")
+
+
+def print_manual_subtitle_recovery(
+    requested_langs: list[str],
+    *,
+    expected_output_dir: Path | None = None,
+    issue_kind: str = "not_found",
+) -> None:
+    print()
+    if issue_kind == "rate_limited":
+        print("Try again later")
+        print("The subtitle provider asked us to slow down.")
+        print("1. Wait a few minutes, then retry the search.")
+        print("2. Open subtitle sources manually if retrying still fails.")
+        print("3. Download subtitles if you find them.")
+        next_number = 4
+    elif issue_kind == "provider_error":
+        print("Try again later")
+        print("The subtitle provider did not respond.")
+        print("1. Retry the search in a few minutes.")
+        print("2. Open subtitle sources manually if retrying still fails.")
+        print("3. Download subtitles if you find them.")
+        next_number = 4
+    elif issue_kind == "metadata_mismatch":
+        print("Try another title source")
+        print("1. Try an IMDb/TMDB/AniList URL or an alternate title.")
+        print("2. Open subtitle sources manually.")
+        print("3. Download subtitles if you find them.")
+        next_number = 4
+    elif issue_kind == "low_confidence":
+        print("Review matches manually")
+        print("1. Open subtitle sources manually.")
+        print("2. Download only subtitles that match the requested title.")
+        next_number = 3
+    else:
+        print("Manual recovery")
+        print("1. Download subtitles manually.")
+        next_number = 2
+    if expected_output_dir is not None:
+        print(f"{next_number}. Put them in:")
+        print(f"   {expected_output_dir}")
+    else:
+        print(f"{next_number}. Put them beside the matching media/subtitle files.")
+    print(f"{next_number + 1}. Run:")
+    target = shlex.quote(str(expected_output_dir)) if expected_output_dir is not None else "FOLDER"
+    print(f"   getsubtitle merge {target} -l {','.join(requested_langs)}")
+
+
+def yes_no_prompt(prompt: str, *, default: bool) -> bool:
+    suffix = "[Y/n]" if default else "[y/N]"
+    try:
+        answer = input(f"{prompt} {suffix} ").strip().lower()
+    except EOFError:
+        return default
+    if not answer:
+        return default
+    return answer in {"y", "yes"}
+
+
+def print_subtitle_search_technical_details(
+    requested_langs: list[str],
+    episodes: list[str],
+    results: list[SearchResult],
+    warnings: list[str],
+    *,
+    media: MediaInfo,
+    expected_output_dir: Path | None = None,
+    include_manual_sources: bool = True,
+) -> None:
+    print_search_results(results)
+    print_low_confidence_next_steps(results)
+    print_warnings(warnings)
+    print_missing_subtitle_next_steps(
+        requested_langs,
+        episodes,
+        results,
+        media=media,
+        expected_output_dir=expected_output_dir,
+    )
+    if include_manual_sources:
+        maybe_print_manual_search_suggestions(
+            media,
+            requested_langs,
+            episodes,
+            results,
+            mode="on-missing",
+            open_mode="never",
+            expected_output_dir=expected_output_dir,
+        )
+
+
+def handle_no_subtitles_found_recovery(
+    media: MediaInfo,
+    requested_langs: list[str],
+    episodes: list[str],
+    results: list[SearchResult],
+    warnings: list[str],
+    *,
+    manual_search_mode: str,
+    manual_search_open: str,
+    expected_output_dir: Path | None = None,
+    show_details: bool = False,
+) -> None:
+    """One-screen recovery flow for the total-failure search case.
+
+    The detailed search/provider output is still available, but only after the
+    user asks for it. This keeps first-run failures readable and action-led.
+    """
+    print_subtitle_search_outcome(
+        media,
+        requested_langs,
+        episodes,
+        results,
+        [],
+        expected_output_dir=expected_output_dir,
+        warnings=warnings,
+    )
+    issue_kind = subtitle_search_issue_kind(results, warnings)
+    missing_langs = missing_languages_for_manual_search(requested_langs, episodes, results)
+    suggestions = [] if manual_search_mode == "off" else build_manual_search_suggestions(media, missing_langs)
+    interactive = sys.stdin.isatty()
+    open_default = issue_kind not in {"provider_error", "rate_limited"}
+
+    opened = False
+    if suggestions and manual_search_open == "always":
+        print_opening_subtitle_sources(suggestions, media)
+        open_manual_search_suggestions(suggestions)
+        print("Done.")
+        opened = True
+    elif suggestions and manual_search_open != "never" and interactive:
+        if yes_no_prompt("Open subtitle search pages now?", default=open_default):
+            print_opening_subtitle_sources(suggestions, media)
+            open_manual_search_suggestions(suggestions)
+            print("Done.")
+            opened = True
+
+    if opened:
+        if show_details:
+            print_subtitle_search_technical_details(
+                requested_langs,
+                episodes,
+                results,
+                warnings,
+                media=media,
+                expected_output_dir=expected_output_dir,
+                include_manual_sources=False,
+            )
+        return
+
+    print_manual_subtitle_recovery(
+        requested_langs,
+        expected_output_dir=expected_output_dir,
+        issue_kind=issue_kind,
+    )
+    if show_details:
+        print_subtitle_search_technical_details(
+            requested_langs,
+            episodes,
+            results,
+            warnings,
+            media=media,
+            expected_output_dir=expected_output_dir,
+            include_manual_sources=bool(suggestions),
+        )
+    elif interactive:
+        if yes_no_prompt("Show technical details?", default=False):
+            print_subtitle_search_technical_details(
+                requested_langs,
+                episodes,
+                results,
+                warnings,
+                media=media,
+                expected_output_dir=expected_output_dir,
+                include_manual_sources=bool(suggestions),
+            )
+    else:
+        if suggestions and manual_search_open != "never":
+            print("Tip: run again with --manual-search-open always to open subtitle sources.")
 
 
 def print_missing_subtitle_next_steps(
@@ -11914,14 +12653,13 @@ def print_missing_subtitle_next_steps(
     if not missing_by_lang:
         return
 
-    print("\nMissing subtitle next steps:")
+    print("\nHow to continue:")
     for lang, eps in missing_by_lang.items():
         shown = ", ".join(eps[:8])
         more = f" (+{len(eps) - 8} more)" if len(eps) > 8 else ""
         print(f"  - {lang}: missing {len(eps)}/{len(episodes)} episode(s): {shown}{more}")
-    print("  Try:")
     if any(lang in {"ja", "ko", "zh", "yue"} for lang in missing_by_lang):
-        print("  1. Open community search suggestions with `--manual-search-open always`.")
+        print("  1. Open subtitle sources with `--manual-search-open always`.")
     else:
         print("  1. Re-run with `--debug-providers` to inspect provider language/source tags.")
     if expected_output_dir is not None:
@@ -12092,7 +12830,7 @@ BUILTIN_CONFIG_DEFAULTS: dict[str, dict[str, object]] = {
         "model": DEFAULT_OLLAMA_MODEL,
         # Per-target source spec. Either a single string ("auto" or "ja" or
         # "ko:ja,es:en") or a dict ({ ko = "ja", es = "en" }).
-        "mt_source_lang": "auto",
+        "mt_source": "auto",
         # Strip inline 漢字（かんじ） readings from ja before sending to MT.
         # Was [furigana].strip_before_mt under the old schema.
         "strip_reading_before_mt": True,
@@ -12549,7 +13287,14 @@ def render_effective_config(user_cfg: dict | None = None) -> str:
         "",
     ]
     for section_name, section_defaults in BUILTIN_CONFIG_DEFAULTS.items():
-        overrides = user_cfg.get(section_name, {})
+        overrides = dict(user_cfg.get(section_name, {}))
+        if section_name == "translate":
+            # Internally argparse still uses mt_source_lang as the destination,
+            # but TOML/help/docs now use the canonical mt_source key.
+            if "mt_source_lang" in overrides and "mt_source" not in overrides:
+                overrides["mt_source"] = overrides.pop("mt_source_lang")
+            else:
+                overrides.pop("mt_source_lang", None)
         merged: dict[str, object] = dict(section_defaults)
         merged.update(overrides)
         nested_tables: list[tuple[str, dict]] = []
@@ -12741,14 +13486,14 @@ def _setup_system_summary() -> list[str]:
     elif shutil.which("ollama"):
         ollama_state += " (daemon not running — start with `ollama serve`)"
     rows.append("Ollama: " + ollama_state)
-    rows.append("Japanese reading-aid dependency: " + ("installed" if _setup_module_exists("pykakasi") else "not installed"))
+    rows.append("Japanese reading-aid dependency: " + ("installed" if _setup_module_exists("sudachipy") and _setup_module_exists("sudachidict_core") else "not installed"))
     return rows
 
 
 def _setup_module_exists(module_name: str) -> bool:
     """Cheap availability check via importlib's spec finder. Avoids
-    triggering the target module's side-effecting top-level code (pykakasi
-    builds dictionaries on import; argostranslate scans for language packs)."""
+    triggering the target module's side-effecting top-level code (SudachiPy
+    builds dictionaries on use; argostranslate scans for language packs)."""
     import importlib.util
     return importlib.util.find_spec(module_name) is not None
 
@@ -12760,7 +13505,7 @@ def _setup_module_exists(module_name: str) -> bool:
 # (lang, default_spec, label, status_note)
 _SETUP_READING_AID_BY_LANG: dict[str, tuple[str, str, str]] = {
     "ja": ("ja:hiragana", "Japanese hiragana furigana above kanji",
-           "Ships now via pykakasi."),
+           "Ships now via SudachiPy."),
     "ko": ("ko:revised", "Korean Revised Romanization above Hangul",
            "Ships now via g2pk + korean-romanizer."),
     "zh": ("zh:marks", "Mandarin pinyin (with tone marks) above hanzi",
@@ -12791,8 +13536,8 @@ _SETUP_READING_AID_PROSE: dict[str, tuple[str, str, str]] = {
         "Hiragana above each kanji block (furigana). Essential while you're "
         "still building your kanji recognition — drops gracefully once you don't "
         "need it.",
-        "Free; pykakasi pulls a small dictionary (~3 MB).",
-        "~10 seconds (pip install).",
+        "Free; SudachiPy pulls a morphological dictionary (~210 MB).",
+        "~30-60 seconds (pip install).",
     ),
     "ko": (
         "Revised Romanization above each Hangul syllable, with G2P phonological "
@@ -13210,14 +13955,15 @@ def _setup_write_config(choice: _SetupChoice) -> bool:
 # a corpus; everything else is small). Numbers are conservative — pip's
 # own output is the source of truth at install time.
 _SETUP_INSTALL_HINTS: dict[str, tuple[str, str]] = {
-    "furigana":        ("~3 MB",  "~10 seconds"),
+    "furigana":        ("~210 MB",  "30-60 seconds"),
     "romanization-ko": ("~80 MB", "30-60 seconds (nltk corpus on first run)"),
     "romanization-zh": ("~5 MB",  "~10 seconds"),
     "romanization-yue": ("~20 MB", "~30 seconds"),
 }
 # Same shape but keyed by bare package name for when an extra isn't used.
 _SETUP_INSTALL_HINTS_BY_PACKAGE: dict[str, tuple[str, str]] = {
-    "pykakasi":          ("~3 MB",  "~10 seconds"),
+    "sudachipy":         ("~210 MB", "30-60 seconds"),
+    "sudachidict_core":  ("~210 MB", "30-60 seconds"),
     "korean-romanizer":  ("~5 MB",  "~10 seconds"),
     "g2pk":              ("~70 MB", "30-60 seconds (nltk corpus on first run)"),
     "pypinyin":          ("~5 MB",  "~10 seconds"),
@@ -13225,7 +13971,7 @@ _SETUP_INSTALL_HINTS_BY_PACKAGE: dict[str, tuple[str, str]] = {
     "argostranslate":    ("~50 MB", "30-60 seconds"),
 }
 _SETUP_EXTRA_PACKAGES: dict[str, str] = {
-    "furigana": "pykakasi",
+    "furigana": "sudachipy",
     "romanization-ko": "korean-romanizer",
     "romanization-zh": "pypinyin",
     "romanization-yue": "pycantonese",
@@ -13615,10 +14361,10 @@ def _setup_run_recommendation(rec: _SetupRecommendation, choice: _SetupChoice) -
         spec = rec.key.split(":", 1)[1]   # e.g. "ja:hiragana"
         lang = spec.split(":", 1)[0]
         if lang == "ja":
-            if _setup_module_exists("pykakasi"):
-                print("  pykakasi already installed.")
+            if _setup_module_exists("sudachipy") and _setup_module_exists("sudachidict_core"):
+                print("  SudachiPy already installed.")
                 return True
-            return _setup_offer_pip_install("pykakasi", extra="furigana")
+            return _setup_offer_pip_install("sudachipy", extra="furigana")
         if lang == "ko":
             mode = spec.split(":", 1)[1] if ":" in spec else "revised"
             if mode == "yale":
@@ -13723,7 +14469,7 @@ def _apply_download_config_defaults(parser: argparse.ArgumentParser) -> None:
             overrides["mt_model"] = model_part
     if tr_cfg.get("model") and "mt_model" not in overrides:
         overrides["mt_model"] = tr_cfg["model"]
-    src = tr_cfg.get("mt_source_lang", "auto")
+    src = tr_cfg.get("mt_source", tr_cfg.get("mt_source_lang", "auto"))
     if isinstance(src, dict):
         src = _normalize_mt_source(src)
     if src and src != "auto":
@@ -13912,6 +14658,8 @@ Notes:
   but title-only inputs won't auto-resolve to IMDb/TMDB IDs and Wyzie's
   match rate will be lower. Get a free key at:
   https://www.themoviedb.org/settings/api
+  Crunchyroll watch URLs use Crunchyroll's anonymous metadata endpoint;
+  no separate search API key is needed.
 """,
     "reading": """\
 Reading aids — phonetic guides above/beside the original script.
@@ -13934,7 +14682,7 @@ The pipe shorthand `|` expands to multiple modes:
 ──────────────────────────────────────────────────────────────────────
 Japanese (ja) — ships today
 ──────────────────────────────────────────────────────────────────────
-Install: `pip install -e ".[furigana]"` (or just `pip install pykakasi`)
+Install: `pip install -e ".[furigana]"` (or `pip install sudachipy sudachidict_core`)
 
 Modes:
   ja:hiragana    Default. 漢字（かんじ） — hiragana above each kanji block.
@@ -14285,7 +15033,7 @@ Checks:
   - Python version and executable
   - Config and default output locations
   - Optional reading-aid dependencies:
-      pykakasi, korean-romanizer, g2pk, pypinyin, pycantonese
+      sudachipy, sudachidict_core, korean-romanizer, g2pk, pypinyin, pycantonese
   - Optional local tools:
       ffmpeg / ffprobe for MKV embedded subtitle extraction
       Ollama daemon for offline LLM translation
@@ -14741,7 +15489,7 @@ What it asks (only the questions relevant to your step choice appear):
       previewed change and change another filename field before applying;
       each field can be handled only once per rename batch.
 
-Auto-filled for you (shown in a "Smart defaults filled in for you" banner,
+Auto-filled for you (shown in the final "Smart defaults" section and
 revisable via Edit — these are NOT asked as questions):
   • Display order — the order you typed the languages (top → bottom).
   • Timing master — the first language.
@@ -14779,7 +15527,7 @@ asks "What next?" so you can keep/discard a pending change or apply now;
 the apply menu then asks copy vs original-file rename.
 
 When you pick **Run**, the wizard probes your environment for missing
-pieces — the pykakasi package for Japanese furigana, korean-romanizer +
+pieces — SudachiPy + SudachiDict-core for Japanese furigana, korean-romanizer +
 g2pk for Korean, pypinyin for Mandarin, pycantonese for Cantonese,
 the Ollama daemon if you picked
 ollama, the DeepL key if you picked DeepL, missing Jimaku/Wyzie/TMDB
@@ -14941,8 +15689,11 @@ def doctor_main(argv: list[str]) -> int:
     rows.append(_doctor_row("Config", True, str(config_path())))
     rows.append(_doctor_row("Output folder", True, str(DEFAULT_OUTPUT)))
 
+    sudachi_ok = _setup_module_exists("sudachipy") and _setup_module_exists("sudachidict_core")
+    sudachi_detail = "installed" if sudachi_ok else 'not installed; pip install -e ".[furigana]"'
+    rows.append(_doctor_row("Japanese furigana", sudachi_ok, sudachi_detail))
+
     optional_modules = [
-        ("pykakasi", "Japanese furigana", 'pip install -e ".[furigana]"'),
         ("korean_romanizer", "Korean Revised Romanization", 'pip install -e ".[romanization-ko]"'),
         ("g2pk", "Korean G2P quality boost", 'pip install -e ".[romanization-ko]"'),
         ("pypinyin", "Mandarin pinyin", 'pip install -e ".[romanization-zh]"'),
@@ -15297,6 +16048,92 @@ def _wizard_describe_url_source(url: str) -> str:
     return f"{provider} URL"
 
 
+def _wizard_is_crunchyroll_watch_url(url: str) -> bool:
+    parsed = urllib.parse.urlparse(url)
+    host = parsed.netloc.lower().removeprefix("www.")
+    return "crunchyroll.com" in host and "/watch/" in parsed.path.lower()
+
+
+def _wizard_apply_crunchyroll_watch_clarification(state: _WizardState, url: str) -> bool:
+    """Resolve Crunchyroll watch URLs before the user reaches the review page.
+
+    Crunchyroll's HTML shell usually hides useful title data, but its public
+    anonymous metadata endpoint exposes the watch/series object. Use that first;
+    if it is unavailable, ask the user for a stronger source instead of letting
+    a late fetch run guess from a bare episode slug.
+    """
+    if not _wizard_is_crunchyroll_watch_url(url):
+        return False
+    metadata = crunchyroll_metadata_from_url(url)
+    if metadata:
+        state.source = metadata.url or url
+        state.source_kind = "url"
+        state.source_title = metadata.title
+        state.is_movie = metadata.is_movie
+        print()
+        print("    Crunchyroll metadata found:")
+        print(f"      Series: {metadata.title}")
+        if metadata.episode_title:
+            print(f"      Episode: {metadata.episode_title}")
+        if metadata.season != "auto" or metadata.episode != "auto":
+            print(f"      Scope: S{metadata.season} E{metadata.episode}")
+        print(f"    Using Crunchyroll series URL: {metadata.url or url}")
+        return True
+    print()
+    print("    I could not read Crunchyroll metadata for that episode URL.")
+    print("    Paste a Crunchyroll series URL, AniList/TMDB/IMDb URL, AniList ID,")
+    print("    or show title so I can search the right series.")
+    while True:
+        helper = _wizard_prompt("Series URL, AniList ID, or title").strip()
+        helper = _wizard_strip_wrapping_quotes(helper)
+        if not helper:
+            print("    Please enter a series URL, AniList ID, or title.")
+            continue
+        if helper.isdigit():
+            state.source = f"https://anilist.co/anime/{helper}/"
+            state.source_kind = "url"
+            state.source_title = ""
+            state.is_movie = False
+            print(f"    Using AniList anime ID: {helper}")
+            return True
+        if _looks_like_url(helper):
+            state.source = helper
+            state.source_kind = "url"
+            state.source_title = ""
+            state.is_movie = _wizard_url_is_movie(helper)
+            print(f"    Searching for: {_wizard_describe_url_source(helper)}")
+            return True
+        print(f"    Searching for: {helper!r}")
+        try:
+            picked = _wizard_pick_title_candidate(helper)
+        except _WizardBack:
+            print("    Going back to Crunchyroll title entry.")
+            continue
+        if picked == "retry":
+            continue
+        if picked is None:
+            state.source = helper
+            state.source_kind = "title"
+            state.source_title = ""
+            try:
+                state.is_movie = _wizard_yesno(
+                    "Is this a movie? (No = TV show / anime)", default=False
+                )
+            except _WizardBack:
+                state.source = ""
+                state.source_kind = "url"
+                print("    Going back to Crunchyroll title entry.")
+                continue
+            return True
+        picked_url, provider, label, picked_is_movie = picked
+        state.source = picked_url
+        state.source_kind = "url"
+        state.source_title = _wizard_title_from_candidate_label(label)
+        state.is_movie = picked_is_movie or _wizard_url_is_movie(picked_url)
+        print(f"    Matched title: {label} [{provider}]")
+        return True
+
+
 def _wizard_media_counts(path: Path, limit: int = 5000) -> tuple[int, int, int, bool]:
     video_count = 0
     subtitle_count = 0
@@ -15420,33 +16257,46 @@ def _wizard_pick_title_candidate(title: str) -> tuple[str, str, str, bool] | Non
     """
     rows = _wizard_title_candidates(title)
     if not rows:
-        # No candidates available. Tell the user WHY — most of the time it's
-        # because no TMDB/AniList resolver key is configured.
+        print()
+        print("    No title matches found.")
+        print("    I won't build a fetch workflow from an unverified title yet.")
+        print("    Check the spelling, paste an IMDb/TMDB/AniList URL, or choose")
+        print("    the raw-title escape only if you know the title source works.")
         if not get_provider_api_key("tmdb"):
             print()
-            print("    No title-resolver hits. Add a TMDB key for richer matches:")
+            print("    Add a TMDB key for richer movie/TV matches:")
             print("      getsubtitle --set-key tmdb")
-            print("    Continuing with raw title text — fetch may still work via")
-            print("    AniList or other built-in fallbacks.")
-        return None
+        print()
+        print("    1) Re-enter a different title")
+        print("    2) Use exactly what I typed (advanced; may fail)")
+        pick = _wizard_read_choice("Number", ["1", "2"], "1")
+        return None if pick == "2" else "retry"
     print()
     print("    Possible matches:")
     for i, row in enumerate(rows, start=1):
         print(f"    {i}) {row['label']}")
     print("    0) Use exactly what I typed")
     print("    r) Re-enter a different title")
-    pick = _wizard_prompt("Which title did you mean? Number, 0, or r", "1").strip().lower()
-    if pick in ("r", "retry", "redo"):
-        return "retry"
-    if pick in ("0", "raw", "title", "keep"):
-        return None
-    if not pick.isdigit():
-        return None
-    idx = int(pick) - 1
-    if not (0 <= idx < len(rows)):
-        return None
-    row = rows[idx]
-    return row["url"], row["provider"], row["label"], row.get("is_movie", False)
+    while True:
+        pick = _wizard_prompt("Which title did you mean? Number, 0, or r", "1").strip().lower()
+        if pick in ("r", "retry", "redo"):
+            return "retry"
+        if pick in ("0", "raw", "title", "keep"):
+            return None
+        if pick.isdigit():
+            idx = int(pick) - 1
+            if 0 <= idx < len(rows):
+                row = rows[idx]
+                return row["url"], row["provider"], row["label"], row.get("is_movie", False)
+        cleaned = _wizard_strip_wrapping_quotes(pick)
+        if _looks_like_url(cleaned):
+            print("    That looks like a URL. Type 'r' to re-enter it as the source,")
+            print("    or pick one of the numbered title matches.")
+        elif cleaned and Path(cleaned).expanduser().exists():
+            print("    That looks like a local path. Type 'b' to go back and choose")
+            print("    the folder/file option, or pick one of the numbered title matches.")
+        else:
+            print(f"    Please enter 1-{len(rows)}, 0, or r.")
 
 
 _PIPELINE_STEPS = ("fetch", "translate", "modify", "merge")
@@ -16322,6 +17172,8 @@ def _wizard_q1_source(state: _WizardState) -> None:
             state.source = direct_source_value
             state.is_movie = _wizard_url_is_movie(direct_source_value)
             print(f"    Searching for: {_wizard_describe_url_source(direct_source_value)}")
+            if _wizard_apply_crunchyroll_watch_clarification(state, direct_source_value):
+                return
             return
         print(_wizard_next_q(state, "Enter the URL.", spacer=False))
         while True:
@@ -16330,6 +17182,8 @@ def _wizard_q1_source(state: _WizardState) -> None:
                 state.source = src
                 state.is_movie = _wizard_url_is_movie(src)
                 print(f"    Searching for: {_wizard_describe_url_source(src)}")
+                if _wizard_apply_crunchyroll_watch_clarification(state, src):
+                    return
                 return
             print("    That does not look like an http/https URL. Try again, or enter 'q' to quit.")
     if state.source_kind == "title":
@@ -16826,10 +17680,10 @@ def _wizard_q5_scope(state: _WizardState) -> None:
     is_crunchyroll = "crunchyroll.com" in parsed_source.netloc.lower()
     print()
     print(_wizard_next_q(state, "What episode scope?"))
-    print("    1) One TV episode — Season 1 Episode 1")
-    print("    2) A specific season + episode (or range)")
-    print("    3) Whole season, every episode (-e all)")
-    print("    4) Auto — let getsubtitle infer from the URL/title metadata")
+    print("    1) Specific season + episode (or range)")
+    print("       Defaults to Season 1 Episode 1.")
+    print("    2) Whole season, every episode (-e all)")
+    print("    3) Auto — let getsubtitle infer from the URL/title metadata")
     print("       (anime URLs typically resolve to single episodes; movies to a")
     print("        single item; TV without -e usually picks S01E01)")
     if is_crunchyroll:
@@ -16837,15 +17691,8 @@ def _wizard_q5_scope(state: _WizardState) -> None:
         print("    Crunchyroll may display Season 3 as E25-E37, but subtitle")
         print("    sources usually search that as Season 3 episodes 1-13.")
     while True:
-        pick = _wizard_read_choice("Number", ["1", "2", "3", "4"], "2" if is_crunchyroll else "4")
+        pick = _wizard_read_choice("Number", ["1", "2", "3"], "1" if is_crunchyroll else "3")
         if pick == "1":
-            print("    This selected source looks like a TV/show result, not a movie.")
-            print("    If you meant a movie, type 'b' and choose the movie result from title search.")
-            print("    For this TV/show source, I will use Season 1 Episode 1.")
-            state.season = "1"
-            state.episode = "1"
-            return
-        if pick == "2":
             try:
                 state.season = _wizard_prompt("Season or range (e.g. 1, 2-3, all)", "1")
                 state.episode = _wizard_prompt("Episode or range within each season (e.g. 5, 1-10, all)", "1")
@@ -16855,7 +17702,7 @@ def _wizard_q5_scope(state: _WizardState) -> None:
                 print("    Going back to episode scope.")
                 continue
             return
-        if pick == "3":
+        if pick == "2":
             state.season = state.season or "1"
             state.episode = "all"
             # Non-anime TV needs TMDB to expand -e all. Heads-up only.
@@ -16866,7 +17713,7 @@ def _wizard_q5_scope(state: _WizardState) -> None:
                 print("    (Note: -e all on non-anime TV requires a TMDB key. "
                       "Run `getsubtitle --set-key tmdb` later if needed.)")
             return
-        if pick == "4" and is_crunchyroll:
+        if pick == "3" and is_crunchyroll:
             print("    Crunchyroll auto cannot reliably infer the visible season.")
             print("    Enter the season and episode numbers used by subtitle sources.")
             try:
@@ -17185,15 +18032,6 @@ def _wizard_q9_format(state: _WizardState) -> None:
         print("              OTHER FORMATS:  日本語(にほんご)を勉強(べんきょう)したい")
     print()
     print(f"    Suggested default: {default.upper()} — {reason}")
-    if state.reading_aids:
-        print()
-        print("    Reading-aid notes:")
-        if needs_ruby:
-            print("      VTT can show true ruby above Japanese text in browsers/asbplayer.")
-            print("      SRT/SMI/ASS use fallback reading-aid layouts instead.")
-        if _wizard_has_non_japanese_reading_aid(state):
-            print("      ASS is usually the clearest local-player choice for Korean,")
-            print("      Chinese, or Cantonese reading aids.")
     mapping = {"1": "srt", "2": "ass", "3": "vtt", "4": "smi", "5": "txt"}
     pick = _wizard_read_choice("Final format", ["1", "2", "3", "4", "5"], default_pick)
     state.format = mapping[pick]
@@ -17308,9 +18146,11 @@ def _wizard_plain_plan(state: _WizardState) -> list[str]:
         scope = f"  (season {state.season})"
     lines: list[str] = []
     if "fetch" in steps:
-        lines.append(f"Fetch {langs} for {src}{scope}")
+        lines.append(f"Fetch {langs} for:")
+        lines.append(f"  {src}{scope}")
     else:
-        lines.append(f"Use local {langs} files in {src}")
+        lines.append(f"Use local {langs} files in:")
+        lines.append(f"  {src}")
     if "translate" in steps and state.mt_engine:
         lines.append(f"Fill gaps with {state.mt_engine.title()} AI translation")
     if "modify" in steps:
@@ -17322,7 +18162,7 @@ def _wizard_plain_plan(state: _WizardState) -> list[str]:
         fmt = (state.format or "srt").upper()
         ext = (state.format or "srt").lower()
         suffix = "-".join(state.order or state.languages)
-        lines.append(f"Stack {langs} into one {fmt} file → *.{suffix}.{ext}")
+        lines.append(f"Stack {langs} into one {fmt} file: *.{suffix}.{ext}")
         if state.font_size:
             size_label = {
                 "regular": "Regular",
@@ -17331,7 +18171,8 @@ def _wizard_plain_plan(state: _WizardState) -> list[str]:
             }.get(str(state.font_size).lower(), str(state.font_size))
             lines.append(f"Use subtitle text size: {size_label}")
     out = _wizard_short_path(state.output) if state.output else "the source folder"
-    lines.append(f"Save to {out}")
+    lines.append("Save to:")
+    lines.append(f"  {out}")
     return lines
 
 
@@ -17366,47 +18207,55 @@ def _wizard_short_path(p: str) -> str:
     return p
 
 
+def _wizard_review_heading() -> str:
+    label = "Review your workflow"
+    progress = "Progress [" + ("◼" * (_WIZARD_PROGRESS_WIDTH - 1)) + "◻" + "] 99%"
+    spaces = max(1, _WIZARD_HEADING_WIDTH - len(label) - len(progress))
+    return f"{'-' * _WIZARD_HEADING_WIDTH}\n{label}{' ' * spaces}{progress}"
+
+
 def _wizard_q11_action(state: _WizardState) -> str:
     """Final action. Returns one of 'run', 'save', 'restart', 'quit', 'edit'."""
-    # Fixed-width separator. Stretching to the CLI command produces
-    # ~190-char rules that wrap on most terminals and look terrible;
-    # 70 fits a standard 80-col terminal with two columns of breathing
-    # room. The CLI form can soft-wrap; that's fine.
     cli_string = _wizard_emit_cli_string(state)
     toml_str = _wizard_emit_toml(state)
     rule = "=" * 70
     print()
-    # Plain-language plan first — the human "what's going to happen" before
-    # any flag soup, so beginners don't have to parse the CLI string.
-    print(rule)
-    print("Here's the plan:")
-    print(rule)
+    print(_wizard_review_heading())
+    print()
+    print("Plan")
     for ln in _wizard_plain_plan(state):
-        print(f"  • {ln}")
+        if ln.startswith("  "):
+            print(f"    {ln.strip()}")
+        else:
+            print(f"  • {ln}")
     risks = _wizard_review_risks(state)
     if risks:
-        print(rule)
-        print("Before running:")
-        print(rule)
+        print()
+        print("Heads up")
         for risk in risks:
-            print(f"  ⚠ {risk}")
+            wrapped = textwrap.wrap(risk, width=68)
+            if wrapped:
+                print(f"  ⚠ {wrapped[0]}")
+                for line in wrapped[1:]:
+                    print(f"    {line}")
     # Smart-defaults block: questions the wizard no longer
     # asks. Surfaced so users see (and can revise) what was auto-picked.
     notes = getattr(state, "_smart_defaults_notes", None) or {}
     if notes:
-        print(rule)
-        print("Smart defaults filled in for you (edit via 'Edit a single answer'):")
-        print(rule)
+        print()
+        print("Smart defaults")
         key_width = max(14, *(len(k) for k in notes))
         for k, v in notes.items():
+            if k == "Output folder" and v.endswith("  (beside source)"):
+                v = "beside source"
             print(f"  {k:{key_width}}  {v}")
-    print(rule)
     # Consistency check: reading aid wants VTT ruby but format is something else.
     needs_ruby = any(
         spec.startswith("ja:hiragana") or spec.startswith("ja:furigana")
         for spec in state.reading_aids
     )
     if needs_ruby and state.format and state.format != "vtt":
+        print()
         print(f"  Note: ja:hiragana looks best as VTT ruby; format is {state.format!r}.")
         print("        SRT/SMI/ASS will fall back to parenthetical 漢字（かんじ） form.")
     # Default-action heuristic: save-first is safer when "run" would start a
@@ -17417,12 +18266,13 @@ def _wizard_q11_action(state: _WizardState) -> str:
     # view stays a short plain-language plan instead of a wall of flag soup.
     while True:
         print()
-        print("    1) Run it now")
-        print("    2) Save as a reusable workflow file")
-        print("    3) Edit a single answer")
-        print("    4) Start over from beginning")
-        print("    5) Quit")
-        print("    6) Show the exact command & workflow file")
+        print("What next?")
+        print("  1) Run it now")
+        print("  2) Save as a reusable workflow file")
+        print("  3) Change something")
+        print("  4) Start over")
+        print("  5) Quit")
+        print("  6) Show exact command and workflow file")
         pick = _wizard_read_choice("Number", ["1", "2", "3", "4", "5", "6"], default_pick)
         if pick == "6":
             print()
@@ -17502,8 +18352,8 @@ def _wizard_apply_smart_defaults(state: _WizardState) -> dict[str, str]:
 def _wizard_edit_targets(state: _WizardState) -> list[tuple[str, str, object]]:
     """Editable answers shown from the final action menu.
 
-    Include the smart-defaulted answers explicitly so the banner's
-    "edit via Edit a single answer" promise is true.
+    Include the smart-defaulted answers explicitly so the final action
+    menu's "Change something" promise is true.
     """
     targets: list[tuple[str, str, object]] = [
         ("steps", " + ".join(s for s in _VALID_STEPS if s in state.steps), _wizard_q0_steps),
@@ -17745,13 +18595,13 @@ def _run_wizard_with_back_nav(state: _WizardState) -> tuple[_WizardState, str]:
             return state, action
         # Edit flow: each entry maps a shown answer DIRECTLY to the function
         # that re-asks it. Smart defaults are included explicitly, so the
-        # final banner's "edit via Edit a single answer" line is literal.
+        # final action menu's "Change something" line is literal.
         # Stay in this review loop after a change; editing languages/steps can
         # add Merge, which then creates newly editable format/extension rows.
         while True:
             edit_targets = _wizard_edit_targets(state)
             print()
-            print("Your answers so far:")
+            print("Current settings")
             for i, (label, value, _fn) in enumerate(edit_targets, start=1):
                 print(f"  {i}) {label}: {value}")
             valid = [str(i) for i in range(1, len(edit_targets) + 1)]
@@ -17795,9 +18645,10 @@ def _wizard_emit_cli(state: _WizardState) -> list[str]:
     steps = state.steps or {"fetch", "modify", "merge"}
     local_steps = steps - {"fetch"}
     downstream_episode_filter = bool(state.season or state.episode)
+    fetch_scopes_downstream = "fetch" in steps and state.source_kind in ("url", "title")
 
     def add_downstream_episode_filter(argv: list[str]) -> None:
-        if not downstream_episode_filter:
+        if not downstream_episode_filter or fetch_scopes_downstream:
             return
         if state.season:
             argv += ["--season", state.season]
@@ -18144,14 +18995,16 @@ def _wizard_normalize_save_path(raw_path: str) -> tuple[str, Path]:
     return str(raw), raw.expanduser()
 
 
-def _wizard_print_saved_workflow_next_steps(path_raw: str, path: Path, cli_string: str) -> None:
-    """Explain how to re-run and reuse a saved workflow TOML."""
+def _wizard_print_saved_workflow_details(path_raw: str, path: Path, cli_string: str) -> None:
+    """Show the detailed CLI/TOML reuse notes on demand.
+
+    The save-success path should stay short. These details are useful, but
+    only after the user explicitly asks for them.
+    """
     config_arg = shlex.quote(path_raw)
-    print(f"Your {path.name} runs the same workflow as this command:")
-    print("  # " + cli_string)
     print()
-    print("Run it later with:")
-    print(f"  getsubtitle --config {config_arg}")
+    print("Exact command:")
+    print("  # " + cli_string)
     print()
     print("You can recycle this TOML and override saved settings with extra CLI flags.")
     print("For example, reuse the same language, reading-aid, translation, and merge")
@@ -18166,18 +19019,43 @@ def _wizard_print_saved_workflow_next_steps(path_raw: str, path: Path, cli_strin
     print("CLI flags win over matching TOML settings, so the file can stay as a reusable template.")
 
 
-def _wizard_offer_open_saved_workflow_folder(path: Path) -> None:
-    """Offer to open the folder containing a saved workflow file."""
+def _wizard_open_saved_workflow_folder(path: Path) -> None:
+    """Open the folder containing a saved workflow file."""
     folder = path.expanduser().parent
     try:
         folder = folder.resolve()
     except OSError:
         folder = folder.expanduser()
-    if _wizard_yesno(f"Open folder containing {path.name}?", default=True):
-        try:
-            open_folder(folder)
-        except Exception as e:
-            print(f"  (could not open folder: {e})")
+    try:
+        open_folder(folder)
+    except Exception as e:
+        print(f"  (could not open folder: {e})")
+
+
+def _wizard_saved_workflow_menu(path_raw: str, path: Path, cli_string: str) -> None:
+    """Keep the save-success moment calm; hide details behind a menu."""
+    config_arg = shlex.quote(path_raw)
+    print()
+    print("Saved workflow:")
+    print(f"  {path}")
+    print()
+    print("Run later:")
+    print(f"  getsubtitle --config {config_arg}")
+    print()
+    while True:
+        print("    1) Show exact command")
+        print("    2) Open containing folder")
+        print("    3) Done")
+        choice = _wizard_read_choice("Number", ["1", "2", "3", "y", "yes", "n", "no"], "3")
+        if choice == "1":
+            _wizard_print_saved_workflow_details(path_raw, path, cli_string)
+            print()
+            continue
+        if choice in {"2", "y", "yes"}:
+            _wizard_open_saved_workflow_folder(path)
+            print()
+            continue
+        return
 
 
 # ─── Dependency probe + auto-setup ─────────────────────────────────────
@@ -18418,14 +19296,15 @@ def _wizard_probe_dependencies(state: _WizardState) -> list[tuple[str, str, str]
         out.append(output_issue)
     out.extend(_wizard_coverage_preflight(state))
 
-    # Reading aids → pykakasi for Japanese.
-    needs_pykakasi = any(s.startswith("ja:") for s in state.reading_aids)
-    if needs_pykakasi:
+    # Reading aids → SudachiPy for Japanese.
+    needs_sudachi = any(s.startswith("ja:") for s in state.reading_aids)
+    if needs_sudachi:
         try:
-            import pykakasi  # noqa: F401
+            from sudachipy import dictionary as _sudachi_dictionary  # noqa: F401
+            import sudachidict_core as _sudachi_dict_core  # noqa: F401
         except ImportError:
-            out.append(("block", "pykakasi (Japanese reading aids)",
-                        'pip install -e ".[furigana]"  # or: pip install pykakasi'))
+            out.append(("block", "SudachiPy + SudachiDict-core (Japanese reading aids)",
+                        'pip install -e ".[furigana]"  # or: pip install sudachipy sudachidict_core'))
     # Korean Revised Romanization needs korean-romanizer (hard) + g2pk (soft).
     # Yale is in-tree so we don't probe deps for ko:yale.
     needs_ko_revised = any(
@@ -18808,11 +19687,7 @@ def interactive_main(argv: list[str] | None = None) -> int:
                 break
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_text(toml_str, encoding="utf-8")
-            print(f"Saved: {path}")
-            print()
-            _wizard_print_saved_workflow_next_steps(path_raw, path, cli_string)
-            print()
-            _wizard_offer_open_saved_workflow_folder(path)
+            _wizard_saved_workflow_menu(path_raw, path, cli_string)
             _wizard_clear_draft()
             return 0
 
@@ -18854,6 +19729,7 @@ def interactive_main(argv: list[str] | None = None) -> int:
             active_summary.output = run_state.output
             active_summary.command = cli_string
             print()
+            print("-" * _WIZARD_HEADING_WIDTH)
             print("Running:")
             print("  " + cli_string)
             print()
@@ -19016,6 +19892,8 @@ def main(argv: list[str] | None = None) -> int:
         media.episode = "auto"
     if args.title:
         media.title = args.title
+    elif media.provider == "crunchyroll" and not media.title:
+        apply_crunchyroll_metadata(media)
     # TMDB title → IDs enrichment. Only fires when the user has a TMDB
     # API key configured AND we have a title but no IDs yet. Skipped for
     # Japanese-origin titles when `ja` is requested (preserves AniList
@@ -19470,26 +20348,49 @@ def main(argv: list[str] | None = None) -> int:
     if args.debug_providers:
         print_provider_debug(debug_records)
 
-    print_search_results(search_results)
-    print_low_confidence_next_steps(search_results)
-    print_warnings(warnings)
     expected_dir = output_dir(Path(args.output).expanduser(), media, media.season, args.layout)
-    print_missing_subtitle_next_steps(
-        langs,
-        episodes,
-        search_results,
-        media=media,
-        expected_output_dir=expected_dir,
-    )
-    maybe_print_manual_search_suggestions(
-        media,
-        langs,
-        episodes,
-        search_results,
-        mode=args.manual_search,
-        open_mode=args.manual_search_open,
-        expected_output_dir=expected_dir,
-    )
+    total_found = total_found_subtitles(langs, search_results)
+    if not planned and search_results and total_found == 0:
+        handle_no_subtitles_found_recovery(
+            media,
+            langs,
+            episodes,
+            search_results,
+            warnings,
+            manual_search_mode=args.manual_search,
+            manual_search_open=args.manual_search_open,
+            expected_output_dir=expected_dir,
+            show_details=bool(args.debug_providers),
+        )
+    else:
+        print_subtitle_search_outcome(
+            media,
+            langs,
+            episodes,
+            search_results,
+            planned,
+            expected_output_dir=expected_dir,
+            warnings=warnings,
+        )
+        print_search_results(search_results)
+        print_low_confidence_next_steps(search_results)
+        print_warnings(warnings)
+        print_missing_subtitle_next_steps(
+            langs,
+            episodes,
+            search_results,
+            media=media,
+            expected_output_dir=expected_dir,
+        )
+        maybe_print_manual_search_suggestions(
+            media,
+            langs,
+            episodes,
+            search_results,
+            mode=args.manual_search,
+            open_mode=args.manual_search_open,
+            expected_output_dir=expected_dir,
+        )
     fetch_issues = [
         f"{r.language} {episode_label(r.episode)}: {r.status}"
         + (f" — {r.error}" if r.error else "")
@@ -19498,7 +20399,6 @@ def main(argv: list[str] | None = None) -> int:
     ]
 
     if not planned:
-        print("\nNo downloads planned.")
         _wizard_summary_add(
             "fetch",
             planned=0,

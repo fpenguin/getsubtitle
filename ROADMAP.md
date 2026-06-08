@@ -10,9 +10,106 @@ Until the app is marketing-ready for v1.0, use pre-1.0 release steps:
 - **v0.9.1+**: small feature, docs, source, and UX batches that do not
   change the core workflow.
 - **v0.9.x.1**: very small follow-ups, help text, tests, and bug fixes.
-- **v1.0**: the marketing-ready milestone.
-- **v2.0**: a later larger behavior milestone, aimed at an AI-based
+- **v1.0**: the marketing-ready milestone: safer downloads, cleaner inputs,
+  smarter merges, and broader reading aids.
+- **v2.0**: a later larger behavior milestone, aimed at an AI-assisted
   subtitle sync engine.
+
+## v1.0 readiness roadmap
+
+Before calling GetSubtitle "1.0", prioritize trust and learner value over
+new surface area. The user should feel that the first downloaded files are
+probably the right files, the files are cleaned before stacking, and the
+final multi-language subtitle is readable enough to use for study.
+
+### 1. Get accurate files from the start
+
+- **Provider-result confidence gate.** Strengthen title, year, season,
+  episode, release-source, and language checks before saving a subtitle.
+  Obvious mismatches should ask before download or auto-try the next result.
+- **Wrong-language detection.** Add lightweight script checks for CJK,
+  Korean, Arabic, Thai, Russian, etc. Keep heavier Latin-script detection
+  optional via a `language-check` extra so the base install stays small.
+- **Better alternate-title search.** Search with localized titles,
+  romanized titles, native titles, translated titles, and known aliases
+  before declaring "not found"; especially important for Japanese anime,
+  Korean shows, and Chinese/Cantonese media.
+- **Provider provenance in the review.** Show enough detail for trust:
+  provider, matched title, episode, language, release name, confidence, and
+  why another candidate was skipped.
+- **Manual search as an honest fallback.** If automation is weak, surface
+  targeted community-search links and clear next steps instead of pretending
+  the automatic search was complete.
+
+### 2. Clean up properly before merging
+
+- **Pre-merge cleanup pipeline.** Normalize encoding, line breaks, HTML tags,
+  broadcast-caption noise, decorative wrappers, duplicated speaker labels,
+  and obvious replacement-character corruption before merge.
+- **Language-aware cleanup rules.** Keep Japanese bracket/wrapper cleanup,
+  Korean SMI quirks, Chinese punctuation, and Western caption tags separate
+  so one language's cleanup does not damage another.
+- **Embedded subtitle extraction polish.** When online fetch misses for MKV
+  or video files, clearly offer extraction of embedded text tracks as a
+  source for translate/modify/merge.
+- **Quality report before merge.** Show what exists per episode/language,
+  what was cleaned, what was converted, and what is still missing.
+
+### 3. Improve merging accuracy and timing intelligence
+
+- **Subtitle ownership / overlap handling.** Prevent one language from
+  "taking over" too early when another language's cue is still being read.
+  The merge should respect cue duration, reading time, overlap windows, and
+  master-track intent.
+- **Smarter deterministic sync.** Add better offset/drift detection, cue
+  split/merge heuristics, anchor matching, and confidence reporting before
+  reaching for AI.
+- **Per-language layout policy.** Let the merger decide when to preserve
+  lines, stack lines, label languages, shrink text, or refuse an unreadable
+  4+ language stack.
+- **Human-readable diagnostics.** For skipped/low-confidence episodes, show
+  the match rate, which language failed, and the exact next command to retry
+  with `--sync loose`, `--force`, another master, or manual cleanup.
+
+### 4. Expand reading aids for more learners
+
+- **Finish shipped-language polish.** Japanese, Korean, Mandarin, and
+  Cantonese should have clear install/setup checks, examples, output naming,
+  and format guidance.
+- **Add the next reading-aid languages carefully.** Candidates:
+  Thai (`th:royal-thai`), Arabic (`ar:ala-lc` / DMG), Hindi/Sanskrit
+  (`hi:iast`), Russian (`ru:iso-9`), plus Greek, Persian, and Hebrew if
+  reliable libraries or deterministic rules are available.
+- **Keep optional extras small.** Each reading backend should be installable
+  as its own extra (`romanization-th`, `romanization-ar`, etc.) so the base
+  app does not become heavy.
+- **Format guidance by environment.** Explain what reading aids look like in
+  SRT, ASS, VTT, and SMI based on where the user watches: browser/asbplayer,
+  desktop player, Plex/Jellyfin, TV, tablet, or phone.
+
+### 5. v1.0 launch checklist
+
+- README should sell the learner outcome first, then installation and CLI
+  detail later.
+- `getsubtitle --help`, topic help, README, example TOMLs, and ROADMAP
+  should use the same names and defaults.
+- Interactive wizard transcripts should cover happy paths, common paths,
+  edge cases, and failure paths.
+- v1.0 should not require users to understand provider internals, subtitle
+  formats, or TOML before getting one useful multi-language subtitle file.
+
+## v0.9.6.1 — what's new
+
+- **Crunchyroll watch URL metadata.** Crunchyroll watch/series URLs now use
+  Crunchyroll's anonymous metadata endpoint through `curl_cffi`, so the
+  wizard and CLI can identify titles without a Brave Search API key.
+- **Cleaner generated pipeline commands.** Wizard-generated full pipelines
+  now show `--season` / `--episode` once on the fetch block; translate,
+  modify, and merge inherit that scope internally unless they explicitly
+  override it.
+- **Docs split and install polish.** README stays shorter while install,
+  workflow, reading-aid, source, API-key, and troubleshooting details live
+  under `docs/`.
 
 ## v0.9.6 — what's new
 
@@ -72,93 +169,6 @@ old -> new filenames, checks collisions, and defaults to copy-and-apply
 so originals stay untouched. The preview asks whether to apply now, keep
 editing, discard the current change, or cancel; apply now then asks copy
 vs original-file rename.
-
-## Planned: interactive wizard UX v2
-
-The latest CODEX and Claude audits agree on the main direction: the wizard
-should fail earlier, stay scoped to the user's selected episodes, and end
-with an outcome a beginner can understand without reading hundreds of log
-lines. Treat this as a pre-v1.0 quality track.
-
-### Phase A: correctness-flavored UX
-
-- **Translation readiness preflight.** After the user chooses an MT engine,
-  check whether the chosen engine can actually translate the requested
-  language pairs before the workflow starts. Argos must verify installed
-  language packages / pivot paths, not just that `argostranslate` imports.
-  If a pair is missing, offer explicit choices: install with confirmation,
-  switch engine, or continue without translation. Do not run installers
-  silently. **Implemented for Argos direct/pivot package checks; DeepL key
-  checks already block before run.**
-- **Episode scope enforcement.** If the user chooses `S01E05-E10`, every
-  downstream step (`translate`, `modify`, `merge`) must receive that same
-  season/episode filter. Existing subtitle files outside the selected range
-  should be ignored by default, with a warning/choice only when the user is
-  intentionally processing a mixed folder. **CLI/TOML propagation to
-  downstream steps is implemented; mixed-folder warning remains planned.**
-- **Downloaded subtitle sanity checks.** After download, inspect a cleaned
-  sample of subtitle text before saving/merging. Planned checks:
-  high-confidence language mismatch (for example requested `en`, detected
-  Norwegian), plus provider/title metadata conflicts that survived search
-  ranking. Obvious replacement-character damage (`�`) is now rejected during
-  download, common CP1252/Latin-1 text subtitles are normalised to UTF-8, and
-  alternate provider/results are tried automatically when available. Remaining
-  interactive language-mismatch options: retry same provider/result
-  alternatives, try another provider, save under the detected language, keep
-  anyway, skip, or copy report details. Keep heavy Latin-script language
-  detection optional (`language-check` extra); use lightweight script checks
-  for CJK/Korean/Arabic/Thai/Russian where possible.
-- **Outcome-oriented translation wording.** Reword the MT question from
-  "If a language is missing, what should we do?" to "Fill missing
-  subtitles?" with short numeric choices for skip, Argos, Ollama, and DeepL.
-  **Implemented.**
-
-### Phase B: clarity wins
-
-- **Plain review screen first.** Keep the current human-readable plan as the
-  primary review surface. Move raw CLI / TOML detail behind an explicit
-  "show exact command and workflow file" action if the screen becomes too
-  crowded, while keeping power-user access one keypress away.
-- **Reading-aid examples.** Show detected languages and one short preview
-  per shipped reading-aid option, e.g. Korean Revised Romanization and Yale
-  examples. Deferred backends should say that previews land with the backend.
-- **Episode prompt wording.** For TV sources, consider replacing "What
-  episode scope?" with user-centered choices: single episode, episode range,
-  whole season, or auto-detect. Keep movie auto-skip behavior.
-
-### Phase C: workflow summary and broader preflight
-
-- **Interactive final summary.** Add an interactive-only workflow summary
-  that reports requested episodes/languages, downloaded files, missing
-  subtitles, translation blockers, reading-aid outputs, merge results, and
-  next-step commands. `Nothing to write.` is not enough after a long wizard
-  run. **Implemented with a wizard-only structured summary printed after Run.**
-- **Structured summary collector.** Prefer passing an optional collector into
-  fetch/translate/modify/merge over scraping stdout. Normal CLI behavior
-  should remain unchanged when no collector is supplied. **Implemented as an
-  active interactive collector that records counts at existing plan/write
-  points; normal CLI output is unchanged.**
-- **End-to-end preflight.** Add a bounded preflight before Run for writable
-  output folder, configured provider/API keys, known MT blockers, and
-  possibly fast coverage estimates. Network checks must time out quickly and
-  degrade to warnings instead of freezing the wizard. **Implemented for output
-  folder writability, provider key readiness, and known MT blockers; fast
-  coverage estimates remain planned.**
-
-### Design decisions from the audits
-
-- CODEX and Claude both rank translation preflight and episode scoping as
-  correctness issues, not mere wording polish.
-- Claude puts the final summary in Phase A; CODEX agrees it is important,
-  but recommends shipping it after the preflight/scope fixes unless a small
-  structured collector can land safely.
-- For Argos, use the same direct/pivot-path logic as runtime translation so
-  preflight and actual translation do not disagree. If the wizard cannot
-  know the exact source language yet, probe conservative likely pairs and
-  explain the uncertainty.
-- Per-pair "skip only the missing translations" should wait until the wizard
-  has explicit per-target MT state. Until then, the safe choices are switch
-  engine, disable translation, or install the missing packs.
 
 ## v0.9.5 — what's new
 
@@ -519,28 +529,9 @@ lines. Treat this as a pre-v1.0 quality track.
 
 ### Tests
 
-- 680 automated tests covering URL parsing, provider response shapes, TMDB / AniList resolution, low-confidence subtitle match gating, subtitle download sanity checks, SAMI parsing, VTT/ASS input parsing, MT helpers + auto_load/auto_unload, Argos direct/pivot package preflight, wizard run summaries, output/provider/coverage preflight, in-wizard pip dependency setup, recoverable download timeouts, workflow save-path guardrails, editable smart defaults, explicit format selection, merge with format hints and font-size styling, the wizard scenario harness, rename mode, the named pipeline registry, pipeline orchestration, `--config` CLI overrides, config validation, source smoke diagnostics, help system, and dispatch routing.
+- 707 automated tests covering URL parsing, provider response shapes, TMDB / AniList resolution, low-confidence subtitle match gating, subtitle download sanity checks, SAMI parsing, VTT/ASS input parsing, MT helpers + auto_load/auto_unload, Argos direct/pivot package preflight, wizard run summaries, output/provider/coverage preflight, in-wizard pip dependency setup, recoverable download timeouts, workflow save-path guardrails, editable smart defaults, explicit format selection, merge with format hints and font-size styling, Crunchyroll watch-URL metadata resolution, shared pipeline episode-scope inheritance, the wizard scenario harness, rename mode, the named pipeline registry, pipeline orchestration, `--config` CLI overrides, config validation, source smoke diagnostics, help system, and dispatch routing.
 
-## Planned (post-v0.9.x)
-
-- **Reading-aid expansion (international)**: the pre-1.0 `[modify].reading`
-  schema grows per language. Shipped: Japanese (furigana, initial), Korean
-  (Revised + G2P + Yale, v0.2), Mandarin (pinyin marks / numbers /
-  letters, v0.3), Cantonese Jyutping (`yue:numbers`, v0.9.1). Still to
-  come: Thai (`th:royal-thai`), Arabic (`ar:ala-lc`), Hindi/Sanskrit
-  (`hi:iast`), Russian (`ru:iso-9`), and Greek/Persian/Hebrew. Each
-  language ships as a separate optional pip extra (`romanization-yue`,
-  `romanization-th`, …) so users only install the backends they need.
-  Filenames use the `.romanization-{mode}` infix (ja keeps
-  `.furigana-{mode}` for back-compat).
-- **`--pipeline run NAME`** registry: name a pipeline TOML and run it by short name without typing the path.
-
-## Planned: v0.9.x smaller steps
-
-- Optional subtitle labels and ordering for combined files.
-- Integration tests using temporary SRT/VTT/SMI folders for end-to-end merge output.
-
-## v2.0 target: AI-based subtitle sync engine
+## v2.0 target: AI-assisted subtitle sync engine
 
 Aim: make multi-language subtitle files line up better when subtitle
 files come from different releases, cuts, intros, ad breaks, fansub

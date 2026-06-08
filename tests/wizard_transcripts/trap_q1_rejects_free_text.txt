@@ -45,23 +45,31 @@ Q2. Where should we get subtitles from?                             Progress [�
 
     Searching for: 'totoro'
 
-    No title-resolver hits. Add a TMDB key for richer matches:
+    No title matches found.
+    I won't build a fetch workflow from an unverified title yet.
+    Check the spelling, paste an IMDb/TMDB/AniList URL, or choose
+    the raw-title escape only if you know the title source works.
+
+    Add a TMDB key for richer movie/TV matches:
       getsubtitle --set-key tmdb
-    Continuing with raw title text — fetch may still work via
-    AniList or other built-in fallbacks.
+
+    1) Re-enter a different title
+    2) Use exactly what I typed (advanced; may fail)
+
+  Number [1 | b=back | q=quit] > 2
   Is this a movie? (No = TV show / anime) [y/N | b=back | q=quit] > n
 
 ------------------------------------------------------------------------------------------------
 Q3. What episode scope?                                             Progress [◼◼◼◼◻◻◻◻◻◻◻◻◻] 31%
 
-    1) One TV episode — Season 1 Episode 1
-    2) A specific season + episode (or range)
-    3) Whole season, every episode (-e all)
-    4) Auto — let getsubtitle infer from the URL/title metadata
+    1) Specific season + episode (or range)
+       Defaults to Season 1 Episode 1.
+    2) Whole season, every episode (-e all)
+    3) Auto — let getsubtitle infer from the URL/title metadata
        (anime URLs typically resolve to single episodes; movies to a
         single item; TV without -e usually picks S01E01)
 
-  Number [4 | b=back | q=quit] >
+  Number [3 | b=back | q=quit] >
 
 ------------------------------------------------------------------------------------------------
 Q4. Which subtitle languages do you want to collect?                Progress [◼◼◼◼◼◼◻◻◻◻◻◻◻] 44%
@@ -148,33 +156,35 @@ Q8. Subtitle text size?                                             Progress [�
 
   Number [1 | b=back | q=quit] >
 
-======================================================================
-Here's the plan:
-======================================================================
-  • Fetch ja, en for totoro
+------------------------------------------------------------------------------------------------
+Review your workflow                                                Progress [◼◼◼◼◼◼◼◼◼◼◼◼◻] 99%
+
+Plan
+  • Fetch ja, en for:
+    totoro
   • Clean up cues (single line, strip broadcast noise)
-  • Stack ja, en into one SRT file → *.ja-en.srt
+  • Stack ja, en into one SRT file: *.ja-en.srt
   • Use subtitle text size: Regular
-  • Save to ~/Downloads/GetSubtitle
-======================================================================
-Before running:
-======================================================================
-  ⚠ Japanese subtitles can be harder to find automatically; manual search or translation may be needed.
-======================================================================
-Smart defaults filled in for you (edit via 'Edit a single answer'):
-======================================================================
+  • Save to:
+    ~/Downloads/GetSubtitle
+
+Heads up
+  ⚠ Japanese subtitles can be harder to find automatically; manual
+    search or translation may be needed.
+
+Smart defaults
   Display order   ja, en  (top → bottom on screen)
   Timing master   ja  (first language)
   Cleanup preset  on  (single-line cues + strip broadcast noise)
   Output folder   ~/Downloads/GetSubtitle
-======================================================================
 
-    1) Run it now
-    2) Save as a reusable workflow file
-    3) Edit a single answer
-    4) Start over from beginning
-    5) Quit
-    6) Show the exact command & workflow file
+What next?
+  1) Run it now
+  2) Save as a reusable workflow file
+  3) Change something
+  4) Start over
+  5) Quit
+  6) Show exact command and workflow file
 
   Number [2 | b=back | q=quit] > 5
 Quit.

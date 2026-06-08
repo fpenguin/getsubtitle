@@ -1,6 +1,6 @@
 """Persona: power user revises a single answer.
 
-After answering everything, the user picks 'Edit a single answer',
+After answering everything, the user picks 'Change something',
 goes back to Q1 (the step picker), drops merge, then chooses save.
 
 The wizard must re-derive downstream answers correctly: state.steps

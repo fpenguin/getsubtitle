@@ -13,15 +13,17 @@ SCENARIO = Scenario(
     },
     # 1) Q1 steps: default 1-4 (Enter).
     # 2) source: free-text "totoro" → title search.
-    # 3) raw-title movie? no.
-    # 4) scope: auto.
-    # 5) languages: ja,en.
-    # 6) missing-language action: 1 (skip AI translation).
-    # 7) reading aids: 1 (skip).
-    # 8) format/font/action defaults as scripted.
+    # 3) no title hits: explicitly use raw text.
+    # 4) raw-title movie? no.
+    # 5) scope: auto.
+    # 6) languages: ja,en.
+    # 7) missing-language action: 1 (skip AI translation).
+    # 8) reading aids: 1 (skip).
+    # 9) format/font/action defaults as scripted.
     inputs=[
         "",       # Q1 steps default
         "totoro", # title search
+        "2",      # advanced raw-title escape after no resolver hit
         "n",      # raw title is TV/show
         "",       # scope auto
         "ja,en",  # languages

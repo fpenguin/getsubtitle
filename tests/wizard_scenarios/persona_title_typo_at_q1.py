@@ -12,6 +12,7 @@ SCENARIO = Scenario(
     inputs=[
         "",         # steps default (1-4)
         "totoro",   # source-kind prompt accepts free text as title search
+        "2",        # advanced raw-title escape after no resolver hit
         "n",        # "Is this a movie?" → no
         "2",        # scope: specific season + episode
         "1",        # season

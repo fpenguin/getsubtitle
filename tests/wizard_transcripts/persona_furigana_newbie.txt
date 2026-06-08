@@ -104,56 +104,50 @@ Q5. Final output format.                                            Progress [�
 
     Suggested default: VTT — VTT supports true Japanese ruby in browsers/asbplayer; local players vary.
 
-    Reading-aid notes:
-      VTT can show true ruby above Japanese text in browsers/asbplayer.
-      SRT/SMI/ASS use fallback reading-aid layouts instead.
-
   Final format [3 | b=back | q=quit] >
 
-======================================================================
-Here's the plan:
-======================================================================
-  • Use local ja, en files in {TMP}/Show
+------------------------------------------------------------------------------------------------
+Review your workflow                                                Progress [◼◼◼◼◼◼◼◼◼◼◼◼◻] 99%
+
+Plan
+  • Use local ja, en files in:
+    {TMP}/Show
   • Add reading aids: ja:hiragana
-  • Stack ja, en into one VTT file → *.ja-en.vtt
-  • Save to {TMP}/Show
-======================================================================
-Before running:
-======================================================================
-  ⚠ VTT reading aids work best in browsers/asbplayer; local player support varies.
-======================================================================
-Smart defaults filled in for you (edit via 'Edit a single answer'):
-======================================================================
+  • Stack ja, en into one VTT file: *.ja-en.vtt
+  • Save to:
+    {TMP}/Show
+
+Heads up
+  ⚠ VTT reading aids work best in browsers/asbplayer; local player
+    support varies.
+
+Smart defaults
   Display order   ja, en  (top → bottom on screen)
   Timing master   ja  (first language)
   Cleanup preset  on  (single-line cues + strip broadcast noise)
-  Output folder   {TMP}/Show  (beside source)
-======================================================================
+  Output folder   beside source
 
-    1) Run it now
-    2) Save as a reusable workflow file
-    3) Edit a single answer
-    4) Start over from beginning
-    5) Quit
-    6) Show the exact command & workflow file
+What next?
+  1) Run it now
+  2) Save as a reusable workflow file
+  3) Change something
+  4) Start over
+  5) Quit
+  6) Show exact command and workflow file
 
   Number [1 | b=back | q=quit] > 2
 
 
   Save to (relative paths OK) [getsubtitle-workflow.toml] > {TMP}/newbie.toml
-Saved: {TMP}/newbie.toml
 
-Your newbie.toml runs the same workflow as this command:
-  # getsubtitle --source {TMP}/Show --modify --strip-cc-noise --single-line --reading ja:hiragana --reading-format vtt --merge --languages ja,en --reading ja:hiragana --format vtt --output {TMP}/Show
+Saved workflow:
+  {TMP}/newbie.toml
 
-Run it later with:
+Run later:
   getsubtitle --config {TMP}/newbie.toml
 
-You can recycle this TOML and override saved settings with extra CLI flags.
-For example, reuse the same language, reading-aid, translation, and merge
-choices on another show or season:
-  getsubtitle --config {TMP}/newbie.toml --source 'https://www.imdb.com/title/tt1234567/' --season 3 --episode all --output "$HOME/Downloads/GetSubtitle/TV Show/Season 03"
+    1) Show exact command
+    2) Open containing folder
+    3) Done
 
-CLI flags win over matching TOML settings, so the file can stay as a reusable template.
-
-  Open folder containing newbie.toml? [Y/n] > n
+  Number [3] > n

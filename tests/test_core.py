@@ -365,6 +365,273 @@ def test_choose_best_allows_opaque_provider_filenames_under_metadata_id():
     assert MODULE["choose_best"](files, media=media, episode="auto") is files[0]
 
 
+def test_subtitle_search_outcome_leads_with_human_no_found_summary(capsys, tmp_path):
+    media = MODULE["MediaInfo"](
+        source_url="title://Fena",
+        provider="title",
+        title="Fena - Pirate Princess",
+        title_aliases=["Kaizoku Ojo"],
+        season="1",
+    )
+    results = [
+        MODULE["SearchResult"]("ja", "1", "jimaku", "missing"),
+        MODULE["SearchResult"]("ja", "2", "jimaku", "missing"),
+        MODULE["SearchResult"]("ko", "1", "wyzie", "missing"),
+        MODULE["SearchResult"]("ko", "2", "wyzie", "missing"),
+    ]
+    MODULE["print_subtitle_search_outcome"](
+        media,
+        ["ja", "ko"],
+        ["1", "2"],
+        results,
+        [],
+        expected_output_dir=tmp_path / "Fena - Pirate Princess" / "Season 01",
+    )
+    out = capsys.readouterr().out
+    assert "No subtitles found" in out
+    assert "Show:\n  Fena - Pirate Princess" in out
+    assert "Requested:\n  Japanese, Korean" in out
+    assert "Result:" in out
+    assert "Japanese: 0 / 2 episodes" in out
+    assert "Korean:   0 / 2 episodes" in out
+    assert "Also try searching for:\n  Kaizoku Ojo" in out
+    assert "Nothing was downloaded." not in out
+    assert "Recommended next steps:" not in out
+
+
+def test_subtitle_search_outcome_distinguishes_rate_limit(capsys, tmp_path):
+    media = MODULE["MediaInfo"](
+        source_url="title://Fena",
+        provider="title",
+        title="Fena - Pirate Princess",
+        title_aliases=["Kaizoku Ojo"],
+        season="1",
+    )
+    results = [
+        MODULE["SearchResult"]("ja", "1", "jimaku", "error", error="Jimaku rate limit exceeded."),
+        MODULE["SearchResult"]("ko", "1", "wyzie", "missing"),
+    ]
+    MODULE["print_subtitle_search_outcome"](
+        media,
+        ["ja", "ko"],
+        ["1"],
+        results,
+        [],
+        expected_output_dir=tmp_path / "Fena - Pirate Princess" / "Season 01",
+    )
+    out = capsys.readouterr().out
+    assert "Subtitle search was rate-limited" in out
+    assert "Possible cause:\n  A subtitle provider asked us to slow down." in out
+    assert "Also try searching for:\n  Kaizoku Ojo" in out
+
+
+def test_no_subtitle_recovery_timeout_recommends_retry_first(monkeypatch, capsys, tmp_path):
+    import io
+
+    class TtyInput(io.StringIO):
+        def isatty(self):
+            return True
+
+    media = MODULE["MediaInfo"](
+        source_url="title://Kaizoku%20Oujo",
+        provider="title",
+        title="Kaizoku Oujo",
+        title_aliases=["Fena: Pirate Princess"],
+        season="1",
+    )
+    results = [
+        MODULE["SearchResult"]("ja", "1", "jimaku", "error", error="Network timeout for https://jimaku.cc/api/entries/search"),
+        MODULE["SearchResult"]("ko", "1", "wyzie", "missing"),
+    ]
+    g = MODULE["handle_no_subtitles_found_recovery"].__globals__
+    monkeypatch.setattr(g["sys"], "stdin", TtyInput("n\nn\n"))
+    MODULE["handle_no_subtitles_found_recovery"](
+        media,
+        ["ja", "ko"],
+        ["1"],
+        results,
+        ["ja episode 1: Network timeout for https://jimaku.cc/api/entries/search"],
+        manual_search_mode="on-missing",
+        manual_search_open="ask",
+        expected_output_dir=tmp_path / "Kaizoku Oujo" / "Season 01",
+    )
+    out = capsys.readouterr().out
+    assert "Could not search for subtitles" in out
+    assert "Possible cause:\n  A subtitle provider did not respond." in out
+    assert "Open subtitle search pages now? [y/N]" in out
+    assert "Try again later" in out
+    assert "Retry the search in a few minutes." in out
+    assert "Show technical details? [y/N]" in out
+    assert "Download subtitles manually." not in out
+
+
+def test_no_subtitle_recovery_yes_opens_sources_without_diagnostic_dump(monkeypatch, capsys, tmp_path):
+    import io
+
+    class TtyInput(io.StringIO):
+        def isatty(self):
+            return True
+
+    media = MODULE["MediaInfo"](
+        source_url="title://Kaizoku%20Oujo",
+        provider="title",
+        title="Kaizoku Oujo",
+        title_aliases=["Fena: Pirate Princess"],
+        season="1",
+    )
+    results = [
+        MODULE["SearchResult"]("ja", "1", "jimaku", "missing"),
+        MODULE["SearchResult"]("ko", "1", "wyzie", "missing"),
+    ]
+    opened = []
+    g = MODULE["handle_no_subtitles_found_recovery"].__globals__
+    monkeypatch.setattr(g["sys"], "stdin", TtyInput("\n"))
+    monkeypatch.setitem(g, "open_in_browser", lambda url: opened.append(url))
+    MODULE["handle_no_subtitles_found_recovery"](
+        media,
+        ["ja", "ko"],
+        ["1"],
+        results,
+        ["ja episode 1: Jimaku has no matching entry via title aliases."],
+        manual_search_mode="on-missing",
+        manual_search_open="ask",
+        expected_output_dir=tmp_path / "Kaizoku Oujo" / "Season 01",
+    )
+    out = capsys.readouterr().out
+    assert "Could not match this title in subtitle sources" in out
+    assert "Open subtitle search pages now? [Y/n]" in out
+    assert "Opening:" in out
+    assert "Jimaku web search (Japanese)" in out
+    assert "Kitsunekko (Japanese)" in out
+    assert "Google subtitle searches" in out
+    assert "Tip:\n  Search using:\n    Fena: Pirate Princess" in out
+    assert "Done." in out
+    assert opened
+    assert "Search results:" not in out
+    assert "Warnings:" not in out
+    assert "Manual recovery" not in out
+
+
+def test_no_subtitle_recovery_no_keeps_manual_recovery_short(monkeypatch, capsys, tmp_path):
+    import io
+
+    class TtyInput(io.StringIO):
+        def isatty(self):
+            return True
+
+    media = MODULE["MediaInfo"](
+        source_url="title://Kaizoku%20Oujo",
+        provider="title",
+        title="Kaizoku Oujo",
+        title_aliases=["Fena: Pirate Princess"],
+        season="1",
+    )
+    results = [
+        MODULE["SearchResult"]("ja", "1", "jimaku", "missing"),
+        MODULE["SearchResult"]("ko", "1", "wyzie", "missing"),
+    ]
+    g = MODULE["handle_no_subtitles_found_recovery"].__globals__
+    monkeypatch.setattr(g["sys"], "stdin", TtyInput("n\nn\n"))
+    MODULE["handle_no_subtitles_found_recovery"](
+        media,
+        ["ja", "ko"],
+        ["1"],
+        results,
+        [],
+        manual_search_mode="on-missing",
+        manual_search_open="ask",
+        expected_output_dir=tmp_path / "Kaizoku Oujo" / "Season 01",
+    )
+    out = capsys.readouterr().out
+    assert "Manual recovery" in out
+    assert "Show technical details? [y/N]" in out
+    assert "getsubtitle merge" in out
+    assert "Search results:" not in out
+    assert "Warnings:" not in out
+    assert "Try these subtitle sources:" not in out
+
+
+def test_no_subtitle_recovery_details_are_opt_in(monkeypatch, capsys, tmp_path):
+    import io
+
+    class TtyInput(io.StringIO):
+        def isatty(self):
+            return True
+
+    media = MODULE["MediaInfo"](
+        source_url="title://Kaizoku%20Oujo",
+        provider="title",
+        title="Kaizoku Oujo",
+        title_aliases=["Fena: Pirate Princess"],
+        season="1",
+    )
+    results = [
+        MODULE["SearchResult"]("ja", "1", "jimaku", "missing"),
+        MODULE["SearchResult"]("ko", "1", "wyzie", "missing"),
+    ]
+    g = MODULE["handle_no_subtitles_found_recovery"].__globals__
+    monkeypatch.setattr(g["sys"], "stdin", TtyInput("n\ny\n"))
+    MODULE["handle_no_subtitles_found_recovery"](
+        media,
+        ["ja", "ko"],
+        ["1"],
+        results,
+        ["ja episode 1: Jimaku has no matching entry via title aliases."],
+        manual_search_mode="on-missing",
+        manual_search_open="ask",
+        expected_output_dir=tmp_path / "Kaizoku Oujo" / "Season 01",
+    )
+    out = capsys.readouterr().out
+    assert "Search results:" in out
+    assert "Warnings:" in out
+    assert "Try these subtitle sources:" in out
+
+
+def test_print_warnings_groups_repetitive_episode_warnings(capsys):
+    warnings = [
+        "ja episode 1: Jimaku has no matching entry via AniList ID 122052, TMDB tv:106480, title aliases.",
+        "ja episode 2: Jimaku has no matching entry via AniList ID 122052, TMDB tv:106480, title aliases.",
+        "ja episode 3: Jimaku rate limit exceeded. Wait a bit, then retry; bulk episode downloads now cache the entry lookup.",
+        "ko: broad provider lookup needs an IMDb/TMDB URL plus WYZIE_API_KEY.",
+    ]
+    MODULE["print_warnings"](warnings)
+    out = capsys.readouterr().out
+    assert "Japanese subtitles" in out
+    assert "Episodes affected: E01-E02" in out
+    assert "Jimaku could not find a matching entry for this show." in out
+    assert "Episodes affected: E03" in out
+    assert "Jimaku rate limit exceeded. Wait a bit, then retry." in out
+    assert "ko: broad provider lookup needs" in out
+    assert "ja episode 1" not in out
+
+
+def test_manual_search_copy_is_recovery_oriented(capsys, tmp_path):
+    media = MODULE["MediaInfo"](
+        source_url="title://Fena",
+        provider="title",
+        title="Fena - Pirate Princess",
+        title_aliases=["Kaizoku Ojo"],
+    )
+    results = [
+        MODULE["SearchResult"]("ja", "1", "jimaku", "missing"),
+        MODULE["SearchResult"]("ko", "1", "wyzie", "missing"),
+    ]
+    MODULE["maybe_print_manual_search_suggestions"](
+        media,
+        ["ja", "ko"],
+        ["1"],
+        results,
+        open_mode="off",
+        expected_output_dir=tmp_path / "Fena - Pirate Princess" / "Season 01",
+    )
+    out = capsys.readouterr().out
+    assert "Try these subtitle sources:" in out
+    assert "If you find subtitles manually:" in out
+    assert "Note: Some sites may require login, ads, or manual download." in out
+    assert "These links do not bypass" not in out
+    assert "After downloading manually" not in out
+
+
 def test_enrich_external_ids_from_wikidata_skips_tmdb_tv_property_for_movies(monkeypatch):
     calls = []
     g = MODULE["enrich_external_ids_from_wikidata"].__globals__
@@ -1040,9 +1307,11 @@ def test_wyzie_falls_back_when_broad_call_returns_nothing():
     wyzie_globals = MODULE["WyzieProvider"].files.__globals__
     saved_request = wyzie_globals["request_json"]
     calls = []
+    timeouts = []
 
     def fake_request_json(url, **kwargs):
         calls.append(url)
+        timeouts.append(kwargs.get("timeout"))
         if "language=ko" in url:
             return [{"url": "https://x/k.srt", "format": "srt", "fileName": "k.srt", "language": "ko"}]
         return []  # broad call returns nothing
@@ -1064,15 +1333,18 @@ def test_wyzie_falls_back_when_broad_call_returns_nothing():
     # First call: broad. Second call: per-language fallback.
     assert len(calls) == 2
     assert "language=ko" in calls[1]
+    assert timeouts == [MODULE["PROVIDER_SEARCH_TIMEOUT_SECONDS"], MODULE["PROVIDER_SEARCH_TIMEOUT_SECONDS"]]
 
 
 def test_subdl_provider_builds_imdb_tv_query_and_download_url():
     subdl_globals = MODULE["SubDLProvider"]._fetch.__globals__
     saved_request = subdl_globals["request_json"]
     calls = []
+    timeouts = []
 
     def fake_request_json(url, **kwargs):
         calls.append(url)
+        timeouts.append(kwargs.get("timeout"))
         return {
             "status": True,
             "subtitles": [
@@ -1108,6 +1380,7 @@ def test_subdl_provider_builds_imdb_tv_query_and_download_url():
     assert "season_number=1" in calls[0]
     assert "episode_number=1" in calls[0]
     assert "languages=KO" in calls[0]
+    assert timeouts == [MODULE["PROVIDER_SEARCH_TIMEOUT_SECONDS"]]
 
 
 def test_subdl_provider_uses_unpacked_episode_files():
@@ -1153,9 +1426,11 @@ def test_jimaku_provider_can_lookup_by_tmdb_id_when_anilist_is_missing():
     scope = MODULE["JimakuProvider"]._search_entries.__globals__
     saved_request = scope["request_json"]
     calls: list[str] = []
+    timeouts: list[int | float | None] = []
 
     def fake_request_json(url, **kwargs):
         calls.append(url)
+        timeouts.append(kwargs.get("timeout"))
         assert kwargs["headers"]["Authorization"] == "jimaku-key"
         return [{"id": 42, "name": "My Neighbor Totoro"}]
 
@@ -1174,6 +1449,7 @@ def test_jimaku_provider_can_lookup_by_tmdb_id_when_anilist_is_missing():
         scope["request_json"] = saved_request
 
     assert "tmdb_id=movie%3A8392" in calls[0]
+    assert timeouts == [MODULE["PROVIDER_SEARCH_TIMEOUT_SECONDS"]]
 
 
 def test_jimaku_provider_query_fallback_uses_title_aliases_carefully():
@@ -2006,29 +2282,28 @@ def test_kanji_reading_pair_lines_aligns_rows_to_same_display_width():
 
 
 def test_kanji_reading_line_romaji_uses_full_sentence():
-    try:
-        line = MODULE["kanji_reading_line"]("（望）７号車と６号車がくっついた。", "romaji")
-    except MODULE["CliError"] as e:
-        if "pykakasi" in str(e):
-            return
-        raise
+    line = MODULE["kanji_reading_line"]("（望）７号車と６号車がくっついた。", "romaji")
     assert "gousha" in line
     assert "kuttsuita" in line
-    assert "７" in line or "7" in line
+    assert any(number in line for number in ("７", "7", "nana", "shichi"))
     assert "号車" not in line
 
 
 def test_text_with_ruby_romaji_outputs_normal_sized_line():
-    try:
-        out = MODULE["text_with_ruby"]("（望）７号車と６号車がくっついた。", "romaji")
-    except MODULE["CliError"] as e:
-        if "pykakasi" in str(e):
-            return
-        raise
+    out = MODULE["text_with_ruby"]("（望）７号車と６号車がくっついた。", "romaji")
     assert "<ruby>" not in out
     assert "<rt>" not in out
     assert "gousha" in out
     assert "kuttsuita" in out
+
+
+def test_japanese_reading_disambiguates_kimi_and_kun():
+    assert "<rt>きみ</rt>" in MODULE["text_with_ruby"]("君の車だ", "hiragana")
+    assert "<rt>くん</rt>" in MODULE["text_with_ruby"]("田中君のせいだ", "hiragana")
+
+
+def test_japanese_reading_trims_kana_suffixes_from_compounds():
+    assert MODULE["text_with_readings"]("生ビールをください。", "hiragana") == "生（なま）ビールをください。"
 
 
 def test_combine_cues_does_not_reuse_same_target_cue():
@@ -2307,7 +2582,7 @@ def test_multi_variant_japanese_romaji_handles_kana_only_lines():
         ])
         assert rc == 0
         content = (root / "Show.S01E01.ja-romaji-ja.vtt").read_text(encoding="utf-8")
-        assert "kokokara" in content
+        assert "koko kara" in content
         assert "sekutaa" in content
         assert "ここからセクター２！" in content
 
@@ -2516,12 +2791,12 @@ def test_combine_main_writes_combined_file():
         # both present in the stacked output. (Furigana would only inline
         # if --reading ja:hiragana were passed; see the multi-variant
         # merge tests for stacked-variant coverage.)
-        assert "Prepared with GetSubtitle on GitHub." in body
-        assert "Media and subtitle rights remain with their respective copyright holders." in body
-        assert body.count("Prepared with GetSubtitle on GitHub.") == 2
+        assert "Created with GetSubtitle" in body
+        assert "Subtitles © their respective copyright holders" in body
+        assert body.count("Created with GetSubtitle") == 2
         cues = MODULE["parse_srt"](body)
-        assert cues[0].text_lines[0] == "Prepared with GetSubtitle on GitHub."
-        assert cues[-1].text_lines[0] == "Prepared with GetSubtitle on GitHub."
+        assert cues[0].text_lines[0] == "Created with GetSubtitle"
+        assert cues[-1].text_lines[0] == "Created with GetSubtitle"
         assert "彼女" in body
         assert "運命" in body
         assert "人間" in body
@@ -2544,7 +2819,7 @@ def test_combine_main_no_watermark_flag_omits_credit_cues():
         rc = MODULE["combine_main"]([str(root), "-l", "ja,en", "--no-watermark"])
         assert rc == 0
         body = (root / "Show.S01E07.ja-en.srt").read_text(encoding="utf-8")
-    assert "Prepared with GetSubtitle" not in body
+    assert "Created with GetSubtitle" not in body
     assert "copyright holders" not in body
     assert "こんにちは" in body
     assert "Hello" in body
@@ -3062,6 +3337,14 @@ def test_config_subcommand_show_includes_all_sections():
     assert "from user_settings.toml" in text
     # The overridden value should appear.
     assert 'languages = "ja,ko"' in text
+
+
+def test_config_show_uses_canonical_mt_source_key():
+    rendered = MODULE["render_effective_config"](
+        user_cfg={"translate": {"mt_source_lang": "ko:ja"}}
+    )
+    assert 'mt_source = "ko:ja"  # from user_settings.toml' in rendered
+    assert "mt_source_lang" not in rendered
 
 
 def test_config_subcommand_rejects_multiple_actions():
@@ -3669,7 +3952,7 @@ def test_translate_main_writes_mt_files_using_fake_translator():
 
 def test_strip_inline_furigana_removes_parenthetical_readings():
     s = MODULE["strip_inline_furigana"]
-    # Real-world shape produced by text_with_readings: pykakasi splits each
+    # Real-world shape produced by text_with_readings: kanji surfaces are
     # chunk so kanji surfaces are annotated separately from okurigana.
     assert s("特（とく）に足回（あしまわ）りの仕上（しあ）げ") == "特に足回りの仕上げ"
     # Kanji-only surface with hiragana reading.
@@ -5478,6 +5761,63 @@ def test_pipeline_url_fetch_passes_shared_output_and_resolves_anilist_folder():
     assert captured["merge"][0] == expected
 
 
+def test_pipeline_downstream_verbs_inherit_fetch_scope_once():
+    import io, contextlib
+    import tempfile
+    captured: dict[str, list[str]] = {}
+    scope = MODULE["pipeline_main"].__globals__
+    saved_fetch = scope["fetch_main"]
+    saved_tr = scope["translate_main"]
+    saved_modify = scope["modify_main"]
+    saved_combine = scope["combine_main"]
+
+    def fake_fetch(argv):
+        captured["fetch"] = list(argv)
+        return 0
+
+    def fake_translate(argv):
+        captured["translate"] = list(argv)
+        return 0
+
+    def fake_modify(argv):
+        captured["modify"] = list(argv)
+        return 0
+
+    def fake_combine(argv):
+        captured["merge"] = list(argv)
+        return 0
+
+    scope["fetch_main"] = fake_fetch
+    scope["translate_main"] = fake_translate
+    scope["modify_main"] = fake_modify
+    scope["combine_main"] = fake_combine
+    try:
+        with tempfile.TemporaryDirectory() as td, _isolated_config(None), contextlib.redirect_stdout(io.StringIO()):
+            rc = MODULE["main"]([
+                "--fetch", "https://anilist.co/anime/122052/",
+                "--season", "1", "--episode", "1-3",
+                "--languages", "ja,ko",
+                "--translate", "ollama",
+                "--modify", "--strip-cc-noise",
+                "--merge", "--languages", "ja,ko", "--format", "vtt",
+                "--output", f"{td}/GetSubtitle",
+            ])
+        assert rc == 0
+    finally:
+        scope["fetch_main"] = saved_fetch
+        scope["translate_main"] = saved_tr
+        scope["modify_main"] = saved_modify
+        scope["combine_main"] = saved_combine
+
+    assert captured["fetch"].count("--season") == 1
+    for verb in ("translate", "modify", "merge"):
+        args = captured[verb]
+        assert "--season" in args
+        assert args[args.index("--season") + 1] == "1"
+        assert "--episode" in args
+        assert args[args.index("--episode") + 1] == "1-3"
+
+
 def test_pipeline_post_fetch_uses_actual_resolved_output_folder_for_title_search():
     import io, contextlib
     import tempfile
@@ -6580,7 +6920,7 @@ def test_generate_furigana_respects_formats_argument():
     # The user-reported pain point: 3 files per episode was too much. Verify
     # that generate_furigana only calls the writers whose formats are in the
     # `formats` set. Mock the three writers so this test doesn't require
-    # pykakasi (which may not be installed in CI).
+    # the Japanese reading backend.
     from pathlib import Path
 
     scope = MODULE["generate_furigana"].__globals__
@@ -8235,7 +8575,7 @@ def test_manual_search_next_steps_are_scoped_and_output_aware():
         )
     text = out.getvalue()
     assert "getsubtitle modify ~/Downloads --convert ko:smi-to-srt" in text
-    assert "Move the matching subtitle files into the show folder" in text
+    assert "Put them in:" in text
     assert "getsubtitle merge '/tmp/GetSubtitle/Fena Pirate Princess/Season 01' -l ja,ko" in text
 
 
@@ -8380,6 +8720,26 @@ def test_wizard_emit_cli_and_toml_include_episode_filename_start():
     assert cli[cli.index("--episode-filename-start") + 1] == "25"
     toml = MODULE["_wizard_emit_toml"](state)
     assert 'episode_filename_start = "25"' in toml
+
+
+def test_wizard_emit_cli_shows_shared_scope_once_for_full_pipeline():
+    state = _wizard_state(
+        source="https://www.crunchyroll.com/watch/GE00379925JAJP/mini-episode-1",
+        source_kind="url",
+        season="1",
+        episode="1-3",
+        languages=["ja", "ko"],
+        order=["ja", "ko"],
+        mt_engine="ollama",
+        reading_aids=["ja:hiragana"],
+        format="vtt",
+        steps={"fetch", "translate", "modify", "merge"},
+    )
+    cli = MODULE["_wizard_emit_cli"](state)
+    assert cli.count("--season") == 1
+    assert cli.count("--episode") == 1
+    assert cli[cli.index("--season") + 1] == "1"
+    assert cli[cli.index("--episode") + 1] == "1-3"
 
 
 def test_wizard_preserves_display_order_distinct_from_collection():
@@ -8532,13 +8892,13 @@ def test_wizard_save_path_rejects_non_toml_extension():
         raise AssertionError("workflow.txt should not be accepted as a workflow filename")
 
 
-def test_wizard_saved_workflow_next_steps_mentions_cli_overrides():
+def test_wizard_saved_workflow_details_mentions_cli_overrides():
     import contextlib
     import io
     from pathlib import Path
 
     with contextlib.redirect_stdout(io.StringIO()) as buf:
-        MODULE["_wizard_print_saved_workflow_next_steps"](
+        MODULE["_wizard_print_saved_workflow_details"](
             "jpko.toml",
             Path("jpko.toml"),
             "getsubtitle --fetch URL --languages ja,ko",
@@ -8551,23 +8911,56 @@ def test_wizard_saved_workflow_next_steps_mentions_cli_overrides():
     assert "CLI flags win over matching TOML settings" in out
 
 
-def test_wizard_offer_open_saved_workflow_folder_opens_parent(tmp_path):
+def test_wizard_saved_workflow_menu_default_stays_short(monkeypatch, capsys):
+    from pathlib import Path
+
+    g = MODULE["_wizard_prompt"].__globals__
+    monkeypatch.setitem(g, "input", lambda *a, **k: "")
+    MODULE["_wizard_saved_workflow_menu"](
+        "jpko.toml",
+        Path("jpko.toml"),
+        "getsubtitle --fetch URL --languages ja,ko",
+    )
+    out = capsys.readouterr().out
+    assert "Saved workflow:" in out
+    assert "Run later:" in out
+    assert "getsubtitle --config jpko.toml" in out
+    assert "Exact command:" not in out
+    assert "--source 'https://www.imdb.com/title/tt1234567/'" not in out
+
+
+def test_wizard_saved_workflow_menu_can_show_details_and_open_folder(tmp_path, monkeypatch, capsys):
+    path = tmp_path / "jpko.toml"
+    opened = []
+    g = MODULE["_wizard_prompt"].__globals__
+    seq = iter(["1", "2", "3"])
+    monkeypatch.setitem(g, "input", lambda *a, **k: next(seq))
+    monkeypatch.setitem(g, "open_folder", lambda folder: opened.append(folder))
+    MODULE["_wizard_saved_workflow_menu"](
+        str(path),
+        path,
+        "getsubtitle --fetch URL --languages ja,ko",
+    )
+    out = capsys.readouterr().out
+    assert "Exact command:" in out
+    assert "--source 'https://www.imdb.com/title/tt1234567/'" in out
+    assert opened == [tmp_path.resolve()]
+
+
+def test_wizard_open_saved_workflow_folder_opens_parent(tmp_path):
     import contextlib
     import io
 
     path = tmp_path / "jpko.toml"
     path.write_text("[fetch]\n", encoding="utf-8")
-    fn_g = MODULE["_wizard_offer_open_saved_workflow_folder"].__globals__
-    saved_yesno = fn_g["_wizard_yesno"]
+    fn_g = MODULE["_wizard_open_saved_workflow_folder"].__globals__
     saved_open_folder = fn_g["open_folder"]
     opened = []
     try:
-        fn_g["_wizard_yesno"] = lambda q, default=True: True
         fn_g["open_folder"] = lambda folder: opened.append(folder)
         with contextlib.redirect_stdout(io.StringIO()):
-            MODULE["_wizard_offer_open_saved_workflow_folder"](path)
+            MODULE["_wizard_open_saved_workflow_folder"](path)
     finally:
-        fn_g["_wizard_yesno"] = saved_yesno
         fn_g["open_folder"] = saved_open_folder
 
     assert opened == [tmp_path.resolve()]
@@ -8956,7 +9349,7 @@ def test_wizard_run_summary_prints_outcome_and_next_steps(tmp_path, capsys):
         MODULE["_wizard_summary_end"]()
     out = capsys.readouterr().out
     assert "Workflow summary" in out
-    assert "Completed partially" in out
+    assert "Completed with issues" in out
     assert "Scope: season 4, episode 3-5" in out
     assert "Preflight warnings: 1" in out
     assert "Preflight info: 1" in out
@@ -9006,8 +9399,8 @@ def test_setup_pip_fix_target_parses_preflight_hints():
     assert parse('pip install -e ".[romanization-zh]"  # or: pip install pypinyin') == (
         "pypinyin", "romanization-zh"
     )
-    assert parse('pip install -e ".[furigana]"  # or: pip install pykakasi') == (
-        "pykakasi", "furigana"
+    assert parse('pip install -e ".[furigana]"  # or: pip install sudachipy sudachidict_core') == (
+        "sudachipy", "furigana"
     )
     assert parse('pip install -e ".[romanization-ko]"  # also installs g2pk') == (
         "korean-romanizer", "romanization-ko"
@@ -9031,8 +9424,8 @@ def test_wizard_run_setup_can_install_all_pip_blockers(monkeypatch, capsys):
     MODULE["_wizard_run_setup"](
         _wizard_state(),
         [
-            ("block", "pykakasi (Japanese reading aids)",
-             'pip install -e ".[furigana]"  # or: pip install pykakasi'),
+            ("block", "SudachiPy + SudachiDict-core (Japanese reading aids)",
+             'pip install -e ".[furigana]"  # or: pip install sudachipy sudachidict_core'),
             ("block", "korean-romanizer (Korean Revised Romanization)",
              'pip install -e ".[romanization-ko]"  # also installs g2pk'),
             ("warn", "g2pk (Korean G2P preprocessing)",
@@ -9046,7 +9439,7 @@ def test_wizard_run_setup_can_install_all_pip_blockers(monkeypatch, capsys):
         ],
     )
     assert calls == [
-        ("pykakasi", "furigana"),
+        ("sudachipy", "furigana"),
         ("korean-romanizer", "romanization-ko"),
         ("g2pk", None),
         ("pypinyin", "romanization-zh"),
@@ -9154,7 +9547,7 @@ def test_wizard_q5_scope_skipped_for_movies():
     assert s.episode == ""
 
 
-def test_wizard_q5_scope_tv_single_item_defaults_to_first_episode():
+def test_wizard_q5_scope_specific_episode_defaults_to_first_episode():
     import contextlib
     import io
 
@@ -9167,7 +9560,12 @@ def test_wizard_q5_scope_tv_single_item_defaults_to_first_episode():
     fn_g = MODULE["_wizard_q5_scope"].__globals__
     saved_prompt = fn_g["_wizard_prompt"]
     try:
-        fn_g["_wizard_prompt"] = lambda _q, _d=None, **_kwargs: "1"
+        def fake_prompt(label, default="", *args, **kwargs):
+            if label == "Number":
+                return "1"
+            return default
+
+        fn_g["_wizard_prompt"] = fake_prompt
         with contextlib.redirect_stdout(io.StringIO()) as buf:
             MODULE["_wizard_q5_scope"](s)
     finally:
@@ -9175,8 +9573,8 @@ def test_wizard_q5_scope_tv_single_item_defaults_to_first_episode():
     out = buf.getvalue()
     assert s.season == "1"
     assert s.episode == "1"
-    assert "looks like a TV/show result, not a movie" in out
-    assert "Season 1 Episode 1" in out
+    assert "Defaults to Season 1 Episode 1." in out
+    assert "looks like a TV/show result, not a movie" not in out
 
 
 def test_wizard_q5_scope_keeps_episode_inferred_from_selected_file():
@@ -9212,7 +9610,7 @@ def test_wizard_q5_scope_keeps_episode_inferred_from_selected_file():
 
 
 def test_wizard_q5_whole_season_does_not_prompt_for_season():
-    """Option 3 means default/current season, all episodes.
+    """Option 2 means default/current season, all episodes.
 
     The wizard used to ask a second "Season" prompt after the user chose
     "Whole season, every episode", which made the shortcut feel pointless.
@@ -9233,7 +9631,7 @@ def test_wizard_q5_whole_season_does_not_prompt_for_season():
     def fake_prompt(label, default="", *args, **kwargs):
         calls.append(label)
         if label == "Number":
-            return "3"
+            return "2"
         raise AssertionError(f"unexpected prompt after whole-season choice: {label}")
 
     try:
@@ -9260,13 +9658,20 @@ def test_wizard_q5_scope_back_inside_specific_episode_returns_to_scope_menu():
     )
     fn_g = MODULE["_wizard_q5_scope"].__globals__
     saved_prompt = fn_g["_wizard_prompt"]
-    number_answers = iter(["2", "1"])
+    number_answers = iter(["1", "1"])
+    season_prompts = 0
 
     def fake_prompt(label, default="", *args, **kwargs):
+        nonlocal season_prompts
         if label == "Number":
             return next(number_answers)
         if label.startswith("Season or range"):
-            raise MODULE["_WizardBack"]()
+            season_prompts += 1
+            if season_prompts == 1:
+                raise MODULE["_WizardBack"]()
+            return default
+        if label.startswith("Episode or range"):
+            return default
         raise AssertionError(f"unexpected prompt: {label}")
 
     try:
@@ -9377,6 +9782,274 @@ def test_wizard_source_picker_treats_free_text_as_title_search():
     assert "Matched title: TMDB Movie: The Simpsons Movie (2007)" in out
 
 
+def test_wizard_crunchyroll_watch_url_asks_for_stronger_source_when_metadata_fails():
+    import contextlib
+    import io
+    s = MODULE["_WizardState"](steps={"fetch"})
+    fn = MODULE["_wizard_q1_source"]
+    fn_g = fn.__globals__
+    saved_prompt = fn_g["_wizard_prompt"]
+    saved_metadata = fn_g["crunchyroll_metadata_from_url"]
+    watch_url = "https://www.crunchyroll.com/watch/GE00379925JAJP/mini-episode-1"
+    anilist_url = "https://anilist.co/anime/196187/Super-no-Ura-de-Yani-Suu-Futari/"
+
+    def fake_prompt(label, default=None, **kwargs):
+        if label == "Number":
+            return "2"
+        if label == "URL":
+            return watch_url
+        if label == "Series URL, AniList ID, or title":
+            return anilist_url
+        raise AssertionError(f"unexpected prompt: {label}")
+
+    try:
+        fn_g["_wizard_prompt"] = fake_prompt
+        fn_g["crunchyroll_metadata_from_url"] = lambda _url: None
+        with contextlib.redirect_stdout(io.StringIO()) as buf:
+            fn(s)
+        out = buf.getvalue()
+    finally:
+        fn_g["_wizard_prompt"] = saved_prompt
+        fn_g["crunchyroll_metadata_from_url"] = saved_metadata
+
+    assert s.source_kind == "url"
+    assert s.source == anilist_url
+    assert s.source_title == ""
+    assert "I could not read Crunchyroll metadata" in out
+    assert "Searching for: AniList anime URL" in out
+
+
+def test_wizard_crunchyroll_watch_url_accepts_anilist_id():
+    import contextlib
+    import io
+    s = MODULE["_WizardState"](steps={"fetch"})
+    fn = MODULE["_wizard_q1_source"]
+    fn_g = fn.__globals__
+    saved_prompt = fn_g["_wizard_prompt"]
+    saved_metadata = fn_g["crunchyroll_metadata_from_url"]
+    watch_url = "https://www.crunchyroll.com/watch/GE00379925JAJP/mini-episode-1"
+    answers = iter(["2", watch_url, "196187"])
+
+    def fake_prompt(label, default=None, **kwargs):
+        if label == "Number":
+            return next(answers)
+        if label == "URL":
+            return next(answers)
+        if label == "Series URL, AniList ID, or title":
+            return next(answers)
+        raise AssertionError(f"unexpected prompt: {label}")
+
+    try:
+        fn_g["_wizard_prompt"] = fake_prompt
+        fn_g["crunchyroll_metadata_from_url"] = lambda _url: None
+        with contextlib.redirect_stdout(io.StringIO()) as buf:
+            fn(s)
+        out = buf.getvalue()
+    finally:
+        fn_g["_wizard_prompt"] = saved_prompt
+        fn_g["crunchyroll_metadata_from_url"] = saved_metadata
+
+    assert s.source_kind == "url"
+    assert s.source == "https://anilist.co/anime/196187/"
+    assert "Searching for: Crunchyroll watch URL" in out
+    assert "Using AniList anime ID: 196187" in out
+
+
+def test_crunchyroll_content_object_uses_anonymous_token():
+    fn = MODULE["crunchyroll_content_object"]
+    g = fn.__globals__
+    saved_request = g["request_json_browser"]
+    calls = []
+
+    def fake_request_json_browser(url, **kwargs):
+        calls.append((url, kwargs))
+        if url == g["CRUNCHYROLL_AUTH_API"]:
+            assert kwargs["method"] == "POST"
+            assert kwargs["data"] == {"grant_type": "client_id", "client_id": "cr_web"}
+            return {"access_token": "anon-token"}
+        assert "/content/v2/cms/objects/GY1QKKMZR" in url
+        assert kwargs["headers"]["Authorization"] == "Bearer anon-token"
+        return {"data": [{"id": "GY1QKKMZR", "title": "Assault", "type": "episode"}]}
+
+    try:
+        g["request_json_browser"] = fake_request_json_browser
+        result = fn("GY1QKKMZR")
+    finally:
+        g["request_json_browser"] = saved_request
+
+    assert result is not None
+    assert result["title"] == "Assault"
+    assert len(calls) == 2
+
+
+def test_crunchyroll_metadata_from_watch_url_parses_episode_metadata():
+    fn = MODULE["crunchyroll_metadata_from_url"]
+    g = fn.__globals__
+    saved_content = g["crunchyroll_content_object"]
+    try:
+        g["crunchyroll_content_object"] = lambda _id: {
+            "id": "GY1QKKMZR",
+            "title": "Assault",
+            "type": "episode",
+            "slug_title": "assault",
+            "episode_metadata": {
+                "series_id": "GRDV0019R",
+                "series_slug_title": "jujutsu-kaisen",
+                "series_title": "JUJUTSU KAISEN",
+                "season_number": 1,
+                "episode_number": 7,
+            },
+        }
+        result = fn("https://www.crunchyroll.com/watch/GY1QKKMZR/assault")
+    finally:
+        g["crunchyroll_content_object"] = saved_content
+
+    assert result is not None
+    assert result.title == "JUJUTSU KAISEN"
+    assert result.episode_title == "Assault"
+    assert result.season == "1"
+    assert result.episode == "7"
+    assert result.url == "https://www.crunchyroll.com/series/GRDV0019R/jujutsu-kaisen"
+
+
+def test_crunchyroll_metadata_from_series_url_parses_series_metadata():
+    fn = MODULE["crunchyroll_metadata_from_url"]
+    g = fn.__globals__
+    saved_content = g["crunchyroll_content_object"]
+    try:
+        g["crunchyroll_content_object"] = lambda _id: {
+            "id": "GYZJ43JMR",
+            "title": "That Time I Got Reincarnated as a Slime",
+            "type": "series",
+            "slug_title": "that-time-i-got-reincarnated-as-a-slime",
+            "series_metadata": {},
+        }
+        result = fn("https://www.crunchyroll.com/series/GYZJ43JMR/that-time-i-got-reincarnated-as-a-slime")
+    finally:
+        g["crunchyroll_content_object"] = saved_content
+
+    assert result is not None
+    assert result.title == "That Time I Got Reincarnated as a Slime"
+    assert result.season == "auto"
+    assert result.episode == "auto"
+    assert result.url == "https://www.crunchyroll.com/series/GYZJ43JMR/that-time-i-got-reincarnated-as-a-slime"
+
+
+def test_apply_crunchyroll_metadata_updates_media_without_overriding_scope():
+    import contextlib
+    import io
+    fn = MODULE["apply_crunchyroll_metadata"]
+    g = fn.__globals__
+    saved_metadata = g["crunchyroll_metadata_from_url"]
+    metadata_cls = MODULE["CrunchyrollMetadata"]
+    media_cls = MODULE["MediaInfo"]
+    watch_url = "https://www.crunchyroll.com/watch/GY1QKKMZR/assault"
+    series_url = "https://www.crunchyroll.com/series/GRDV0019R/jujutsu-kaisen"
+    media = media_cls(source_url=watch_url, provider="crunchyroll", title="", season="3", episode="25")
+
+    try:
+        g["crunchyroll_metadata_from_url"] = lambda _url: metadata_cls(
+            title="JUJUTSU KAISEN",
+            url=series_url,
+            crunchyroll_id="GY1QKKMZR",
+            series_id="GRDV0019R",
+            episode_title="Assault",
+            season="1",
+            episode="7",
+        )
+        with contextlib.redirect_stdout(io.StringIO()) as buf:
+            changed = fn(media)
+        out = buf.getvalue()
+    finally:
+        g["crunchyroll_metadata_from_url"] = saved_metadata
+
+    assert changed is True
+    assert media.source_url == series_url
+    assert media.title == "JUJUTSU KAISEN"
+    assert media.season == "3"
+    assert media.episode == "25"
+    assert "Crunchyroll metadata lookup" in out
+
+
+def test_wizard_crunchyroll_watch_url_uses_metadata_without_extra_prompt():
+    import contextlib
+    import io
+    s = MODULE["_WizardState"](steps={"fetch"})
+    fn = MODULE["_wizard_q1_source"]
+    fn_g = fn.__globals__
+    saved_prompt = fn_g["_wizard_prompt"]
+    saved_metadata = fn_g["crunchyroll_metadata_from_url"]
+    metadata_cls = MODULE["CrunchyrollMetadata"]
+    watch_url = "https://www.crunchyroll.com/watch/GY1QKKMZR/assault"
+    series_url = "https://www.crunchyroll.com/series/GRDV0019R/jujutsu-kaisen"
+    answers = iter(["2", watch_url])
+
+    def fake_prompt(label, default=None, **kwargs):
+        if label in {"Number", "URL"}:
+            return next(answers)
+        raise AssertionError(f"unexpected prompt: {label}")
+
+    try:
+        fn_g["_wizard_prompt"] = fake_prompt
+        fn_g["crunchyroll_metadata_from_url"] = lambda _url: metadata_cls(
+            title="JUJUTSU KAISEN",
+            url=series_url,
+            crunchyroll_id="GY1QKKMZR",
+            series_id="GRDV0019R",
+            episode_title="Assault",
+            season="1",
+            episode="7",
+        )
+        with contextlib.redirect_stdout(io.StringIO()) as buf:
+            fn(s)
+        out = buf.getvalue()
+    finally:
+        fn_g["_wizard_prompt"] = saved_prompt
+        fn_g["crunchyroll_metadata_from_url"] = saved_metadata
+
+    assert s.source_kind == "url"
+    assert s.source == series_url
+    assert s.source_title == "JUJUTSU KAISEN"
+    assert s.season == ""
+    assert s.episode == ""
+    assert "Crunchyroll metadata found" in out
+    assert "Series URL, AniList ID, or title" not in out
+
+
+def test_infer_from_crunchyroll_url_uses_metadata_before_html_fallback():
+    fn = MODULE["infer_from_crunchyroll_url"]
+    g = fn.__globals__
+    saved_metadata = g["crunchyroll_metadata_from_url"]
+    saved_request_text = g["request_text"]
+    metadata_cls = MODULE["CrunchyrollMetadata"]
+    series_url = "https://www.crunchyroll.com/series/GRDV0019R/jujutsu-kaisen"
+    try:
+        g["crunchyroll_metadata_from_url"] = lambda _url: metadata_cls(
+            title="JUJUTSU KAISEN",
+            url=series_url,
+            crunchyroll_id="GY1QKKMZR",
+            series_id="GRDV0019R",
+            episode_title="Assault",
+            season="1",
+            episode="7",
+        )
+        g["request_text"] = lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("HTML fallback should not run"))
+        media = fn("https://www.crunchyroll.com/watch/GY1QKKMZR/assault")
+    finally:
+        g["crunchyroll_metadata_from_url"] = saved_metadata
+        g["request_text"] = saved_request_text
+
+    assert media.title == "JUJUTSU KAISEN"
+    assert media.source_url == series_url
+    assert media.season == "1"
+    assert media.episode == "7"
+
+
+def test_crunchyroll_metadata_returns_none_for_unrelated_url():
+    fn = MODULE["crunchyroll_metadata_from_url"]
+    assert fn("https://example.com/watch/GY1QKKMZR/assault") is None
+
+
 def test_wizard_source_title_candidate_back_reasks_title():
     import contextlib
     import io
@@ -9413,6 +10086,76 @@ def test_wizard_source_title_candidate_back_reasks_title():
     assert s.source == "https://www.themoviedb.org/movie/603"
     assert s.source_title == "The Matrix"
     assert "Going back to title entry." in out
+
+
+def test_wizard_title_candidate_invalid_answer_reprompts_not_raw_title(tmp_path):
+    import contextlib
+    import io
+    fn = MODULE["_wizard_pick_title_candidate"]
+    fn_g = fn.__globals__
+    saved_candidates = fn_g["_wizard_title_candidates"]
+    saved_prompt = fn_g["_wizard_prompt"]
+    show = tmp_path / "Fena - Pirate Princess"
+    show.mkdir()
+    try:
+        fn_g["_wizard_title_candidates"] = lambda title: [
+            {
+                "provider": "tmdb-tv",
+                "label": "TMDB TV: 3 Body Problem (2024)",
+                "url": "https://www.themoviedb.org/tv/108545",
+                "is_movie": False,
+            },
+            {
+                "provider": "anilist",
+                "label": "AniList: 300: 3x3 EYES / 3x3 Eyes (1991, 4 eps)",
+                "url": "https://anilist.co/anime/300/",
+                "is_movie": False,
+            },
+        ]
+        answers = iter([f"'{show}'", "r"])
+        fn_g["_wizard_prompt"] = lambda label, default=None, **kwargs: next(answers)
+        with contextlib.redirect_stdout(io.StringIO()) as buf:
+            result = fn("3")
+        out = buf.getvalue()
+    finally:
+        fn_g["_wizard_title_candidates"] = saved_candidates
+        fn_g["_wizard_prompt"] = saved_prompt
+
+    assert result == "retry"
+    assert "local path" in out
+    assert "Use exactly what I typed" in out
+
+
+def test_wizard_title_candidate_no_hits_defaults_to_retry_not_raw(monkeypatch, capsys):
+    import io
+    fn = MODULE["_wizard_pick_title_candidate"]
+    fn_g = fn.__globals__
+    monkeypatch.setitem(fn_g, "_wizard_title_candidates", lambda title: [])
+    monkeypatch.setitem(fn_g, "get_provider_api_key", lambda provider: "tmdb-key")
+    monkeypatch.setattr(fn_g["sys"], "stdin", type("TtyInput", (io.StringIO,), {
+        "isatty": lambda self: True,
+    })("\n"))
+    result = fn("fena prirate princess")
+    out = capsys.readouterr().out
+    assert result == "retry"
+    assert "No title matches found." in out
+    assert "I won't build a fetch workflow from an unverified title yet." in out
+    assert "Use exactly what I typed" in out
+
+
+def test_wizard_title_candidate_no_hits_can_force_raw(monkeypatch, capsys):
+    import io
+    fn = MODULE["_wizard_pick_title_candidate"]
+    fn_g = fn.__globals__
+    monkeypatch.setitem(fn_g, "_wizard_title_candidates", lambda title: [])
+    monkeypatch.setitem(fn_g, "get_provider_api_key", lambda provider: "tmdb-key")
+    monkeypatch.setattr(fn_g["sys"], "stdin", type("TtyInput", (io.StringIO,), {
+        "isatty": lambda self: True,
+    })("2\n"))
+    result = fn("exact raw title")
+    out = capsys.readouterr().out
+    assert result is None
+    assert "Use exactly what I typed (advanced; may fail)" in out
 
 
 def test_mediainfo_movie_skips_season_subdir():
@@ -9913,6 +10656,7 @@ def test_interactive_wizard_fuzz_never_aborts_or_loops(tmp_path, monkeypatch):
     import random
     import io
     import contextlib
+    monkeypatch.chdir(tmp_path)
     g = MODULE["_wizard_prompt"].__globals__
     monkeypatch.setitem(g, "_wizard_is_interactive", lambda: True)
     monkeypatch.setitem(g, "main", lambda *a, **k: 0)        # don't really dispatch
@@ -10465,7 +11209,7 @@ def test_wizard_emit_cli_modify_merge_includes_local_episode_filter():
     assert toml.count('episode = "1"') == 2
 
 
-def test_wizard_emit_cli_url_pipeline_scopes_all_downstream_steps():
+def test_wizard_emit_cli_url_pipeline_shows_scope_once():
     s = MODULE["_WizardState"](
         source="https://www.crunchyroll.com/series/GEXH3W2W7/mf-ghost",
         source_kind="url",
@@ -10482,12 +11226,14 @@ def test_wizard_emit_cli_url_pipeline_scopes_all_downstream_steps():
     )
     cli = MODULE["_wizard_emit_cli"](s)
     blocks = MODULE["split_pipeline_argv"](cli[1:])
-    for block_name in ("fetch", "translate", "modify", "merge"):
+    assert cli.count("--season") == 1
+    assert cli.count("--episode") == 1
+    assert blocks["fetch"][blocks["fetch"].index("--season") + 1] == "3"
+    assert blocks["fetch"][blocks["fetch"].index("--episode") + 1] == "5-10"
+    for block_name in ("translate", "modify", "merge"):
         block = blocks[block_name]
-        assert "--season" in block, f"{block_name} block missing season: {block!r}"
-        assert block[block.index("--season") + 1] == "3"
-        assert "--episode" in block, f"{block_name} block missing episode: {block!r}"
-        assert block[block.index("--episode") + 1] == "5-10"
+        assert "--season" not in block, f"{block_name} block repeats season: {block!r}"
+        assert "--episode" not in block, f"{block_name} block repeats episode: {block!r}"
     toml = MODULE["_wizard_emit_toml"](s)
     assert toml.count('season = "3"') == 4
     assert toml.count('episode = "5-10"') == 4
@@ -10849,7 +11595,7 @@ def test_wizard_collect_variant_files_empty_when_no_pseudo_langs():
 
 
 def test_wizard_q11_banner_surfaces_smart_defaults():
-    """The Q-banner prints the smart-defaults block so users see what
+    """The review screen prints the smart-defaults block so users see what
     was auto-decided and can revise via the Edit action."""
     import io, contextlib
     s = MODULE["_WizardState"](
@@ -10871,10 +11617,17 @@ def test_wizard_q11_banner_surfaces_smart_defaults():
         if saved is not None:
             fn_g["input"] = saved
     out = buf.getvalue()
-    assert "Smart defaults filled in for you" in out
+    assert "Review your workflow" in out
+    assert "Progress [◼◼◼◼◼◼◼◼◼◼◼◼◻] 99%" in out
+    assert "Plan" in out
+    assert "Smart defaults" in out
+    assert "What next?" in out
     assert "Display order" in out
     assert "Cleanup preset" in out
     assert "Format / extension" not in out  # format is now a normal question
+    assert "Start over" in out
+    assert "Start over from beginning" not in out
+    assert "Show exact command and workflow file" in out
 
 
 def test_wizard_default_full_pipeline_still_emits_fetch_modify_merge():
@@ -11039,7 +11792,7 @@ def test_wizard_q9_format_describes_vtt_and_ass_player_fit():
     assert "positioning, sizing, and readability" in out
 
 
-def test_wizard_q9_format_carries_reading_aid_rendering_guidance():
+def test_wizard_q9_format_omits_duplicate_reading_aid_notes():
     import io, contextlib
     fn_g = MODULE["_wizard_q9_format"].__globals__
     saved_input = fn_g.get("input")
@@ -11057,10 +11810,10 @@ def test_wizard_q9_format_carries_reading_aid_rendering_guidance():
         if saved_input is not None:
             fn_g["input"] = saved_input
     out = buf.getvalue()
-    assert "Reading-aid notes:" in out
-    assert "true ruby above Japanese text" in out
-    assert "Korean" in out
-    assert "Local-player" in out
+    assert "Reading-aid notes:" not in out
+    assert "true ruby above Japanese text" not in out
+    assert "SRT/SMI/ASS use fallback reading-aid layouts" not in out
+    assert "OTHER FORMATS:" in out
 
 
 def test_wizard_q9_format_shows_vtt_example_only_for_japanese_ruby():

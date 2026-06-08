@@ -47,20 +47,26 @@ Q3. Enter the URL.                                                  Progress [�
   URL [b=back | q=quit] > https://www.crunchyroll.com/watch/GZ7UDVKPD/miraculous-comeback
     Searching for: Crunchyroll watch URL
 
+    Crunchyroll metadata found:
+      Series: MF GHOST
+      Episode: Miraculous Comeback
+      Scope: S3 E25
+    Using Crunchyroll series URL: https://www.crunchyroll.com/series/GEXH3W2W7/mf-ghost
+
 ------------------------------------------------------------------------------------------------
 Q4. What episode scope?                                             Progress [◼◼◼◼◼◼◻◻◻◻◻◻◻] 50%
 
-    1) One TV episode — Season 1 Episode 1
-    2) A specific season + episode (or range)
-    3) Whole season, every episode (-e all)
-    4) Auto — let getsubtitle infer from the URL/title metadata
+    1) Specific season + episode (or range)
+       Defaults to Season 1 Episode 1.
+    2) Whole season, every episode (-e all)
+    3) Auto — let getsubtitle infer from the URL/title metadata
        (anime URLs typically resolve to single episodes; movies to a
         single item; TV without -e usually picks S01E01)
 
     Crunchyroll may display Season 3 as E25-E37, but subtitle
     sources usually search that as Season 3 episodes 1-13.
 
-  Number [2 | b=back | q=quit] > 2
+  Number [1 | b=back | q=quit] > 1
 
   Season or range (e.g. 1, 2-3, all) [1 | b=back | q=quit] > 3
 
@@ -162,51 +168,49 @@ Q9. Subtitle text size?                                             Progress [�
 
   Number [1 | b=back | q=quit] >
 
-======================================================================
-Here's the plan:
-======================================================================
-  • Fetch ja, ko for https://www.crunchyroll.com/watch/GZ7UDVKPD/miraculous-comeback  (season 3, episode 1-13)
+------------------------------------------------------------------------------------------------
+Review your workflow                                                Progress [◼◼◼◼◼◼◼◼◼◼◼◼◻] 99%
+
+Plan
+  • Fetch ja, ko for:
+    MF GHOST  (season 3, episode 1-13)
   • Clean up cues (single line, strip broadcast noise)
-  • Stack ja, ko into one SRT file → *.ja-ko.srt
+  • Stack ja, ko into one SRT file: *.ja-ko.srt
   • Use subtitle text size: Regular
-  • Save to ~/Downloads/GetSubtitle
-======================================================================
-Before running:
-======================================================================
-  ⚠ Japanese, Korean subtitles can be harder to find automatically; manual search or translation may be needed.
-======================================================================
-Smart defaults filled in for you (edit via 'Edit a single answer'):
-======================================================================
+  • Save to:
+    ~/Downloads/GetSubtitle
+
+Heads up
+  ⚠ Japanese, Korean subtitles can be harder to find automatically;
+    manual search or translation may be needed.
+
+Smart defaults
   Display order   ja, ko  (top → bottom on screen)
   Timing master   ja  (first language)
   Cleanup preset  on  (single-line cues + strip broadcast noise)
   Output folder   ~/Downloads/GetSubtitle
-======================================================================
 
-    1) Run it now
-    2) Save as a reusable workflow file
-    3) Edit a single answer
-    4) Start over from beginning
-    5) Quit
-    6) Show the exact command & workflow file
+What next?
+  1) Run it now
+  2) Save as a reusable workflow file
+  3) Change something
+  4) Start over
+  5) Quit
+  6) Show exact command and workflow file
 
   Number [2 | b=back | q=quit] > 2
 
 
   Save to (relative paths OK) [getsubtitle-workflow.toml] > {TMP}/mfghost-s3.toml
-Saved: {TMP}/mfghost-s3.toml
 
-Your mfghost-s3.toml runs the same workflow as this command:
-  # getsubtitle --fetch https://www.crunchyroll.com/watch/GZ7UDVKPD/miraculous-comeback --season 3 --episode 1-13 --episode-filename-start 25 --languages ja,ko --no-engine --modify --season 3 --episode 1-13 --strip-cc-noise --single-line --merge --languages ja,ko --season 3 --episode 1-13 --format srt --font-size regular --output ~/Downloads/GetSubtitle
+Saved workflow:
+  {TMP}/mfghost-s3.toml
 
-Run it later with:
+Run later:
   getsubtitle --config {TMP}/mfghost-s3.toml
 
-You can recycle this TOML and override saved settings with extra CLI flags.
-For example, reuse the same language, reading-aid, translation, and merge
-choices on another show or season:
-  getsubtitle --config {TMP}/mfghost-s3.toml --source 'https://www.imdb.com/title/tt1234567/' --season 3 --episode all --output "$HOME/Downloads/GetSubtitle/TV Show/Season 03"
+    1) Show exact command
+    2) Open containing folder
+    3) Done
 
-CLI flags win over matching TOML settings, so the file can stay as a reusable template.
-
-  Open folder containing mfghost-s3.toml? [Y/n] > n
+  Number [3] > n
