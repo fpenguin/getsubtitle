@@ -1,7 +1,7 @@
-"""Trap: requesting `ja,en` with a hiragana reading aid should auto
-pick `--format vtt`. Hiragana ruby renders cleanly only in VTT — SRT
-falls back to parenthetical 漢字（かんじ） form, which is fine but
-not what the user usually wants when they explicitly asked for a
+"""Trap: requesting `ja,en` with a hiragana reading aid should recommend
+VTT as the default format choice. Hiragana ruby renders cleanly only in
+VTT — SRT falls back to parenthetical 漢字（かんじ） form, which is fine
+but not what the user usually wants when they explicitly asked for a
 reading aid.
 
 The matching no-reading-aid scenario lives in
@@ -22,6 +22,7 @@ SCENARIO = Scenario(
         "{TMP}/Show",
         "ja,en",
         "2",            # reading aids: pick #2 = ja:hiragana
+        "",             # format — accept recommended VTT
         "2",            # action: save
         "{TMP}/vtt-ja.toml",
         "n",            # decline open folder

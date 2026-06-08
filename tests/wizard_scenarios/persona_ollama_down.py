@@ -20,8 +20,10 @@ SCENARIO = Scenario(
         "ja,en",
         "3",            # translate engine: Ollama
         "1",            # reading aids — skip
+        "",             # format — accept recommended SRT
+        "",             # font size — regular
         "1",            # action: run
-        "y",            # accept 'Run setup now to fix these?'
+        "y",            # show setup steps
         # _wizard_run_setup prints a "Manual step" hint for the Ollama
         # gap and does NOT ask a per-gap yes/no (it only prompts for
         # set-key-shaped fixes), so no extra input is consumed here.

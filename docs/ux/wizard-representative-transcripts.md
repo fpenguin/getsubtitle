@@ -18,25 +18,22 @@ Use them to audit copywriting, defaults, prompt ordering, and failure recovery.
 
 ```text
   ____      _   ____        _     _   _ _   _
-
  / ___| ___| |_/ ___| _   _| |__ | |_| |_| |_| ___
-
 | |  _ / _ \ __\___ \| | | | '_ \| __| | __| |/ _ \
-
 | |_| |  __/ |_ ___) | |_| | |_) | |_| | |_| |  __/
-
  \____|\___|\__|____/ \__,_|_.__/ \__|_|\__|_|\___|
 
 GetSubtitle — Workflow Builder
 
 Answer a few questions to generate a command and reusable workflow.
 
+------------------------------------------------------------------------------------------------
 Commands:
-  Enter  Accept default
-  b      Back
-  q      Quit
-  Ctrl-C Cancel
-
+    Enter  Accept default
+    b      Back
+    q      Quit
+    Ctrl-C Cancel
+------------------------------------------------------------------------------------------------
 Q1. What would you like to do?
 
     1) Fetch      Download subtitles from a URL or title
@@ -55,7 +52,7 @@ Q1. What would you like to do?
     Selected: fetch + translate + modify + merge.
 
 ------------------------------------------------------------------------------------------------
-Q2. What should getsubtitle work on?                                Progress [◼◼◼◻◻◻◻◻◻◻◻◻◻] 21%
+Q2. Where should we get subtitles from?                             Progress [◼◼◻◻◻◻◻◻◻◻◻◻◻] 19%
 
     1) A movie/show title (The Simpsons, Totoro, The Matrix, …)
     2) A streaming/catalog URL (IMDb, AniList, Netflix, Crunchyroll, …)
@@ -64,13 +61,13 @@ Q2. What should getsubtitle work on?                                Progress [�
   Number [3 | b=back | q=quit] >
 
 ------------------------------------------------------------------------------------------------
-Q3. Enter the folder or file path.                                  Progress [◼◼◼◼◼◻◻◻◻◻◻◻◻] 36%
+Q3. Enter the folder or file path.                                  Progress [◼◼◼◼◻◻◻◻◻◻◻◻◻] 31%
 
   Folder or file path [b=back | q=quit] > {TMP}/Foo
-    Identified as: local subtitle folder: 0 video file(s), 2 subtitle file(s)
+    Searching for: local subtitle folder: 0 video file(s), 2 subtitle file(s)
 
 ------------------------------------------------------------------------------------------------
-Q4. Which subtitle languages do you want to collect?                Progress [◼◼◼◼◼◼◻◻◻◻◻◻◻] 50%
+Q4. Which subtitle languages do you want to collect?                Progress [◼◼◼◼◼◼◻◻◻◻◻◻◻] 44%
 
     List them in the order you want them displayed (top → bottom).
 
@@ -81,8 +78,12 @@ Q4. Which subtitle languages do you want to collect?                Progress [�
 
   Languages (comma-separated) [ja,en | b=back | q=quit] >
 
+    Languages selected:
+      ja → Japanese
+      en → English
+
 ------------------------------------------------------------------------------------------------
-Q5. Fill missing subtitles?                                         Progress [◼◼◼◼◼◼◼◼◻◻◻◻◻] 64%
+Q5. Fill missing subtitles?                                         Progress [◼◼◼◼◼◼◼◻◻◻◻◻◻] 56%
 
     1) Skip (use only what's downloaded)
     2) Translate with Argos (local, basic quality)
@@ -92,37 +93,79 @@ Q5. Fill missing subtitles?                                         Progress [�
   Number [1 | b=back | q=quit] >
 
 ------------------------------------------------------------------------------------------------
-Q6. Reading aids (phonetic guides for the original script).         Progress [◼◼◼◼◼◼◼◼◼◼◻◻◻] 79%
+Q6. Reading aids (phonetic guides for the original script).         Progress [◼◼◼◼◼◼◼◼◼◻◻◻◻] 69%
 
     Example output: 漢字（かんじ）
     Pick any combination by number, or '1' to skip.
     1) No reading aid (skip)
     2) Japanese — hiragana readings for kanji   [ja:hiragana]
-       Preview: 勉強する → べんきょうする
+       Example: 勉強する → べんきょうする
     3) Japanese — katakana readings for kanji   [ja:katakana]
-       Preview: 勉強する → ベンキョウする
+       Example: 勉強する → ベンキョウする
     4) Japanese — full-sentence romaji   [ja:romaji]
-       Preview: 今日は日本語を練習したい → kyou wa nihongo wo renshuu shitai
+       Example: 今日は日本語を練習したい → kyou wa nihongo wo renshuu shitai
 
   Numbers (comma-separated) [1 | b=back | q=quit] >
+
+------------------------------------------------------------------------------------------------
+Q7. Final output format.                                            Progress [◼◼◼◼◼◼◼◼◼◼◼◻◻] 81%
+
+    Choose the format that best matches your player.
+    1) SRT  — works almost everywhere
+              Plex, Jellyfin, Smart TVs, tablets, phones, VLC
+    2) ASS  — best for local study playback
+              Better subtitle positioning, sizing, and readability
+    3) VTT  — best for browser-based language learning
+              Works with a browser extension on Netflix, Disney+ & other streaming sites
+    4) SMI  — Korean subtitle format
+              Common in older Korean subtitle archives
+    5) TXT  — plain text without timestamps
+
+    Recommendations:
+      Watching on TV, tablet, phone, Plex, or Jellyfin?
+        → SRT
+
+      Watching local video files on VLC, MPV, or desktop players?
+        → ASS
+
+      Streaming Netflix with multiple subtitles?
+        → VTT (asbplayer browser plug-in required)
+
+    Suggested default: SRT — SRT is the safest general-purpose choice.
+
+  Final format [1 | b=back | q=quit] >
+
+------------------------------------------------------------------------------------------------
+Q8. Subtitle text size?                                             Progress [◼◼◼◼◼◼◼◼◼◼◼◻◻] 83%
+
+    Subtitle text size
+    Format: SRT
+
+    Please note many players ignore font sizes in SRT files.
+    If your player supports sizing, these presets are recommended:
+
+    1) Regular (16px) — recommended
+    2) Smaller (12px)
+    3) Larger (20px)
+    4) Custom — enter exact font size
+
+  Number [1 | b=back | q=quit] >
 
 ======================================================================
 Here's the plan:
 ======================================================================
   • Fetch ja, en for {TMP}/Foo
   • Clean up cues (single line, strip broadcast noise)
-  • Stack ja, en into one SRT file  →  *.ja-en.srt
-  • Use subtitle text size regular (SRT support depends on player)
+  • Stack ja, en into one SRT file → *.ja-en.srt
+  • Use subtitle text size: Regular
   • Save to {TMP}/Foo
 ======================================================================
 Smart defaults filled in for you (edit via 'Edit a single answer'):
 ======================================================================
-  Display order  ja, en  (top → bottom on screen)
-  Timing master  ja  (first language)
-  Cleanup preset on  (single-line cues + strip broadcast noise)
-  Output format  SRT — plays almost everywhere (Plex, TVs, phones).  Edit to pick SRT / ASS / VTT / SMI / TXT.
-  Text size      regular  (calibrated; edit to change)
-  Output folder  {TMP}/Foo  (beside source)
+  Display order   ja, en  (top → bottom on screen)
+  Timing master   ja  (first language)
+  Cleanup preset  on  (single-line cues + strip broadcast noise)
+  Output folder   {TMP}/Foo  (beside source)
 ======================================================================
 
     1) Run it now
@@ -146,17 +189,17 @@ Running:
 ======================================================================
 Workflow summary
 ======================================================================
-Result: completed
+Completed successfully
 Source: {TMP}/Foo
 Scope: auto / not specified
 Languages requested: ja, en
 Output folder: {TMP}/Foo
 Preflight info: 1
 
-Next:
-  Merge later with: getsubtitle merge {TMP}/Foo -l ja,en
-  Re-run this workflow command after any setup fixes:
-    getsubtitle --fetch {TMP}/Foo --languages ja,en --modify --strip-cc-noise --single-line --merge --languages ja,en --format srt --font-size regular --output {TMP}/Foo
+Next steps:
+  1. Merge later with: getsubtitle merge {TMP}/Foo -l ja,en
+  2. Re-run this workflow command after any setup fixes:
+     getsubtitle --fetch {TMP}/Foo --languages ja,en --modify --strip-cc-noise --single-line --merge --languages ja,en --format srt --font-size regular --output {TMP}/Foo
   Open folder? [Y/n] >
 ```
 
@@ -175,25 +218,22 @@ Next:
 
 ```text
   ____      _   ____        _     _   _ _   _
-
  / ___| ___| |_/ ___| _   _| |__ | |_| |_| |_| ___
-
 | |  _ / _ \ __\___ \| | | | '_ \| __| | __| |/ _ \
-
 | |_| |  __/ |_ ___) | |_| | |_) | |_| | |_| |  __/
-
  \____|\___|\__|____/ \__,_|_.__/ \__|_|\__|_|\___|
 
 GetSubtitle — Workflow Builder
 
 Answer a few questions to generate a command and reusable workflow.
 
+------------------------------------------------------------------------------------------------
 Commands:
-  Enter  Accept default
-  b      Back
-  q      Quit
-  Ctrl-C Cancel
-
+    Enter  Accept default
+    b      Back
+    q      Quit
+    Ctrl-C Cancel
+------------------------------------------------------------------------------------------------
 Q1. What would you like to do?
 
     1) Fetch      Download subtitles from a URL or title
@@ -212,7 +252,7 @@ Q1. What would you like to do?
     Selected: modify + merge.
 
 ------------------------------------------------------------------------------------------------
-Q2. Folder or file to process.                                      Progress [◼◼◼◼◼◻◻◻◻◻◻◻◻] 38%
+Q2. Folder or file to process.                                      Progress [◼◼◼◼◻◻◻◻◻◻◻◻◻] 30%
 
     Drop a folder of subtitle files, a single subtitle/video file,
     or any local path your selected step(s) should operate on.
@@ -221,10 +261,10 @@ Q2. Folder or file to process.                                      Progress [�
     Selected episode: S02E13
     File selected; using its folder so matching sidecar subtitles can be found.
     SMI subtitles found; will convert them to SRT before cleanup/readings.
-    Identified as: local folder beside selected file: 0 subtitle file(s)
+    Searching for: local folder beside selected file: 0 subtitle file(s)
 
 ------------------------------------------------------------------------------------------------
-Q3. Which subtitle languages do you want to collect?                Progress [◼◼◼◼◼◼◼◼◻◻◻◻◻] 62%
+Q3. Which subtitle languages do you want to collect?                Progress [◼◼◼◼◼◼◻◻◻◻◻◻◻] 50%
 
     List them in the order you want them displayed (top → bottom).
 
@@ -234,6 +274,10 @@ Q3. Which subtitle languages do you want to collect?                Progress [�
       japanese,korean,english,spanish : 2-letter codes and full language names both work
 
   Languages (comma-separated) [ja,en | b=back | q=quit] > ja,en
+
+    Languages selected:
+      ja → Japanese
+      en → English
 
     Local subtitle check:
       Found locally: ko
@@ -249,36 +293,82 @@ Q3. Which subtitle languages do you want to collect?                Progress [�
     Then Modify/Merge will continue from that folder.
 
 ------------------------------------------------------------------------------------------------
-Q4. Reading aids (phonetic guides for the original script).         Progress [◼◼◼◼◼◼◼◼◻◻◻◻◻] 58%
+Q4. Reading aids (phonetic guides for the original script).         Progress [◼◼◼◼◼◼◻◻◻◻◻◻◻] 50%
 
     Example output: 漢字（かんじ）
     Pick any combination by number, or '1' to skip.
     1) No reading aid (skip)
     2) Japanese — hiragana readings for kanji   [ja:hiragana]
-       Preview: 勉強する → べんきょうする
+       Example: 勉強する → べんきょうする
     3) Japanese — katakana readings for kanji   [ja:katakana]
-       Preview: 勉強する → ベンキョウする
+       Example: 勉強する → ベンキョウする
     4) Japanese — full-sentence romaji   [ja:romaji]
-       Preview: 今日は日本語を練習したい → kyou wa nihongo wo renshuu shitai
+       Example: 今日は日本語を練習したい → kyou wa nihongo wo renshuu shitai
 
   Numbers (comma-separated) [1 | b=back | q=quit] > 1
+
+------------------------------------------------------------------------------------------------
+Q5. Final output format.                                            Progress [◼◼◼◼◼◼◼◼◻◻◻◻◻] 64%
+
+    Choose the format that best matches your player.
+    1) SRT  — works almost everywhere
+              Plex, Jellyfin, Smart TVs, tablets, phones, VLC
+    2) ASS  — best for local study playback
+              Better subtitle positioning, sizing, and readability
+    3) VTT  — best for browser-based language learning
+              Works with a browser extension on Netflix, Disney+ & other streaming sites
+    4) SMI  — Korean subtitle format
+              Common in older Korean subtitle archives
+    5) TXT  — plain text without timestamps
+
+    Recommendations:
+      Watching on TV, tablet, phone, Plex, or Jellyfin?
+        → SRT
+
+      Watching local video files on VLC, MPV, or desktop players?
+        → ASS
+
+      Streaming Netflix with multiple subtitles?
+        → VTT (asbplayer browser plug-in required)
+
+    Suggested default: SRT — SRT is the safest general-purpose choice.
+
+  Final format [1 | b=back | q=quit] >
+
+------------------------------------------------------------------------------------------------
+Q6. Subtitle text size?                                             Progress [◼◼◼◼◼◼◼◼◼◻◻◻◻] 69%
+
+    Subtitle text size
+    Format: SRT
+
+    Please note many players ignore font sizes in SRT files.
+    If your player supports sizing, these presets are recommended:
+
+    1) Regular (16px) — recommended
+    2) Smaller (12px)
+    3) Larger (20px)
+    4) Custom — enter exact font size
+
+  Number [1 | b=back | q=quit] >
 
 ======================================================================
 Here's the plan:
 ======================================================================
   • Fetch ja, en for Mashle  (season 2, episode 13)
   • Clean up cues (single line, strip broadcast noise)
-  • Stack ja, en into one SRT file  →  *.ja-en.srt
-  • Use subtitle text size regular (SRT support depends on player)
+  • Stack ja, en into one SRT file → *.ja-en.srt
+  • Use subtitle text size: Regular
   • Save to {TMP}/Mashle
+======================================================================
+Before running:
+======================================================================
+  ⚠ Japanese subtitles can be harder to find automatically; manual search or translation may be needed.
 ======================================================================
 Smart defaults filled in for you (edit via 'Edit a single answer'):
 ======================================================================
-  Display order  ja, en  (top → bottom on screen)
-  Timing master  ja  (first language)
-  Cleanup preset on  (single-line cues + strip broadcast noise)
-  Output format  SRT — plays almost everywhere (Plex, TVs, phones).  Edit to pick SRT / ASS / VTT / SMI / TXT.
-  Text size      regular  (calibrated; edit to change)
+  Display order   ja, en  (top → bottom on screen)
+  Timing master   ja  (first language)
+  Cleanup preset  on  (single-line cues + strip broadcast noise)
 ======================================================================
 
     1) Run it now
@@ -325,25 +415,22 @@ CLI flags win over matching TOML settings, so the file can stay as a reusable te
 
 ```text
   ____      _   ____        _     _   _ _   _
-
  / ___| ___| |_/ ___| _   _| |__ | |_| |_| |_| ___
-
 | |  _ / _ \ __\___ \| | | | '_ \| __| | __| |/ _ \
-
 | |_| |  __/ |_ ___) | |_| | |_) | |_| | |_| |  __/
-
  \____|\___|\__|____/ \__,_|_.__/ \__|_|\__|_|\___|
 
 GetSubtitle — Workflow Builder
 
 Answer a few questions to generate a command and reusable workflow.
 
+------------------------------------------------------------------------------------------------
 Commands:
-  Enter  Accept default
-  b      Back
-  q      Quit
-  Ctrl-C Cancel
-
+    Enter  Accept default
+    b      Back
+    q      Quit
+    Ctrl-C Cancel
+------------------------------------------------------------------------------------------------
 Q1. What would you like to do?
 
     1) Fetch      Download subtitles from a URL or title
@@ -362,16 +449,16 @@ Q1. What would you like to do?
     Selected: modify + merge.
 
 ------------------------------------------------------------------------------------------------
-Q2. Folder or file to process.                                      Progress [◼◼◼◼◼◻◻◻◻◻◻◻◻] 38%
+Q2. Folder or file to process.                                      Progress [◼◼◼◼◻◻◻◻◻◻◻◻◻] 30%
 
     Drop a folder of subtitle files, a single subtitle/video file,
     or any local path your selected step(s) should operate on.
 
   Folder or file path [b=back | q=quit] > {TMP}/Show
-    Identified as: local subtitle folder: 0 video file(s), 2 subtitle file(s)
+    Searching for: local subtitle folder: 0 video file(s), 2 subtitle file(s)
 
 ------------------------------------------------------------------------------------------------
-Q3. Which subtitle languages do you want to collect?                Progress [◼◼◼◼◼◼◼◼◻◻◻◻◻] 62%
+Q3. Which subtitle languages do you want to collect?                Progress [◼◼◼◼◼◼◻◻◻◻◻◻◻] 50%
 
     List them in the order you want them displayed (top → bottom).
 
@@ -382,36 +469,81 @@ Q3. Which subtitle languages do you want to collect?                Progress [�
 
   Languages (comma-separated) [ja,en | b=back | q=quit] > ja,en
 
+    Languages selected:
+      ja → Japanese
+      en → English
+
 ------------------------------------------------------------------------------------------------
-Q4. Reading aids (phonetic guides for the original script).         Progress [◼◼◼◼◼◼◼◼◼◼◼◻◻] 88%
+Q4. Reading aids (phonetic guides for the original script).         Progress [◼◼◼◼◼◼◼◼◼◻◻◻◻] 70%
 
     Example output: 漢字（かんじ）
     Pick any combination by number, or '1' to skip.
     1) No reading aid (skip)
     2) Japanese — hiragana readings for kanji   [ja:hiragana]
-       Preview: 勉強する → べんきょうする
+       Example: 勉強する → べんきょうする
     3) Japanese — katakana readings for kanji   [ja:katakana]
-       Preview: 勉強する → ベンキョウする
+       Example: 勉強する → ベンキョウする
     4) Japanese — full-sentence romaji   [ja:romaji]
-       Preview: 今日は日本語を練習したい → kyou wa nihongo wo renshuu shitai
+       Example: 今日は日本語を練習したい → kyou wa nihongo wo renshuu shitai
 
   Numbers (comma-separated) [1 | b=back | q=quit] > 2
+
+------------------------------------------------------------------------------------------------
+Q5. Final output format.                                            Progress [◼◼◼◼◼◼◼◼◼◼◼◼◻] 90%
+
+    Choose the format that best matches your player.
+    1) SRT  — works almost everywhere
+              Plex, Jellyfin, Smart TVs, tablets, phones, VLC
+    2) ASS  — best for local study playback
+              Better subtitle positioning, sizing, and readability
+    3) VTT  — best for browser-based language learning
+              Works with a browser extension on Netflix, Disney+ & other streaming sites
+    4) SMI  — Korean subtitle format
+              Common in older Korean subtitle archives
+    5) TXT  — plain text without timestamps
+
+    Recommendations:
+      Watching on TV, tablet, phone, Plex, or Jellyfin?
+        → SRT
+
+      Watching local video files on VLC, MPV, or desktop players?
+        → ASS
+
+      Streaming Netflix with multiple subtitles?
+        → VTT (asbplayer browser plug-in required)
+
+              Example:
+              VTT:  にほんご　　べんきょう
+                    日本語  を  勉強 したい
+
+              OTHER FORMATS:  日本語(にほんご)を勉強(べんきょう)したい
+
+    Suggested default: VTT — VTT supports true Japanese ruby in browsers/asbplayer; local players vary.
+
+    Reading-aid notes:
+      VTT can show true ruby above Japanese text in browsers/asbplayer.
+      SRT/SMI/ASS use fallback reading-aid layouts instead.
+
+  Final format [3 | b=back | q=quit] >
 
 ======================================================================
 Here's the plan:
 ======================================================================
   • Use local ja, en files in {TMP}/Show
   • Add reading aids: ja:hiragana
-  • Stack ja, en into one VTT file  →  *.ja-en.vtt
+  • Stack ja, en into one VTT file → *.ja-en.vtt
   • Save to {TMP}/Show
+======================================================================
+Before running:
+======================================================================
+  ⚠ VTT reading aids work best in browsers/asbplayer; local player support varies.
 ======================================================================
 Smart defaults filled in for you (edit via 'Edit a single answer'):
 ======================================================================
-  Display order  ja, en  (top → bottom on screen)
-  Timing master  ja  (first language)
-  Cleanup preset on  (single-line cues + strip broadcast noise)
-  Output format  VTT — best for browser / asbplayer Japanese ruby.  Edit to pick SRT / ASS / VTT / SMI / TXT.
-  Output folder  {TMP}/Show  (beside source)
+  Display order   ja, en  (top → bottom on screen)
+  Timing master   ja  (first language)
+  Cleanup preset  on  (single-line cues + strip broadcast noise)
+  Output folder   {TMP}/Show  (beside source)
 ======================================================================
 
     1) Run it now
@@ -458,25 +590,22 @@ CLI flags win over matching TOML settings, so the file can stay as a reusable te
 
 ```text
   ____      _   ____        _     _   _ _   _
-
  / ___| ___| |_/ ___| _   _| |__ | |_| |_| |_| ___
-
 | |  _ / _ \ __\___ \| | | | '_ \| __| | __| |/ _ \
-
 | |_| |  __/ |_ ___) | |_| | |_) | |_| | |_| |  __/
-
  \____|\___|\__|____/ \__,_|_.__/ \__|_|\__|_|\___|
 
 GetSubtitle — Workflow Builder
 
 Answer a few questions to generate a command and reusable workflow.
 
+------------------------------------------------------------------------------------------------
 Commands:
-  Enter  Accept default
-  b      Back
-  q      Quit
-  Ctrl-C Cancel
-
+    Enter  Accept default
+    b      Back
+    q      Quit
+    Ctrl-C Cancel
+------------------------------------------------------------------------------------------------
 Q1. What would you like to do?
 
     1) Fetch      Download subtitles from a URL or title
@@ -495,16 +624,16 @@ Q1. What would you like to do?
     Selected: modify + merge.
 
 ------------------------------------------------------------------------------------------------
-Q2. Folder or file to process.                                      Progress [◼◼◼◼◼◻◻◻◻◻◻◻◻] 38%
+Q2. Folder or file to process.                                      Progress [◼◼◼◼◻◻◻◻◻◻◻◻◻] 30%
 
     Drop a folder of subtitle files, a single subtitle/video file,
     or any local path your selected step(s) should operate on.
 
   Folder or file path [b=back | q=quit] > {TMP}/Show
-    Identified as: local subtitle folder: 0 video file(s), 2 subtitle file(s)
+    Searching for: local subtitle folder: 0 video file(s), 2 subtitle file(s)
 
 ------------------------------------------------------------------------------------------------
-Q3. Which subtitle languages do you want to collect?                Progress [◼◼◼◼◼◼◼◼◻◻◻◻◻] 62%
+Q3. Which subtitle languages do you want to collect?                Progress [◼◼◼◼◼◼◻◻◻◻◻◻◻] 50%
 
     List them in the order you want them displayed (top → bottom).
 
@@ -515,36 +644,90 @@ Q3. Which subtitle languages do you want to collect?                Progress [�
 
   Languages (comma-separated) [ja,en | b=back | q=quit] > ko,en
 
+    Languages selected:
+      ko → Korean
+      en → English
+
 ------------------------------------------------------------------------------------------------
-Q4. Reading aids (phonetic guides for the original script).         Progress [◼◼◼◼◼◼◼◼◼◼◼◻◻] 88%
+Q4. Reading aids (phonetic guides for the original script).         Progress [◼◼◼◼◼◼◼◼◼◻◻◻◻] 70%
 
     Example output: 한글 (hangeul)
     Pick any combination by number, or '1' to skip.
     1) No reading aid (skip)
     2) Korean — Revised Romanization (G2P)   [ko:revised]
-       Preview: 한국어 공부 → hangugeo gongbu
+       Example: 한국어 공부 → hangugeo gongbu
     3) Korean — Yale Romanization   [ko:yale]
-       Preview: 한국어 공부 → hankwuke kongpwu
+       Example: 한국어 공부 → hankwuke kongpwu
 
   Numbers (comma-separated) [1 | b=back | q=quit] > 2
+
+------------------------------------------------------------------------------------------------
+Q5. Final output format.                                            Progress [◼◼◼◼◼◼◼◼◼◼◼◼◻] 90%
+
+    Choose the format that best matches your player.
+    1) SRT  — works almost everywhere
+              Plex, Jellyfin, Smart TVs, tablets, phones, VLC
+    2) ASS  — best for local study playback
+              Better subtitle positioning, sizing, and readability
+    3) VTT  — best for browser-based language learning
+              Works with a browser extension on Netflix, Disney+ & other streaming sites
+    4) SMI  — Korean subtitle format
+              Common in older Korean subtitle archives
+    5) TXT  — plain text without timestamps
+
+    Recommendations:
+      Watching on TV, tablet, phone, Plex, or Jellyfin?
+        → SRT
+
+      Watching local video files on VLC, MPV, or desktop players?
+        → ASS
+
+      Streaming Netflix with multiple subtitles?
+        → VTT (asbplayer browser plug-in required)
+
+    Suggested default: ASS — ASS is best for local-player stacked Korean/Chinese/Cantonese readings.
+
+    Reading-aid notes:
+      ASS is usually the clearest local-player choice for Korean,
+      Chinese, or Cantonese reading aids.
+
+  Final format [2 | b=back | q=quit] >
+
+------------------------------------------------------------------------------------------------
+Q6. Subtitle text size?                                             Progress [◼◼◼◼◼◼◼◼◼◼◼◼◻] 92%
+
+    Subtitle text size
+    Format: ASS
+
+    This output uses ASS and will usually show 2 lines at once.
+    These presets are recommended:
+
+    1) Regular (58) — recommended
+    2) Smaller (46)
+    3) Larger (70)
+    4) Custom — enter exact font size
+
+  Number [1 | b=back | q=quit] >
 
 ======================================================================
 Here's the plan:
 ======================================================================
   • Use local ko, en files in {TMP}/Show
   • Add reading aids: ko:revised
-  • Stack ko, en into one ASS file  →  *.ko-en.ass
-  • Use subtitle text size regular
+  • Stack ko, en into one ASS file → *.ko-en.ass
+  • Use subtitle text size: Regular
   • Save to {TMP}/Show
+======================================================================
+Before running:
+======================================================================
+  ⚠ ASS reading aids use parenthetical text instead of true ruby above the script.
 ======================================================================
 Smart defaults filled in for you (edit via 'Edit a single answer'):
 ======================================================================
-  Display order  ko, en  (top → bottom on screen)
-  Timing master  ko  (first language)
-  Cleanup preset on  (single-line cues + strip broadcast noise)
-  Output format  ASS — best for desktop players (VLC/mpv/IINA): layout + font size.  Edit to pick SRT / ASS / VTT / SMI / TXT.
-  Text size      regular  (calibrated; edit to change)
-  Output folder  {TMP}/Show  (beside source)
+  Display order   ko, en  (top → bottom on screen)
+  Timing master   ko  (first language)
+  Cleanup preset  on  (single-line cues + strip broadcast noise)
+  Output folder   {TMP}/Show  (beside source)
 ======================================================================
 
     1) Run it now
@@ -591,25 +774,22 @@ CLI flags win over matching TOML settings, so the file can stay as a reusable te
 
 ```text
   ____      _   ____        _     _   _ _   _
-
  / ___| ___| |_/ ___| _   _| |__ | |_| |_| |_| ___
-
 | |  _ / _ \ __\___ \| | | | '_ \| __| | __| |/ _ \
-
 | |_| |  __/ |_ ___) | |_| | |_) | |_| | |_| |  __/
-
  \____|\___|\__|____/ \__,_|_.__/ \__|_|\__|_|\___|
 
 GetSubtitle — Workflow Builder
 
 Answer a few questions to generate a command and reusable workflow.
 
+------------------------------------------------------------------------------------------------
 Commands:
-  Enter  Accept default
-  b      Back
-  q      Quit
-  Ctrl-C Cancel
-
+    Enter  Accept default
+    b      Back
+    q      Quit
+    Ctrl-C Cancel
+------------------------------------------------------------------------------------------------
 Q1. What would you like to do?
 
     1) Fetch      Download subtitles from a URL or title
@@ -628,16 +808,16 @@ Q1. What would you like to do?
     Selected: merge.
 
 ------------------------------------------------------------------------------------------------
-Q2. Folder or file to process.                                      Progress [◼◼◼◼◼◼◻◻◻◻◻◻◻] 50%
+Q2. Folder or file to process.                                      Progress [◼◼◼◼◼◻◻◻◻◻◻◻◻] 38%
 
     Drop a folder of subtitle files, a single subtitle/video file,
     or any local path your selected step(s) should operate on.
 
   Folder or file path [b=back | q=quit] > {TMP}/Show
-    Identified as: local subtitle folder: 0 video file(s), 2 subtitle file(s)
+    Searching for: local subtitle folder: 0 video file(s), 2 subtitle file(s)
 
 ------------------------------------------------------------------------------------------------
-Q3. Which subtitle languages do you want to collect?                Progress [◼◼◼◼◼◼◼◼◼◼◼◻◻] 83%
+Q3. Which subtitle languages do you want to collect?                Progress [◼◼◼◼◼◼◼◼◻◻◻◻◻] 62%
 
     List them in the order you want them displayed (top → bottom).
 
@@ -648,26 +828,72 @@ Q3. Which subtitle languages do you want to collect?                Progress [�
 
   Languages (comma-separated) [ja,en | b=back | q=quit] > ja,en
 
+    Languages selected:
+      ja → Japanese
+      en → English
+
     Japanese furigana reading aids need the Modify step (not selected yet).
   Add Modify so I can offer Japanese furigana reading aids? [Y/n | b=back | q=quit] > n
     No reading aids this run.
+
+------------------------------------------------------------------------------------------------
+Q4. Final output format.                                            Progress [◼◼◼◼◼◼◼◼◼◼◼◻◻] 88%
+
+    Choose the format that best matches your player.
+    1) SRT  — works almost everywhere
+              Plex, Jellyfin, Smart TVs, tablets, phones, VLC
+    2) ASS  — best for local study playback
+              Better subtitle positioning, sizing, and readability
+    3) VTT  — best for browser-based language learning
+              Works with a browser extension on Netflix, Disney+ & other streaming sites
+    4) SMI  — Korean subtitle format
+              Common in older Korean subtitle archives
+    5) TXT  — plain text without timestamps
+
+    Recommendations:
+      Watching on TV, tablet, phone, Plex, or Jellyfin?
+        → SRT
+
+      Watching local video files on VLC, MPV, or desktop players?
+        → ASS
+
+      Streaming Netflix with multiple subtitles?
+        → VTT (asbplayer browser plug-in required)
+
+    Suggested default: SRT — SRT is the safest general-purpose choice.
+
+  Final format [1 | b=back | q=quit] >
+
+------------------------------------------------------------------------------------------------
+Q5. Subtitle text size?                                             Progress [◼◼◼◼◼◼◼◼◼◼◼◼◻] 90%
+
+    Subtitle text size
+    Format: SRT
+
+    Please note many players ignore font sizes in SRT files.
+    If your player supports sizing, these presets are recommended:
+
+    1) Regular (16px) — recommended
+    2) Smaller (12px)
+    3) Larger (20px)
+    4) Custom — enter exact font size
+
+  Number [1 | b=back | q=quit] >
 
 ======================================================================
 Here's the plan:
 ======================================================================
   • Use local ja, en files in {TMP}/Show
-  • Stack ja, en into one SRT file  →  *.ja-en.srt
-  • Use subtitle text size regular (SRT support depends on player)
+  • Stack ja, en into one SRT file → *.ja-en.srt
+  • Use subtitle text size: Regular
   • Save to {TMP}/Show
 ======================================================================
 Smart defaults filled in for you (edit via 'Edit a single answer'):
 ======================================================================
-  Display order  ja, en  (top → bottom on screen)
-  Timing master  ja  (first language)
-  Cleanup preset on  (single-line cues + strip broadcast noise)
-  Output format  SRT — plays almost everywhere (Plex, TVs, phones).  Edit to pick SRT / ASS / VTT / SMI / TXT.
-  Text size      regular  (calibrated; edit to change)
-  Output folder  {TMP}/Show  (beside source)
+  Display order   ja, en  (top → bottom on screen)
+  Timing master   ja  (first language)
+  Cleanup preset  on  (single-line cues + strip broadcast noise)
+  Output folder   {TMP}/Show  (beside source)
 ======================================================================
 
     1) Run it now
@@ -714,25 +940,22 @@ CLI flags win over matching TOML settings, so the file can stay as a reusable te
 
 ```text
   ____      _   ____        _     _   _ _   _
-
  / ___| ___| |_/ ___| _   _| |__ | |_| |_| |_| ___
-
 | |  _ / _ \ __\___ \| | | | '_ \| __| | __| |/ _ \
-
 | |_| |  __/ |_ ___) | |_| | |_) | |_| | |_| |  __/
-
  \____|\___|\__|____/ \__,_|_.__/ \__|_|\__|_|\___|
 
 GetSubtitle — Workflow Builder
 
 Answer a few questions to generate a command and reusable workflow.
 
+------------------------------------------------------------------------------------------------
 Commands:
-  Enter  Accept default
-  b      Back
-  q      Quit
-  Ctrl-C Cancel
-
+    Enter  Accept default
+    b      Back
+    q      Quit
+    Ctrl-C Cancel
+------------------------------------------------------------------------------------------------
 Q1. What would you like to do?
 
     1) Fetch      Download subtitles from a URL or title
@@ -758,7 +981,7 @@ Q2. Folder or file to process.                                      Progress [�
 
   Folder or file path [b=back | q=quit] > {TMP}/Foo.ja.srt
     Selected episode: movie
-    Identified as: local subtitle file: 0 video file(s), 1 subtitle file(s)
+    Searching for: local subtitle file: 0 video file(s), 1 subtitle file(s)
 
 ------------------------------------------------------------------------------------------------
 Q3. Which subtitle languages do you want to collect?                Progress [◼◼◼◼◼◼◼◼◻◻◻◻◻] 62%
@@ -772,6 +995,9 @@ Q3. Which subtitle languages do you want to collect?                Progress [�
 
   Languages (comma-separated) [ja,en | b=back | q=quit] > ja
 
+    Languages selected:
+      ja → Japanese
+
 ------------------------------------------------------------------------------------------------
 Q4. Reading aids (phonetic guides for the original script).         Progress [◼◼◼◼◼◼◼◼◼◼◼◻◻] 88%
 
@@ -779,11 +1005,11 @@ Q4. Reading aids (phonetic guides for the original script).         Progress [�
     Pick any combination by number, or '1' to skip.
     1) No reading aid (skip)
     2) Japanese — hiragana readings for kanji   [ja:hiragana]
-       Preview: 勉強する → べんきょうする
+       Example: 勉強する → べんきょうする
     3) Japanese — katakana readings for kanji   [ja:katakana]
-       Preview: 勉強する → ベンキョウする
+       Example: 勉強する → ベンキョウする
     4) Japanese — full-sentence romaji   [ja:romaji]
-       Preview: 今日は日本語を練習したい → kyou wa nihongo wo renshuu shitai
+       Example: 今日は日本語を練習したい → kyou wa nihongo wo renshuu shitai
 
   Numbers (comma-separated) [1 | b=back | q=quit] > 2
 
@@ -796,8 +1022,8 @@ Here's the plan:
 ======================================================================
 Smart defaults filled in for you (edit via 'Edit a single answer'):
 ======================================================================
-  Cleanup preset on  (single-line cues + strip broadcast noise)
-  Output folder  {TMP}  (beside source)
+  Cleanup preset  on  (single-line cues + strip broadcast noise)
+  Output folder   {TMP}  (beside source)
 ======================================================================
 
     1) Run it now
@@ -844,25 +1070,22 @@ CLI flags win over matching TOML settings, so the file can stay as a reusable te
 
 ```text
   ____      _   ____        _     _   _ _   _
-
  / ___| ___| |_/ ___| _   _| |__ | |_| |_| |_| ___
-
 | |  _ / _ \ __\___ \| | | | '_ \| __| | __| |/ _ \
-
 | |_| |  __/ |_ ___) | |_| | |_) | |_| | |_| |  __/
-
  \____|\___|\__|____/ \__,_|_.__/ \__|_|\__|_|\___|
 
 GetSubtitle — Workflow Builder
 
 Answer a few questions to generate a command and reusable workflow.
 
+------------------------------------------------------------------------------------------------
 Commands:
-  Enter  Accept default
-  b      Back
-  q      Quit
-  Ctrl-C Cancel
-
+    Enter  Accept default
+    b      Back
+    q      Quit
+    Ctrl-C Cancel
+------------------------------------------------------------------------------------------------
 Q1. What would you like to do?
 
     1) Fetch      Download subtitles from a URL or title
@@ -886,7 +1109,7 @@ Q2. Folder or file to rename.                                       Progress [�
     Drop a season folder or one subtitle file.
 
   Folder or file path [b=back | q=quit] > {TMP}/Show
-    Identified as: local subtitle folder: 0 video file(s), 5 subtitle file(s)
+    Searching for: local subtitle folder: 0 video file(s), 5 subtitle file(s)
 
 Skipping 1 file(s) that don't match the
   'Title - S03E05.lang.ext' shape (left untouched):
@@ -964,25 +1187,22 @@ Copied 4 renamed file(s).
 
 ```text
   ____      _   ____        _     _   _ _   _
-
  / ___| ___| |_/ ___| _   _| |__ | |_| |_| |_| ___
-
 | |  _ / _ \ __\___ \| | | | '_ \| __| | __| |/ _ \
-
 | |_| |  __/ |_ ___) | |_| | |_) | |_| | |_| |  __/
-
  \____|\___|\__|____/ \__,_|_.__/ \__|_|\__|_|\___|
 
 GetSubtitle — Workflow Builder
 
 Answer a few questions to generate a command and reusable workflow.
 
+------------------------------------------------------------------------------------------------
 Commands:
-  Enter  Accept default
-  b      Back
-  q      Quit
-  Ctrl-C Cancel
-
+    Enter  Accept default
+    b      Back
+    q      Quit
+    Ctrl-C Cancel
+------------------------------------------------------------------------------------------------
 Q1. What would you like to do?
 
     1) Fetch      Download subtitles from a URL or title
@@ -1001,16 +1221,16 @@ Q1. What would you like to do?
     Selected: translate + modify + merge.
 
 ------------------------------------------------------------------------------------------------
-Q2. Folder or file to process.                                      Progress [◼◼◼◼◻◻◻◻◻◻◻◻◻] 30%
+Q2. Folder or file to process.                                      Progress [◼◼◼◻◻◻◻◻◻◻◻◻◻] 25%
 
     Drop a folder of subtitle files, a single subtitle/video file,
     or any local path your selected step(s) should operate on.
 
   Folder or file path [b=back | q=quit] > {TMP}/Show
-    Identified as: local subtitle folder: 0 video file(s), 2 subtitle file(s)
+    Searching for: local subtitle folder: 0 video file(s), 2 subtitle file(s)
 
 ------------------------------------------------------------------------------------------------
-Q3. Which subtitle languages do you want to collect?                Progress [◼◼◼◼◼◼◻◻◻◻◻◻◻] 50%
+Q3. Which subtitle languages do you want to collect?                Progress [◼◼◼◼◼◻◻◻◻◻◻◻◻] 42%
 
     List them in the order you want them displayed (top → bottom).
 
@@ -1021,8 +1241,12 @@ Q3. Which subtitle languages do you want to collect?                Progress [�
 
   Languages (comma-separated) [ja,en | b=back | q=quit] > ja,en
 
+    Languages selected:
+      ja → Japanese
+      en → English
+
 ------------------------------------------------------------------------------------------------
-Q4. Fill missing subtitles?                                         Progress [◼◼◼◼◼◼◼◼◼◻◻◻◻] 70%
+Q4. Fill missing subtitles?                                         Progress [◼◼◼◼◼◼◼◼◻◻◻◻◻] 58%
 
     1) Skip (use only what's downloaded)
     2) Translate with Argos (local, basic quality)
@@ -1032,19 +1256,63 @@ Q4. Fill missing subtitles?                                         Progress [�
   Number [1 | b=back | q=quit] > 4
 
 ------------------------------------------------------------------------------------------------
-Q5. Reading aids (phonetic guides for the original script).         Progress [◼◼◼◼◼◼◼◼◼◼◼◼◻] 90%
+Q5. Reading aids (phonetic guides for the original script).         Progress [◼◼◼◼◼◼◼◼◼◼◻◻◻] 75%
 
     Example output: 漢字（かんじ）
     Pick any combination by number, or '1' to skip.
     1) No reading aid (skip)
     2) Japanese — hiragana readings for kanji   [ja:hiragana]
-       Preview: 勉強する → べんきょうする
+       Example: 勉強する → べんきょうする
     3) Japanese — katakana readings for kanji   [ja:katakana]
-       Preview: 勉強する → ベンキョウする
+       Example: 勉強する → ベンキョウする
     4) Japanese — full-sentence romaji   [ja:romaji]
-       Preview: 今日は日本語を練習したい → kyou wa nihongo wo renshuu shitai
+       Example: 今日は日本語を練習したい → kyou wa nihongo wo renshuu shitai
 
   Numbers (comma-separated) [1 | b=back | q=quit] > 1
+
+------------------------------------------------------------------------------------------------
+Q6. Final output format.                                            Progress [◼◼◼◼◼◼◼◼◼◼◼◼◻] 92%
+
+    Choose the format that best matches your player.
+    1) SRT  — works almost everywhere
+              Plex, Jellyfin, Smart TVs, tablets, phones, VLC
+    2) ASS  — best for local study playback
+              Better subtitle positioning, sizing, and readability
+    3) VTT  — best for browser-based language learning
+              Works with a browser extension on Netflix, Disney+ & other streaming sites
+    4) SMI  — Korean subtitle format
+              Common in older Korean subtitle archives
+    5) TXT  — plain text without timestamps
+
+    Recommendations:
+      Watching on TV, tablet, phone, Plex, or Jellyfin?
+        → SRT
+
+      Watching local video files on VLC, MPV, or desktop players?
+        → ASS
+
+      Streaming Netflix with multiple subtitles?
+        → VTT (asbplayer browser plug-in required)
+
+    Suggested default: SRT — SRT is the safest general-purpose choice.
+
+  Final format [1 | b=back | q=quit] >
+
+------------------------------------------------------------------------------------------------
+Q7. Subtitle text size?                                             Progress [◼◼◼◼◼◼◼◼◼◼◼◼◻] 93%
+
+    Subtitle text size
+    Format: SRT
+
+    Please note many players ignore font sizes in SRT files.
+    If your player supports sizing, these presets are recommended:
+
+    1) Regular (16px) — recommended
+    2) Smaller (12px)
+    3) Larger (20px)
+    4) Custom — enter exact font size
+
+  Number [1 | b=back | q=quit] >
 
 ======================================================================
 Here's the plan:
@@ -1052,18 +1320,16 @@ Here's the plan:
   • Use local ja, en files in {TMP}/Show
   • Fill gaps with Deepl AI translation
   • Clean up cues (single line, strip broadcast noise)
-  • Stack ja, en into one SRT file  →  *.ja-en.srt
-  • Use subtitle text size regular (SRT support depends on player)
+  • Stack ja, en into one SRT file → *.ja-en.srt
+  • Use subtitle text size: Regular
   • Save to {TMP}/Show
 ======================================================================
 Smart defaults filled in for you (edit via 'Edit a single answer'):
 ======================================================================
-  Display order  ja, en  (top → bottom on screen)
-  Timing master  ja  (first language)
-  Cleanup preset on  (single-line cues + strip broadcast noise)
-  Output format  SRT — plays almost everywhere (Plex, TVs, phones).  Edit to pick SRT / ASS / VTT / SMI / TXT.
-  Text size      regular  (calibrated; edit to change)
-  Output folder  {TMP}/Show  (beside source)
+  Display order   ja, en  (top → bottom on screen)
+  Timing master   ja  (first language)
+  Cleanup preset  on  (single-line cues + strip broadcast noise)
+  Output folder   {TMP}/Show  (beside source)
 ======================================================================
 
     1) Run it now
@@ -1082,7 +1348,7 @@ Preflight check — 2 item(s) to know about:
   ✗ DeepL API key
       Why: Required — the run would fail before it starts.
       Fix: getsubtitle --set-key deepl
-  Run setup now to fix the blocker(s)? [Y/n] > y
+  Show setup steps for the blocker(s)? [Y/n] > y
 
 Setup — let's fill in the missing pieces.
 
@@ -1091,11 +1357,13 @@ Setup — let's fill in the missing pieces.
       Run `--set-key deepl` now? [Y/n] > n
 
 
+I can't run this workflow yet because the required setup is still missing.
 Still blocked — the run would fail before it starts:
   What: DeepL API key
   Why:  Required for this workflow.
   How:  getsubtitle --set-key deepl
-  Save the workflow instead so you can run it after setup? [Y/n] > y
+  Save a reusable workflow file to run after setup? [y/N] > y
+  Saving a TOML workflow now. You can run it later with `getsubtitle --config FILE.toml`.
 
 
   Save to (relative paths OK) [getsubtitle-workflow.toml] > {TMP}/deepl-later.toml
@@ -1132,25 +1400,22 @@ CLI flags win over matching TOML settings, so the file can stay as a reusable te
 
 ```text
   ____      _   ____        _     _   _ _   _
-
  / ___| ___| |_/ ___| _   _| |__ | |_| |_| |_| ___
-
 | |  _ / _ \ __\___ \| | | | '_ \| __| | __| |/ _ \
-
 | |_| |  __/ |_ ___) | |_| | |_) | |_| | |_| |  __/
-
  \____|\___|\__|____/ \__,_|_.__/ \__|_|\__|_|\___|
 
 GetSubtitle — Workflow Builder
 
 Answer a few questions to generate a command and reusable workflow.
 
+------------------------------------------------------------------------------------------------
 Commands:
-  Enter  Accept default
-  b      Back
-  q      Quit
-  Ctrl-C Cancel
-
+    Enter  Accept default
+    b      Back
+    q      Quit
+    Ctrl-C Cancel
+------------------------------------------------------------------------------------------------
 Q1. What would you like to do?
 
     1) Fetch      Download subtitles from a URL or title
@@ -1169,16 +1434,16 @@ Q1. What would you like to do?
     Selected: translate + modify + merge.
 
 ------------------------------------------------------------------------------------------------
-Q2. Folder or file to process.                                      Progress [◼◼◼◼◻◻◻◻◻◻◻◻◻] 30%
+Q2. Folder or file to process.                                      Progress [◼◼◼◻◻◻◻◻◻◻◻◻◻] 25%
 
     Drop a folder of subtitle files, a single subtitle/video file,
     or any local path your selected step(s) should operate on.
 
   Folder or file path [b=back | q=quit] > {TMP}/Show
-    Identified as: local subtitle folder: 0 video file(s), 2 subtitle file(s)
+    Searching for: local subtitle folder: 0 video file(s), 2 subtitle file(s)
 
 ------------------------------------------------------------------------------------------------
-Q3. Which subtitle languages do you want to collect?                Progress [◼◼◼◼◼◼◻◻◻◻◻◻◻] 50%
+Q3. Which subtitle languages do you want to collect?                Progress [◼◼◼◼◼◻◻◻◻◻◻◻◻] 42%
 
     List them in the order you want them displayed (top → bottom).
 
@@ -1189,8 +1454,12 @@ Q3. Which subtitle languages do you want to collect?                Progress [�
 
   Languages (comma-separated) [ja,en | b=back | q=quit] > ja,en
 
+    Languages selected:
+      ja → Japanese
+      en → English
+
 ------------------------------------------------------------------------------------------------
-Q4. Fill missing subtitles?                                         Progress [◼◼◼◼◼◼◼◼◼◻◻◻◻] 70%
+Q4. Fill missing subtitles?                                         Progress [◼◼◼◼◼◼◼◼◻◻◻◻◻] 58%
 
     1) Skip (use only what's downloaded)
     2) Translate with Argos (local, basic quality)
@@ -1200,19 +1469,63 @@ Q4. Fill missing subtitles?                                         Progress [�
   Number [1 | b=back | q=quit] > 3
 
 ------------------------------------------------------------------------------------------------
-Q5. Reading aids (phonetic guides for the original script).         Progress [◼◼◼◼◼◼◼◼◼◼◼◼◻] 90%
+Q5. Reading aids (phonetic guides for the original script).         Progress [◼◼◼◼◼◼◼◼◼◼◻◻◻] 75%
 
     Example output: 漢字（かんじ）
     Pick any combination by number, or '1' to skip.
     1) No reading aid (skip)
     2) Japanese — hiragana readings for kanji   [ja:hiragana]
-       Preview: 勉強する → べんきょうする
+       Example: 勉強する → べんきょうする
     3) Japanese — katakana readings for kanji   [ja:katakana]
-       Preview: 勉強する → ベンキョウする
+       Example: 勉強する → ベンキョウする
     4) Japanese — full-sentence romaji   [ja:romaji]
-       Preview: 今日は日本語を練習したい → kyou wa nihongo wo renshuu shitai
+       Example: 今日は日本語を練習したい → kyou wa nihongo wo renshuu shitai
 
   Numbers (comma-separated) [1 | b=back | q=quit] > 1
+
+------------------------------------------------------------------------------------------------
+Q6. Final output format.                                            Progress [◼◼◼◼◼◼◼◼◼◼◼◼◻] 92%
+
+    Choose the format that best matches your player.
+    1) SRT  — works almost everywhere
+              Plex, Jellyfin, Smart TVs, tablets, phones, VLC
+    2) ASS  — best for local study playback
+              Better subtitle positioning, sizing, and readability
+    3) VTT  — best for browser-based language learning
+              Works with a browser extension on Netflix, Disney+ & other streaming sites
+    4) SMI  — Korean subtitle format
+              Common in older Korean subtitle archives
+    5) TXT  — plain text without timestamps
+
+    Recommendations:
+      Watching on TV, tablet, phone, Plex, or Jellyfin?
+        → SRT
+
+      Watching local video files on VLC, MPV, or desktop players?
+        → ASS
+
+      Streaming Netflix with multiple subtitles?
+        → VTT (asbplayer browser plug-in required)
+
+    Suggested default: SRT — SRT is the safest general-purpose choice.
+
+  Final format [1 | b=back | q=quit] >
+
+------------------------------------------------------------------------------------------------
+Q7. Subtitle text size?                                             Progress [◼◼◼◼◼◼◼◼◼◼◼◼◻] 93%
+
+    Subtitle text size
+    Format: SRT
+
+    Please note many players ignore font sizes in SRT files.
+    If your player supports sizing, these presets are recommended:
+
+    1) Regular (16px) — recommended
+    2) Smaller (12px)
+    3) Larger (20px)
+    4) Custom — enter exact font size
+
+  Number [1 | b=back | q=quit] >
 
 ======================================================================
 Here's the plan:
@@ -1220,18 +1533,16 @@ Here's the plan:
   • Use local ja, en files in {TMP}/Show
   • Fill gaps with Ollama AI translation
   • Clean up cues (single line, strip broadcast noise)
-  • Stack ja, en into one SRT file  →  *.ja-en.srt
-  • Use subtitle text size regular (SRT support depends on player)
+  • Stack ja, en into one SRT file → *.ja-en.srt
+  • Use subtitle text size: Regular
   • Save to {TMP}/Show
 ======================================================================
 Smart defaults filled in for you (edit via 'Edit a single answer'):
 ======================================================================
-  Display order  ja, en  (top → bottom on screen)
-  Timing master  ja  (first language)
-  Cleanup preset on  (single-line cues + strip broadcast noise)
-  Output format  SRT — plays almost everywhere (Plex, TVs, phones).  Edit to pick SRT / ASS / VTT / SMI / TXT.
-  Text size      regular  (calibrated; edit to change)
-  Output folder  {TMP}/Show  (beside source)
+  Display order   ja, en  (top → bottom on screen)
+  Timing master   ja  (first language)
+  Cleanup preset  on  (single-line cues + strip broadcast noise)
+  Output folder   {TMP}/Show  (beside source)
 ======================================================================
 
     1) Run it now
@@ -1250,7 +1561,7 @@ Preflight check — 2 item(s) to know about:
   ✗ Ollama daemon at http://localhost:11434
       Why: Required — the run would fail before it starts.
       Fix: Start Ollama: https://ollama.com  (then re-run)
-  Run setup now to fix the blocker(s)? [Y/n] > y
+  Show setup steps for the blocker(s)? [Y/n] > y
 
 Setup — let's fill in the missing pieces.
 
@@ -1259,11 +1570,13 @@ Setup — let's fill in the missing pieces.
     (Manual step — re-launch the wizard once done.)
 
 
+I can't run this workflow yet because the required setup is still missing.
 Still blocked — the run would fail before it starts:
   What: Ollama daemon at http://localhost:11434
   Why:  Required for this workflow.
   How:  Start Ollama: https://ollama.com  (then re-run)
-  Save the workflow instead so you can run it after setup? [Y/n] > y
+  Save a reusable workflow file to run after setup? [y/N] > y
+  Saving a TOML workflow now. You can run it later with `getsubtitle --config FILE.toml`.
 
 
   Save to (relative paths OK) [getsubtitle-workflow.toml] > {TMP}/ollama-later.toml
@@ -1300,25 +1613,22 @@ CLI flags win over matching TOML settings, so the file can stay as a reusable te
 
 ```text
   ____      _   ____        _     _   _ _   _
-
  / ___| ___| |_/ ___| _   _| |__ | |_| |_| |_| ___
-
 | |  _ / _ \ __\___ \| | | | '_ \| __| | __| |/ _ \
-
 | |_| |  __/ |_ ___) | |_| | |_) | |_| | |_| |  __/
-
  \____|\___|\__|____/ \__,_|_.__/ \__|_|\__|_|\___|
 
 GetSubtitle — Workflow Builder
 
 Answer a few questions to generate a command and reusable workflow.
 
+------------------------------------------------------------------------------------------------
 Commands:
-  Enter  Accept default
-  b      Back
-  q      Quit
-  Ctrl-C Cancel
-
+    Enter  Accept default
+    b      Back
+    q      Quit
+    Ctrl-C Cancel
+------------------------------------------------------------------------------------------------
 Q1. What would you like to do?
 
     1) Fetch      Download subtitles from a URL or title
@@ -1337,16 +1647,16 @@ Q1. What would you like to do?
     Selected: modify + merge.
 
 ------------------------------------------------------------------------------------------------
-Q2. Folder or file to process.                                      Progress [◼◼◼◼◼◻◻◻◻◻◻◻◻] 38%
+Q2. Folder or file to process.                                      Progress [◼◼◼◼◻◻◻◻◻◻◻◻◻] 30%
 
     Drop a folder of subtitle files, a single subtitle/video file,
     or any local path your selected step(s) should operate on.
 
   Folder or file path [b=back | q=quit] > {TMP}/Foo
-    Identified as: local subtitle folder: 0 video file(s), 1 subtitle file(s)
+    Searching for: local subtitle folder: 0 video file(s), 1 subtitle file(s)
 
 ------------------------------------------------------------------------------------------------
-Q3. Which subtitle languages do you want to collect?                Progress [◼◼◼◼◼◼◼◼◻◻◻◻◻] 62%
+Q3. Which subtitle languages do you want to collect?                Progress [◼◼◼◼◼◼◻◻◻◻◻◻◻] 50%
 
     List them in the order you want them displayed (top → bottom).
 
@@ -1356,6 +1666,10 @@ Q3. Which subtitle languages do you want to collect?                Progress [�
       japanese,korean,english,spanish : 2-letter codes and full language names both work
 
   Languages (comma-separated) [ja,en | b=back | q=quit] > ja,en
+
+    Languages selected:
+      ja → Japanese
+      en → English
 
     Local subtitle check:
       Found locally: ko
@@ -1367,37 +1681,79 @@ Q3. Which subtitle languages do you want to collect?                Progress [�
     catalog URL/title so getsubtitle can look online for missing tracks.
 
 ------------------------------------------------------------------------------------------------
-Q4. Reading aids (phonetic guides for the original script).         Progress [◼◼◼◼◼◼◼◼◼◼◼◻◻] 88%
+Q4. Reading aids (phonetic guides for the original script).         Progress [◼◼◼◼◼◼◼◼◼◻◻◻◻] 70%
 
     Example output: 漢字（かんじ）
     Pick any combination by number, or '1' to skip.
     1) No reading aid (skip)
     2) Japanese — hiragana readings for kanji   [ja:hiragana]
-       Preview: 勉強する → べんきょうする
+       Example: 勉強する → べんきょうする
     3) Japanese — katakana readings for kanji   [ja:katakana]
-       Preview: 勉強する → ベンキョウする
+       Example: 勉強する → ベンキョウする
     4) Japanese — full-sentence romaji   [ja:romaji]
-       Preview: 今日は日本語を練習したい → kyou wa nihongo wo renshuu shitai
+       Example: 今日は日本語を練習したい → kyou wa nihongo wo renshuu shitai
 
   Numbers (comma-separated) [1 | b=back | q=quit] > 1
+
+------------------------------------------------------------------------------------------------
+Q5. Final output format.                                            Progress [◼◼◼◼◼◼◼◼◼◼◼◼◻] 90%
+
+    Choose the format that best matches your player.
+    1) SRT  — works almost everywhere
+              Plex, Jellyfin, Smart TVs, tablets, phones, VLC
+    2) ASS  — best for local study playback
+              Better subtitle positioning, sizing, and readability
+    3) VTT  — best for browser-based language learning
+              Works with a browser extension on Netflix, Disney+ & other streaming sites
+    4) SMI  — Korean subtitle format
+              Common in older Korean subtitle archives
+    5) TXT  — plain text without timestamps
+
+    Recommendations:
+      Watching on TV, tablet, phone, Plex, or Jellyfin?
+        → SRT
+
+      Watching local video files on VLC, MPV, or desktop players?
+        → ASS
+
+      Streaming Netflix with multiple subtitles?
+        → VTT (asbplayer browser plug-in required)
+
+    Suggested default: SRT — SRT is the safest general-purpose choice.
+
+  Final format [1 | b=back | q=quit] >
+
+------------------------------------------------------------------------------------------------
+Q6. Subtitle text size?                                             Progress [◼◼◼◼◼◼◼◼◼◼◼◼◻] 92%
+
+    Subtitle text size
+    Format: SRT
+
+    Please note many players ignore font sizes in SRT files.
+    If your player supports sizing, these presets are recommended:
+
+    1) Regular (16px) — recommended
+    2) Smaller (12px)
+    3) Larger (20px)
+    4) Custom — enter exact font size
+
+  Number [1 | b=back | q=quit] >
 
 ======================================================================
 Here's the plan:
 ======================================================================
   • Use local ja, en files in {TMP}/Foo
   • Clean up cues (single line, strip broadcast noise)
-  • Stack ja, en into one SRT file  →  *.ja-en.srt
-  • Use subtitle text size regular (SRT support depends on player)
+  • Stack ja, en into one SRT file → *.ja-en.srt
+  • Use subtitle text size: Regular
   • Save to {TMP}/Foo
 ======================================================================
 Smart defaults filled in for you (edit via 'Edit a single answer'):
 ======================================================================
-  Display order  ja, en  (top → bottom on screen)
-  Timing master  ja  (first language)
-  Cleanup preset on  (single-line cues + strip broadcast noise)
-  Output format  SRT — plays almost everywhere (Plex, TVs, phones).  Edit to pick SRT / ASS / VTT / SMI / TXT.
-  Text size      regular  (calibrated; edit to change)
-  Output folder  {TMP}/Foo  (beside source)
+  Display order   ja, en  (top → bottom on screen)
+  Timing master   ja  (first language)
+  Cleanup preset  on  (single-line cues + strip broadcast noise)
+  Output folder   {TMP}/Foo  (beside source)
 ======================================================================
 
     1) Run it now
@@ -1426,25 +1782,22 @@ Quit.
 
 ```text
   ____      _   ____        _     _   _ _   _
-
  / ___| ___| |_/ ___| _   _| |__ | |_| |_| |_| ___
-
 | |  _ / _ \ __\___ \| | | | '_ \| __| | __| |/ _ \
-
 | |_| |  __/ |_ ___) | |_| | |_) | |_| | |_| |  __/
-
  \____|\___|\__|____/ \__,_|_.__/ \__|_|\__|_|\___|
 
 GetSubtitle — Workflow Builder
 
 Answer a few questions to generate a command and reusable workflow.
 
+------------------------------------------------------------------------------------------------
 Commands:
-  Enter  Accept default
-  b      Back
-  q      Quit
-  Ctrl-C Cancel
-
+    Enter  Accept default
+    b      Back
+    q      Quit
+    Ctrl-C Cancel
+------------------------------------------------------------------------------------------------
 Q1. What would you like to do?
 
     1) Fetch      Download subtitles from a URL or title
@@ -1463,7 +1816,7 @@ Q1. What would you like to do?
     Selected: fetch + translate + modify + merge.
 
 ------------------------------------------------------------------------------------------------
-Q2. What should getsubtitle work on?                                Progress [◼◼◼◻◻◻◻◻◻◻◻◻◻] 21%
+Q2. Where should we get subtitles from?                             Progress [◼◼◻◻◻◻◻◻◻◻◻◻◻] 19%
 
     1) A movie/show title (The Simpsons, Totoro, The Matrix, …)
     2) A streaming/catalog URL (IMDb, AniList, Netflix, Crunchyroll, …)
@@ -1472,15 +1825,15 @@ Q2. What should getsubtitle work on?                                Progress [�
   Number [3 | b=back | q=quit] > 2
 
 ------------------------------------------------------------------------------------------------
-Q3. Enter the URL.                                                  Progress [◼◼◼◼◼◻◻◻◻◻◻◻◻] 36%
+Q3. Enter the URL.                                                  Progress [◼◼◼◼◻◻◻◻◻◻◻◻◻] 31%
 
   URL [b=back | q=quit] > https://www.imdb.com/title/tt28299608/
-    Identified as: IMDb title URL
+    Searching for: IMDb title URL
 
 ------------------------------------------------------------------------------------------------
-Q4. What episode scope?                                             Progress [◼◼◼◼◼◼◻◻◻◻◻◻◻] 50%
+Q4. What episode scope?                                             Progress [◼◼◼◼◼◼◻◻◻◻◻◻◻] 44%
 
-    1) Movie / single item (no season/episode)
+    1) One TV episode — Season 1 Episode 1
     2) A specific season + episode (or range)
     3) Whole season, every episode (-e all)
     4) Auto — let getsubtitle infer from the URL/title metadata
@@ -1488,9 +1841,12 @@ Q4. What episode scope?                                             Progress [�
         single item; TV without -e usually picks S01E01)
 
   Number [4 | b=back | q=quit] > 1
+    This selected source looks like a TV/show result, not a movie.
+    If you meant a movie, type 'b' and choose the movie result from title search.
+    For this TV/show source, I will use Season 1 Episode 1.
 
 ------------------------------------------------------------------------------------------------
-Q5. Which subtitle languages do you want to collect?                Progress [◼◼◼◼◼◼◼◼◻◻◻◻◻] 64%
+Q5. Which subtitle languages do you want to collect?                Progress [◼◼◼◼◼◼◼◻◻◻◻◻◻] 56%
 
     List them in the order you want them displayed (top → bottom).
 
@@ -1501,8 +1857,12 @@ Q5. Which subtitle languages do you want to collect?                Progress [�
 
   Languages (comma-separated) [ja,en | b=back | q=quit] > ja,en
 
+    Languages selected:
+      ja → Japanese
+      en → English
+
 ------------------------------------------------------------------------------------------------
-Q6. Fill missing subtitles?                                         Progress [◼◼◼◼◼◼◼◼◼◼◻◻◻] 79%
+Q6. Fill missing subtitles?                                         Progress [◼◼◼◼◼◼◼◼◼◻◻◻◻] 69%
 
     1) Skip (use only what's downloaded)
     2) Translate with Argos (local, basic quality)
@@ -1512,37 +1872,83 @@ Q6. Fill missing subtitles?                                         Progress [�
   Number [1 | b=back | q=quit] > 1
 
 ------------------------------------------------------------------------------------------------
-Q7. Reading aids (phonetic guides for the original script).         Progress [◼◼◼◼◼◼◼◼◼◼◼◼◻] 93%
+Q7. Reading aids (phonetic guides for the original script).         Progress [◼◼◼◼◼◼◼◼◼◼◼◻◻] 81%
 
     Example output: 漢字（かんじ）
     Pick any combination by number, or '1' to skip.
     1) No reading aid (skip)
     2) Japanese — hiragana readings for kanji   [ja:hiragana]
-       Preview: 勉強する → べんきょうする
+       Example: 勉強する → べんきょうする
     3) Japanese — katakana readings for kanji   [ja:katakana]
-       Preview: 勉強する → ベンキョウする
+       Example: 勉強する → ベンキョウする
     4) Japanese — full-sentence romaji   [ja:romaji]
-       Preview: 今日は日本語を練習したい → kyou wa nihongo wo renshuu shitai
+       Example: 今日は日本語を練習したい → kyou wa nihongo wo renshuu shitai
 
   Numbers (comma-separated) [1 | b=back | q=quit] > 1
+
+------------------------------------------------------------------------------------------------
+Q8. Final output format.                                            Progress [◼◼◼◼◼◼◼◼◼◼◼◼◻] 94%
+
+    Choose the format that best matches your player.
+    1) SRT  — works almost everywhere
+              Plex, Jellyfin, Smart TVs, tablets, phones, VLC
+    2) ASS  — best for local study playback
+              Better subtitle positioning, sizing, and readability
+    3) VTT  — best for browser-based language learning
+              Works with a browser extension on Netflix, Disney+ & other streaming sites
+    4) SMI  — Korean subtitle format
+              Common in older Korean subtitle archives
+    5) TXT  — plain text without timestamps
+
+    Recommendations:
+      Watching on TV, tablet, phone, Plex, or Jellyfin?
+        → SRT
+
+      Watching local video files on VLC, MPV, or desktop players?
+        → ASS
+
+      Streaming Netflix with multiple subtitles?
+        → VTT (asbplayer browser plug-in required)
+
+    Suggested default: SRT — SRT is the safest general-purpose choice.
+
+  Final format [1 | b=back | q=quit] >
+
+------------------------------------------------------------------------------------------------
+Q9. Subtitle text size?                                             Progress [◼◼◼◼◼◼◼◼◼◼◼◼◻] 94%
+
+    Subtitle text size
+    Format: SRT
+
+    Please note many players ignore font sizes in SRT files.
+    If your player supports sizing, these presets are recommended:
+
+    1) Regular (16px) — recommended
+    2) Smaller (12px)
+    3) Larger (20px)
+    4) Custom — enter exact font size
+
+  Number [1 | b=back | q=quit] >
 
 ======================================================================
 Here's the plan:
 ======================================================================
-  • Fetch ja, en for https://www.imdb.com/title/tt28299608/
+  • Fetch ja, en for https://www.imdb.com/title/tt28299608/  (season 1, episode 1)
   • Clean up cues (single line, strip broadcast noise)
-  • Stack ja, en into one SRT file  →  *.ja-en.srt
-  • Use subtitle text size regular (SRT support depends on player)
+  • Stack ja, en into one SRT file → *.ja-en.srt
+  • Use subtitle text size: Regular
   • Save to ~/Downloads/GetSubtitle
+======================================================================
+Before running:
+======================================================================
+  ⚠ Japanese subtitles can be harder to find automatically; manual search or translation may be needed.
 ======================================================================
 Smart defaults filled in for you (edit via 'Edit a single answer'):
 ======================================================================
-  Display order  ja, en  (top → bottom on screen)
-  Timing master  ja  (first language)
-  Cleanup preset on  (single-line cues + strip broadcast noise)
-  Output format  SRT — plays almost everywhere (Plex, TVs, phones).  Edit to pick SRT / ASS / VTT / SMI / TXT.
-  Text size      regular  (calibrated; edit to change)
-  Output folder  ~/Downloads/GetSubtitle
+  Display order   ja, en  (top → bottom on screen)
+  Timing master   ja  (first language)
+  Cleanup preset  on  (single-line cues + strip broadcast noise)
+  Output folder   ~/Downloads/GetSubtitle
 ======================================================================
 
     1) Run it now
@@ -1559,7 +1965,7 @@ Smart defaults filled in for you (edit via 'Edit a single answer'):
 Saved: {TMP}/saved.toml
 
 Your saved.toml runs the same workflow as this command:
-  # getsubtitle --fetch https://www.imdb.com/title/tt28299608/ --languages ja,en --no-engine --modify --strip-cc-noise --single-line --merge --languages ja,en --format srt --font-size regular --output ~/Downloads/GetSubtitle
+  # getsubtitle --fetch https://www.imdb.com/title/tt28299608/ --season 1 --episode 1 --languages ja,en --no-engine --modify --season 1 --episode 1 --strip-cc-noise --single-line --merge --languages ja,en --season 1 --episode 1 --format srt --font-size regular --output ~/Downloads/GetSubtitle
 
 Run it later with:
   getsubtitle --config {TMP}/saved.toml
@@ -1589,25 +1995,22 @@ CLI flags win over matching TOML settings, so the file can stay as a reusable te
 
 ```text
   ____      _   ____        _     _   _ _   _
-
  / ___| ___| |_/ ___| _   _| |__ | |_| |_| |_| ___
-
 | |  _ / _ \ __\___ \| | | | '_ \| __| | __| |/ _ \
-
 | |_| |  __/ |_ ___) | |_| | |_) | |_| | |_| |  __/
-
  \____|\___|\__|____/ \__,_|_.__/ \__|_|\__|_|\___|
 
 GetSubtitle — Workflow Builder
 
 Answer a few questions to generate a command and reusable workflow.
 
+------------------------------------------------------------------------------------------------
 Commands:
-  Enter  Accept default
-  b      Back
-  q      Quit
-  Ctrl-C Cancel
-
+    Enter  Accept default
+    b      Back
+    q      Quit
+    Ctrl-C Cancel
+------------------------------------------------------------------------------------------------
 Q1. What would you like to do?
 
     1) Fetch      Download subtitles from a URL or title
@@ -1626,7 +2029,7 @@ Q1. What would you like to do?
     Selected: fetch + modify + merge.
 
 ------------------------------------------------------------------------------------------------
-Q2. What should getsubtitle work on?                                Progress [◼◼◼◻◻◻◻◻◻◻◻◻◻] 25%
+Q2. Where should we get subtitles from?                             Progress [◼◼◼◻◻◻◻◻◻◻◻◻◻] 21%
 
     1) A movie/show title (The Simpsons, Totoro, The Matrix, …)
     2) A streaming/catalog URL (IMDb, AniList, Netflix, Crunchyroll, …)
@@ -1635,15 +2038,15 @@ Q2. What should getsubtitle work on?                                Progress [�
   Number [3 | b=back | q=quit] > 2
 
 ------------------------------------------------------------------------------------------------
-Q3. Enter the URL.                                                  Progress [◼◼◼◼◼◻◻◻◻◻◻◻◻] 42%
+Q3. Enter the URL.                                                  Progress [◼◼◼◼◼◻◻◻◻◻◻◻◻] 36%
 
   URL [b=back | q=quit] > https://www.crunchyroll.com/watch/GZ7UDVKPD/miraculous-comeback
-    Identified as: Crunchyroll watch URL
+    Searching for: Crunchyroll watch URL
 
 ------------------------------------------------------------------------------------------------
-Q4. What episode scope?                                             Progress [◼◼◼◼◼◼◼◼◻◻◻◻◻] 58%
+Q4. What episode scope?                                             Progress [◼◼◼◼◼◼◻◻◻◻◻◻◻] 50%
 
-    1) Movie / single item (no season/episode)
+    1) One TV episode — Season 1 Episode 1
     2) A specific season + episode (or range)
     3) Whole season, every episode (-e all)
     4) Auto — let getsubtitle infer from the URL/title metadata
@@ -1660,7 +2063,7 @@ Q4. What episode scope?                                             Progress [�
   Episode or range within each season (e.g. 5, 1-10, all) [1 | b=back | q=quit] > 1-13
 
 ------------------------------------------------------------------------------------------------
-Q5. How should episode numbers appear in output filenames?          Progress [◼◼◼◼◼◼◼◼◼◼◻◻◻] 75%
+Q5. How should episode numbers appear in output filenames?          Progress [◼◼◼◼◼◼◼◼◻◻◻◻◻] 64%
 
     You are searching Season 3 episode(s): 1-13.
     Some streaming pages continue numbering across seasons, while
@@ -1677,7 +2080,7 @@ Q5. How should episode numbers appear in output filenames?          Progress [�
     Output filenames will start at S03E25.
 
 ------------------------------------------------------------------------------------------------
-Q6. Which subtitle languages do you want to collect?                Progress [◼◼◼◼◼◼◼◼◼◼◼◼◻] 92%
+Q6. Which subtitle languages do you want to collect?                Progress [◼◼◼◼◼◼◼◼◼◼◻◻◻] 79%
 
     List them in the order you want them displayed (top → bottom).
 
@@ -1688,6 +2091,10 @@ Q6. Which subtitle languages do you want to collect?                Progress [�
 
   Languages (comma-separated) [ja,en | b=back | q=quit] > ja,ko
 
+    Languages selected:
+      ja → Japanese
+      ko → Korean
+
 ------------------------------------------------------------------------------------------------
 Q7. Reading aids (phonetic guides for the original script).         Progress [◼◼◼◼◼◼◼◼◼◼◼◼◻] 93%
 
@@ -1695,35 +2102,81 @@ Q7. Reading aids (phonetic guides for the original script).         Progress [�
     Pick any combination by number, or '1' to skip.
     1) No reading aid (skip)
     2) Japanese — hiragana readings for kanji   [ja:hiragana]
-       Preview: 勉強する → べんきょうする
+       Example: 勉強する → べんきょうする
     3) Japanese — katakana readings for kanji   [ja:katakana]
-       Preview: 勉強する → ベンキョウする
+       Example: 勉強する → ベンキョウする
     4) Japanese — full-sentence romaji   [ja:romaji]
-       Preview: 今日は日本語を練習したい → kyou wa nihongo wo renshuu shitai
+       Example: 今日は日本語を練習したい → kyou wa nihongo wo renshuu shitai
     5) Korean — Revised Romanization (G2P)   [ko:revised]
-       Preview: 한국어 공부 → hangugeo gongbu
+       Example: 한국어 공부 → hangugeo gongbu
     6) Korean — Yale Romanization   [ko:yale]
-       Preview: 한국어 공부 → hankwuke kongpwu
+       Example: 한국어 공부 → hankwuke kongpwu
 
   Numbers (comma-separated) [1 | b=back | q=quit] > 1
+
+------------------------------------------------------------------------------------------------
+Q8. Final output format.                                            Progress [◼◼◼◼◼◼◼◼◼◼◼◼◻] 94%
+
+    Choose the format that best matches your player.
+    1) SRT  — works almost everywhere
+              Plex, Jellyfin, Smart TVs, tablets, phones, VLC
+    2) ASS  — best for local study playback
+              Better subtitle positioning, sizing, and readability
+    3) VTT  — best for browser-based language learning
+              Works with a browser extension on Netflix, Disney+ & other streaming sites
+    4) SMI  — Korean subtitle format
+              Common in older Korean subtitle archives
+    5) TXT  — plain text without timestamps
+
+    Recommendations:
+      Watching on TV, tablet, phone, Plex, or Jellyfin?
+        → SRT
+
+      Watching local video files on VLC, MPV, or desktop players?
+        → ASS
+
+      Streaming Netflix with multiple subtitles?
+        → VTT (asbplayer browser plug-in required)
+
+    Suggested default: SRT — SRT is the safest general-purpose choice.
+
+  Final format [1 | b=back | q=quit] >
+
+------------------------------------------------------------------------------------------------
+Q9. Subtitle text size?                                             Progress [◼◼◼◼◼◼◼◼◼◼◼◼◻] 94%
+
+    Subtitle text size
+    Format: SRT
+
+    Please note many players ignore font sizes in SRT files.
+    If your player supports sizing, these presets are recommended:
+
+    1) Regular (16px) — recommended
+    2) Smaller (12px)
+    3) Larger (20px)
+    4) Custom — enter exact font size
+
+  Number [1 | b=back | q=quit] >
 
 ======================================================================
 Here's the plan:
 ======================================================================
   • Fetch ja, ko for https://www.crunchyroll.com/watch/GZ7UDVKPD/miraculous-comeback  (season 3, episode 1-13)
   • Clean up cues (single line, strip broadcast noise)
-  • Stack ja, ko into one SRT file  →  *.ja-ko.srt
-  • Use subtitle text size regular (SRT support depends on player)
+  • Stack ja, ko into one SRT file → *.ja-ko.srt
+  • Use subtitle text size: Regular
   • Save to ~/Downloads/GetSubtitle
+======================================================================
+Before running:
+======================================================================
+  ⚠ Japanese, Korean subtitles can be harder to find automatically; manual search or translation may be needed.
 ======================================================================
 Smart defaults filled in for you (edit via 'Edit a single answer'):
 ======================================================================
-  Display order  ja, ko  (top → bottom on screen)
-  Timing master  ja  (first language)
-  Cleanup preset on  (single-line cues + strip broadcast noise)
-  Output format  SRT — plays almost everywhere (Plex, TVs, phones).  Edit to pick SRT / ASS / VTT / SMI / TXT.
-  Text size      regular  (calibrated; edit to change)
-  Output folder  ~/Downloads/GetSubtitle
+  Display order   ja, ko  (top → bottom on screen)
+  Timing master   ja  (first language)
+  Cleanup preset  on  (single-line cues + strip broadcast noise)
+  Output folder   ~/Downloads/GetSubtitle
 ======================================================================
 
     1) Run it now
@@ -1770,25 +2223,22 @@ CLI flags win over matching TOML settings, so the file can stay as a reusable te
 
 ```text
   ____      _   ____        _     _   _ _   _
-
  / ___| ___| |_/ ___| _   _| |__ | |_| |_| |_| ___
-
 | |  _ / _ \ __\___ \| | | | '_ \| __| | __| |/ _ \
-
 | |_| |  __/ |_ ___) | |_| | |_) | |_| | |_| |  __/
-
  \____|\___|\__|____/ \__,_|_.__/ \__|_|\__|_|\___|
 
 GetSubtitle — Workflow Builder
 
 Answer a few questions to generate a command and reusable workflow.
 
+------------------------------------------------------------------------------------------------
 Commands:
-  Enter  Accept default
-  b      Back
-  q      Quit
-  Ctrl-C Cancel
-
+    Enter  Accept default
+    b      Back
+    q      Quit
+    Ctrl-C Cancel
+------------------------------------------------------------------------------------------------
 Q1. What would you like to do?
 
     1) Fetch      Download subtitles from a URL or title
@@ -1807,7 +2257,7 @@ Q1. What would you like to do?
     Selected: modify + merge.
 
 ------------------------------------------------------------------------------------------------
-Q2. Folder or file to process.                                      Progress [◼◼◼◼◼◻◻◻◻◻◻◻◻] 38%
+Q2. Folder or file to process.                                      Progress [◼◼◼◼◻◻◻◻◻◻◻◻◻] 30%
 
     Drop a folder of subtitle files, a single subtitle/video file,
     or any local path your selected step(s) should operate on.
@@ -1815,10 +2265,10 @@ Q2. Folder or file to process.                                      Progress [�
   Folder or file path [b=back | q=quit] > {TMP}/Show/Show.S02E05.1080p.WEB-DL.mp4
     Selected episode: S02E05
     File selected; using its folder so matching sidecar subtitles can be found.
-    Identified as: local folder beside selected file: 2 subtitle file(s)
+    Searching for: local folder beside selected file: 2 subtitle file(s)
 
 ------------------------------------------------------------------------------------------------
-Q3. Which subtitle languages do you want to collect?                Progress [◼◼◼◼◼◼◼◼◻◻◻◻◻] 62%
+Q3. Which subtitle languages do you want to collect?                Progress [◼◼◼◼◼◼◻◻◻◻◻◻◻] 50%
 
     List them in the order you want them displayed (top → bottom).
 
@@ -1829,38 +2279,84 @@ Q3. Which subtitle languages do you want to collect?                Progress [�
 
   Languages (comma-separated) [ja,en | b=back | q=quit] > ja,en
 
+    Languages selected:
+      ja → Japanese
+      en → English
+
 ------------------------------------------------------------------------------------------------
-Q4. Reading aids (phonetic guides for the original script).         Progress [◼◼◼◼◼◼◼◼◼◼◼◻◻] 88%
+Q4. Reading aids (phonetic guides for the original script).         Progress [◼◼◼◼◼◼◼◼◼◻◻◻◻] 70%
 
     Example output: 漢字（かんじ）
     Pick any combination by number, or '1' to skip.
     1) No reading aid (skip)
     2) Japanese — hiragana readings for kanji   [ja:hiragana]
-       Preview: 勉強する → べんきょうする
+       Example: 勉強する → べんきょうする
     3) Japanese — katakana readings for kanji   [ja:katakana]
-       Preview: 勉強する → ベンキョウする
+       Example: 勉強する → ベンキョウする
     4) Japanese — full-sentence romaji   [ja:romaji]
-       Preview: 今日は日本語を練習したい → kyou wa nihongo wo renshuu shitai
+       Example: 今日は日本語を練習したい → kyou wa nihongo wo renshuu shitai
 
   Numbers (comma-separated) [1 | b=back | q=quit] > 1
+
+------------------------------------------------------------------------------------------------
+Q5. Final output format.                                            Progress [◼◼◼◼◼◼◼◼◼◼◼◼◻] 90%
+
+    Choose the format that best matches your player.
+    1) SRT  — works almost everywhere
+              Plex, Jellyfin, Smart TVs, tablets, phones, VLC
+    2) ASS  — best for local study playback
+              Better subtitle positioning, sizing, and readability
+    3) VTT  — best for browser-based language learning
+              Works with a browser extension on Netflix, Disney+ & other streaming sites
+    4) SMI  — Korean subtitle format
+              Common in older Korean subtitle archives
+    5) TXT  — plain text without timestamps
+
+    Recommendations:
+      Watching on TV, tablet, phone, Plex, or Jellyfin?
+        → SRT
+
+      Watching local video files on VLC, MPV, or desktop players?
+        → ASS
+
+      Streaming Netflix with multiple subtitles?
+        → VTT (asbplayer browser plug-in required)
+
+    Suggested default: SRT — SRT is the safest general-purpose choice.
+
+  Final format [1 | b=back | q=quit] >
+
+------------------------------------------------------------------------------------------------
+Q6. Subtitle text size?                                             Progress [◼◼◼◼◼◼◼◼◼◼◼◼◻] 92%
+
+    Subtitle text size
+    Format: SRT
+
+    Please note many players ignore font sizes in SRT files.
+    If your player supports sizing, these presets are recommended:
+
+    1) Regular (16px) — recommended
+    2) Smaller (12px)
+    3) Larger (20px)
+    4) Custom — enter exact font size
+
+  Number [1 | b=back | q=quit] >
 
 ======================================================================
 Here's the plan:
 ======================================================================
   • Use local ja, en files in {TMP}/Show
   • Clean up cues (single line, strip broadcast noise)
-  • Stack ja, en into one SRT file  →  *.ja-en.srt
-  • Use subtitle text size regular (SRT support depends on player)
+  • Stack ja, en into one SRT file → *.ja-en.srt
+  • Use subtitle text size: Regular
   • Save to {TMP}/Show
 ======================================================================
 Smart defaults filled in for you (edit via 'Edit a single answer'):
 ======================================================================
-  Display order  ja, en  (top → bottom on screen)
-  Timing master  ja  (first language)
-  Cleanup preset on  (single-line cues + strip broadcast noise)
-  Output format  SRT — plays almost everywhere (Plex, TVs, phones).  Edit to pick SRT / ASS / VTT / SMI / TXT.
-  Text size      regular  (calibrated; edit to change)
-  Output folder  {TMP}/Show  (beside source)
+  Display order   ja, en  (top → bottom on screen)
+  Timing master   ja  (first language)
+  Cleanup preset  on  (single-line cues + strip broadcast noise)
+  Output folder   {TMP}/Show  (beside source)
 ======================================================================
 
     1) Run it now
@@ -1889,25 +2385,22 @@ Quit.
 
 ```text
   ____      _   ____        _     _   _ _   _
-
  / ___| ___| |_/ ___| _   _| |__ | |_| |_| |_| ___
-
 | |  _ / _ \ __\___ \| | | | '_ \| __| | __| |/ _ \
-
 | |_| |  __/ |_ ___) | |_| | |_) | |_| | |_| |  __/
-
  \____|\___|\__|____/ \__,_|_.__/ \__|_|\__|_|\___|
 
 GetSubtitle — Workflow Builder
 
 Answer a few questions to generate a command and reusable workflow.
 
+------------------------------------------------------------------------------------------------
 Commands:
-  Enter  Accept default
-  b      Back
-  q      Quit
-  Ctrl-C Cancel
-
+    Enter  Accept default
+    b      Back
+    q      Quit
+    Ctrl-C Cancel
+------------------------------------------------------------------------------------------------
 Q1. What would you like to do?
 
     1) Fetch      Download subtitles from a URL or title
@@ -1926,16 +2419,16 @@ Q1. What would you like to do?
     Selected: modify + merge.
 
 ------------------------------------------------------------------------------------------------
-Q2. Folder or file to process.                                      Progress [◼◼◼◼◼◻◻◻◻◻◻◻◻] 38%
+Q2. Folder or file to process.                                      Progress [◼◼◼◼◻◻◻◻◻◻◻◻◻] 30%
 
     Drop a folder of subtitle files, a single subtitle/video file,
     or any local path your selected step(s) should operate on.
 
   Folder or file path [b=back | q=quit] > {TMP}/Show
-    Identified as: local subtitle folder: 0 video file(s), 2 subtitle file(s)
+    Searching for: local subtitle folder: 0 video file(s), 2 subtitle file(s)
 
 ------------------------------------------------------------------------------------------------
-Q3. Which subtitle languages do you want to collect?                Progress [◼◼◼◼◼◼◼◼◻◻◻◻◻] 62%
+Q3. Which subtitle languages do you want to collect?                Progress [◼◼◼◼◼◼◻◻◻◻◻◻◻] 50%
 
     List them in the order you want them displayed (top → bottom).
 
@@ -1946,38 +2439,84 @@ Q3. Which subtitle languages do you want to collect?                Progress [�
 
   Languages (comma-separated) [ja,en | b=back | q=quit] > ja,en
 
+    Languages selected:
+      ja → Japanese
+      en → English
+
 ------------------------------------------------------------------------------------------------
-Q4. Reading aids (phonetic guides for the original script).         Progress [◼◼◼◼◼◼◼◼◼◼◼◻◻] 88%
+Q4. Reading aids (phonetic guides for the original script).         Progress [◼◼◼◼◼◼◼◼◼◻◻◻◻] 70%
 
     Example output: 漢字（かんじ）
     Pick any combination by number, or '1' to skip.
     1) No reading aid (skip)
     2) Japanese — hiragana readings for kanji   [ja:hiragana]
-       Preview: 勉強する → べんきょうする
+       Example: 勉強する → べんきょうする
     3) Japanese — katakana readings for kanji   [ja:katakana]
-       Preview: 勉強する → ベンキョウする
+       Example: 勉強する → ベンキョウする
     4) Japanese — full-sentence romaji   [ja:romaji]
-       Preview: 今日は日本語を練習したい → kyou wa nihongo wo renshuu shitai
+       Example: 今日は日本語を練習したい → kyou wa nihongo wo renshuu shitai
 
   Numbers (comma-separated) [1 | b=back | q=quit] > 1
+
+------------------------------------------------------------------------------------------------
+Q5. Final output format.                                            Progress [◼◼◼◼◼◼◼◼◼◼◼◼◻] 90%
+
+    Choose the format that best matches your player.
+    1) SRT  — works almost everywhere
+              Plex, Jellyfin, Smart TVs, tablets, phones, VLC
+    2) ASS  — best for local study playback
+              Better subtitle positioning, sizing, and readability
+    3) VTT  — best for browser-based language learning
+              Works with a browser extension on Netflix, Disney+ & other streaming sites
+    4) SMI  — Korean subtitle format
+              Common in older Korean subtitle archives
+    5) TXT  — plain text without timestamps
+
+    Recommendations:
+      Watching on TV, tablet, phone, Plex, or Jellyfin?
+        → SRT
+
+      Watching local video files on VLC, MPV, or desktop players?
+        → ASS
+
+      Streaming Netflix with multiple subtitles?
+        → VTT (asbplayer browser plug-in required)
+
+    Suggested default: SRT — SRT is the safest general-purpose choice.
+
+  Final format [1 | b=back | q=quit] >
+
+------------------------------------------------------------------------------------------------
+Q6. Subtitle text size?                                             Progress [◼◼◼◼◼◼◼◼◼◼◼◼◻] 92%
+
+    Subtitle text size
+    Format: SRT
+
+    Please note many players ignore font sizes in SRT files.
+    If your player supports sizing, these presets are recommended:
+
+    1) Regular (16px) — recommended
+    2) Smaller (12px)
+    3) Larger (20px)
+    4) Custom — enter exact font size
+
+  Number [1 | b=back | q=quit] >
 
 ======================================================================
 Here's the plan:
 ======================================================================
   • Use local ja, en files in {TMP}/Show
   • Clean up cues (single line, strip broadcast noise)
-  • Stack ja, en into one SRT file  →  *.ja-en.srt
-  • Use subtitle text size regular (SRT support depends on player)
+  • Stack ja, en into one SRT file → *.ja-en.srt
+  • Use subtitle text size: Regular
   • Save to {TMP}/Show
 ======================================================================
 Smart defaults filled in for you (edit via 'Edit a single answer'):
 ======================================================================
-  Display order  ja, en  (top → bottom on screen)
-  Timing master  ja  (first language)
-  Cleanup preset on  (single-line cues + strip broadcast noise)
-  Output format  SRT — plays almost everywhere (Plex, TVs, phones).  Edit to pick SRT / ASS / VTT / SMI / TXT.
-  Text size      regular  (calibrated; edit to change)
-  Output folder  {TMP}/Show  (beside source)
+  Display order   ja, en  (top → bottom on screen)
+  Timing master   ja  (first language)
+  Cleanup preset  on  (single-line cues + strip broadcast noise)
+  Output folder   {TMP}/Show  (beside source)
 ======================================================================
 
     1) Run it now
@@ -2001,17 +2540,17 @@ Running:
 ======================================================================
 Workflow summary
 ======================================================================
-Result: completed
+Completed successfully
 Source: {TMP}/Show
 Scope: auto / not specified
 Languages requested: ja, en
 Output folder: {TMP}/Show
 Preflight info: 1
 
-Next:
-  Merge later with: getsubtitle merge {TMP}/Show -l ja,en
-  Re-run this workflow command after any setup fixes:
-    getsubtitle --source {TMP}/Show --modify --strip-cc-noise --single-line --merge --languages ja,en --format srt --font-size regular --output {TMP}/Show
+Next steps:
+  1. Merge later with: getsubtitle merge {TMP}/Show -l ja,en
+  2. Re-run this workflow command after any setup fixes:
+     getsubtitle --source {TMP}/Show --modify --strip-cc-noise --single-line --merge --languages ja,en --format srt --font-size regular --output {TMP}/Show
   Open folder? [Y/n] > y
 ```
 
@@ -2030,25 +2569,22 @@ Next:
 
 ```text
   ____      _   ____        _     _   _ _   _
-
  / ___| ___| |_/ ___| _   _| |__ | |_| |_| |_| ___
-
 | |  _ / _ \ __\___ \| | | | '_ \| __| | __| |/ _ \
-
 | |_| |  __/ |_ ___) | |_| | |_) | |_| | |_| |  __/
-
  \____|\___|\__|____/ \__,_|_.__/ \__|_|\__|_|\___|
 
 GetSubtitle — Workflow Builder
 
 Answer a few questions to generate a command and reusable workflow.
 
+------------------------------------------------------------------------------------------------
 Commands:
-  Enter  Accept default
-  b      Back
-  q      Quit
-  Ctrl-C Cancel
-
+    Enter  Accept default
+    b      Back
+    q      Quit
+    Ctrl-C Cancel
+------------------------------------------------------------------------------------------------
 Q1. What would you like to do?
 
     1) Fetch      Download subtitles from a URL or title
@@ -2067,16 +2603,16 @@ Q1. What would you like to do?
     Selected: modify + merge.
 
 ------------------------------------------------------------------------------------------------
-Q2. Folder or file to process.                                      Progress [◼◼◼◼◼◻◻◻◻◻◻◻◻] 38%
+Q2. Folder or file to process.                                      Progress [◼◼◼◼◻◻◻◻◻◻◻◻◻] 30%
 
     Drop a folder of subtitle files, a single subtitle/video file,
     or any local path your selected step(s) should operate on.
 
   Folder or file path [b=back | q=quit] > '{TMP}/Shows/Foo Bar'
-    Identified as: local subtitle folder: 0 video file(s), 2 subtitle file(s)
+    Searching for: local subtitle folder: 0 video file(s), 2 subtitle file(s)
 
 ------------------------------------------------------------------------------------------------
-Q3. Which subtitle languages do you want to collect?                Progress [◼◼◼◼◼◼◼◼◻◻◻◻◻] 62%
+Q3. Which subtitle languages do you want to collect?                Progress [◼◼◼◼◼◼◻◻◻◻◻◻◻] 50%
 
     List them in the order you want them displayed (top → bottom).
 
@@ -2087,38 +2623,84 @@ Q3. Which subtitle languages do you want to collect?                Progress [�
 
   Languages (comma-separated) [ja,en | b=back | q=quit] > ja,en
 
+    Languages selected:
+      ja → Japanese
+      en → English
+
 ------------------------------------------------------------------------------------------------
-Q4. Reading aids (phonetic guides for the original script).         Progress [◼◼◼◼◼◼◼◼◼◼◼◻◻] 88%
+Q4. Reading aids (phonetic guides for the original script).         Progress [◼◼◼◼◼◼◼◼◼◻◻◻◻] 70%
 
     Example output: 漢字（かんじ）
     Pick any combination by number, or '1' to skip.
     1) No reading aid (skip)
     2) Japanese — hiragana readings for kanji   [ja:hiragana]
-       Preview: 勉強する → べんきょうする
+       Example: 勉強する → べんきょうする
     3) Japanese — katakana readings for kanji   [ja:katakana]
-       Preview: 勉強する → ベンキョウする
+       Example: 勉強する → ベンキョウする
     4) Japanese — full-sentence romaji   [ja:romaji]
-       Preview: 今日は日本語を練習したい → kyou wa nihongo wo renshuu shitai
+       Example: 今日は日本語を練習したい → kyou wa nihongo wo renshuu shitai
 
   Numbers (comma-separated) [1 | b=back | q=quit] > 1
+
+------------------------------------------------------------------------------------------------
+Q5. Final output format.                                            Progress [◼◼◼◼◼◼◼◼◼◼◼◼◻] 90%
+
+    Choose the format that best matches your player.
+    1) SRT  — works almost everywhere
+              Plex, Jellyfin, Smart TVs, tablets, phones, VLC
+    2) ASS  — best for local study playback
+              Better subtitle positioning, sizing, and readability
+    3) VTT  — best for browser-based language learning
+              Works with a browser extension on Netflix, Disney+ & other streaming sites
+    4) SMI  — Korean subtitle format
+              Common in older Korean subtitle archives
+    5) TXT  — plain text without timestamps
+
+    Recommendations:
+      Watching on TV, tablet, phone, Plex, or Jellyfin?
+        → SRT
+
+      Watching local video files on VLC, MPV, or desktop players?
+        → ASS
+
+      Streaming Netflix with multiple subtitles?
+        → VTT (asbplayer browser plug-in required)
+
+    Suggested default: SRT — SRT is the safest general-purpose choice.
+
+  Final format [1 | b=back | q=quit] >
+
+------------------------------------------------------------------------------------------------
+Q6. Subtitle text size?                                             Progress [◼◼◼◼◼◼◼◼◼◼◼◼◻] 92%
+
+    Subtitle text size
+    Format: SRT
+
+    Please note many players ignore font sizes in SRT files.
+    If your player supports sizing, these presets are recommended:
+
+    1) Regular (16px) — recommended
+    2) Smaller (12px)
+    3) Larger (20px)
+    4) Custom — enter exact font size
+
+  Number [1 | b=back | q=quit] >
 
 ======================================================================
 Here's the plan:
 ======================================================================
   • Use local ja, en files in {TMP}/Shows/Foo Bar
   • Clean up cues (single line, strip broadcast noise)
-  • Stack ja, en into one SRT file  →  *.ja-en.srt
-  • Use subtitle text size regular (SRT support depends on player)
+  • Stack ja, en into one SRT file → *.ja-en.srt
+  • Use subtitle text size: Regular
   • Save to {TMP}/Shows/Foo Bar
 ======================================================================
 Smart defaults filled in for you (edit via 'Edit a single answer'):
 ======================================================================
-  Display order  ja, en  (top → bottom on screen)
-  Timing master  ja  (first language)
-  Cleanup preset on  (single-line cues + strip broadcast noise)
-  Output format  SRT — plays almost everywhere (Plex, TVs, phones).  Edit to pick SRT / ASS / VTT / SMI / TXT.
-  Text size      regular  (calibrated; edit to change)
-  Output folder  {TMP}/Shows/Foo Bar  (beside source)
+  Display order   ja, en  (top → bottom on screen)
+  Timing master   ja  (first language)
+  Cleanup preset  on  (single-line cues + strip broadcast noise)
+  Output folder   {TMP}/Shows/Foo Bar  (beside source)
 ======================================================================
 
     1) Run it now
@@ -2165,25 +2747,22 @@ CLI flags win over matching TOML settings, so the file can stay as a reusable te
 
 ```text
   ____      _   ____        _     _   _ _   _
-
  / ___| ___| |_/ ___| _   _| |__ | |_| |_| |_| ___
-
 | |  _ / _ \ __\___ \| | | | '_ \| __| | __| |/ _ \
-
 | |_| |  __/ |_ ___) | |_| | |_) | |_| | |_| |  __/
-
  \____|\___|\__|____/ \__,_|_.__/ \__|_|\__|_|\___|
 
 GetSubtitle — Workflow Builder
 
 Answer a few questions to generate a command and reusable workflow.
 
+------------------------------------------------------------------------------------------------
 Commands:
-  Enter  Accept default
-  b      Back
-  q      Quit
-  Ctrl-C Cancel
-
+    Enter  Accept default
+    b      Back
+    q      Quit
+    Ctrl-C Cancel
+------------------------------------------------------------------------------------------------
 Q1. What would you like to do?
 
     1) Fetch      Download subtitles from a URL or title
@@ -2202,16 +2781,16 @@ Q1. What would you like to do?
     Selected: modify + merge.
 
 ------------------------------------------------------------------------------------------------
-Q2. Folder or file to process.                                      Progress [◼◼◼◼◼◻◻◻◻◻◻◻◻] 38%
+Q2. Folder or file to process.                                      Progress [◼◼◼◼◻◻◻◻◻◻◻◻◻] 30%
 
     Drop a folder of subtitle files, a single subtitle/video file,
     or any local path your selected step(s) should operate on.
 
   Folder or file path [b=back | q=quit] > '{TMP}/Foo Bar'
-    Identified as: local subtitle folder: 0 video file(s), 2 subtitle file(s)
+    Searching for: local subtitle folder: 0 video file(s), 2 subtitle file(s)
 
 ------------------------------------------------------------------------------------------------
-Q3. Which subtitle languages do you want to collect?                Progress [◼◼◼◼◼◼◼◼◻◻◻◻◻] 62%
+Q3. Which subtitle languages do you want to collect?                Progress [◼◼◼◼◼◼◻◻◻◻◻◻◻] 50%
 
     List them in the order you want them displayed (top → bottom).
 
@@ -2222,38 +2801,84 @@ Q3. Which subtitle languages do you want to collect?                Progress [�
 
   Languages (comma-separated) [ja,en | b=back | q=quit] > ja,en
 
+    Languages selected:
+      ja → Japanese
+      en → English
+
 ------------------------------------------------------------------------------------------------
-Q4. Reading aids (phonetic guides for the original script).         Progress [◼◼◼◼◼◼◼◼◼◼◼◻◻] 88%
+Q4. Reading aids (phonetic guides for the original script).         Progress [◼◼◼◼◼◼◼◼◼◻◻◻◻] 70%
 
     Example output: 漢字（かんじ）
     Pick any combination by number, or '1' to skip.
     1) No reading aid (skip)
     2) Japanese — hiragana readings for kanji   [ja:hiragana]
-       Preview: 勉強する → べんきょうする
+       Example: 勉強する → べんきょうする
     3) Japanese — katakana readings for kanji   [ja:katakana]
-       Preview: 勉強する → ベンキョウする
+       Example: 勉強する → ベンキョウする
     4) Japanese — full-sentence romaji   [ja:romaji]
-       Preview: 今日は日本語を練習したい → kyou wa nihongo wo renshuu shitai
+       Example: 今日は日本語を練習したい → kyou wa nihongo wo renshuu shitai
 
   Numbers (comma-separated) [1 | b=back | q=quit] > 1
+
+------------------------------------------------------------------------------------------------
+Q5. Final output format.                                            Progress [◼◼◼◼◼◼◼◼◼◼◼◼◻] 90%
+
+    Choose the format that best matches your player.
+    1) SRT  — works almost everywhere
+              Plex, Jellyfin, Smart TVs, tablets, phones, VLC
+    2) ASS  — best for local study playback
+              Better subtitle positioning, sizing, and readability
+    3) VTT  — best for browser-based language learning
+              Works with a browser extension on Netflix, Disney+ & other streaming sites
+    4) SMI  — Korean subtitle format
+              Common in older Korean subtitle archives
+    5) TXT  — plain text without timestamps
+
+    Recommendations:
+      Watching on TV, tablet, phone, Plex, or Jellyfin?
+        → SRT
+
+      Watching local video files on VLC, MPV, or desktop players?
+        → ASS
+
+      Streaming Netflix with multiple subtitles?
+        → VTT (asbplayer browser plug-in required)
+
+    Suggested default: SRT — SRT is the safest general-purpose choice.
+
+  Final format [1 | b=back | q=quit] >
+
+------------------------------------------------------------------------------------------------
+Q6. Subtitle text size?                                             Progress [◼◼◼◼◼◼◼◼◼◼◼◼◻] 92%
+
+    Subtitle text size
+    Format: SRT
+
+    Please note many players ignore font sizes in SRT files.
+    If your player supports sizing, these presets are recommended:
+
+    1) Regular (16px) — recommended
+    2) Smaller (12px)
+    3) Larger (20px)
+    4) Custom — enter exact font size
+
+  Number [1 | b=back | q=quit] >
 
 ======================================================================
 Here's the plan:
 ======================================================================
   • Use local ja, en files in {TMP}/Foo Bar
   • Clean up cues (single line, strip broadcast noise)
-  • Stack ja, en into one SRT file  →  *.ja-en.srt
-  • Use subtitle text size regular (SRT support depends on player)
+  • Stack ja, en into one SRT file → *.ja-en.srt
+  • Use subtitle text size: Regular
   • Save to {TMP}/Foo Bar
 ======================================================================
 Smart defaults filled in for you (edit via 'Edit a single answer'):
 ======================================================================
-  Display order  ja, en  (top → bottom on screen)
-  Timing master  ja  (first language)
-  Cleanup preset on  (single-line cues + strip broadcast noise)
-  Output format  SRT — plays almost everywhere (Plex, TVs, phones).  Edit to pick SRT / ASS / VTT / SMI / TXT.
-  Text size      regular  (calibrated; edit to change)
-  Output folder  {TMP}/Foo Bar  (beside source)
+  Display order   ja, en  (top → bottom on screen)
+  Timing master   ja  (first language)
+  Cleanup preset  on  (single-line cues + strip broadcast noise)
+  Output folder   {TMP}/Foo Bar  (beside source)
 ======================================================================
 
     1) Run it now
@@ -2282,25 +2907,22 @@ Quit.
 
 ```text
   ____      _   ____        _     _   _ _   _
-
  / ___| ___| |_/ ___| _   _| |__ | |_| |_| |_| ___
-
 | |  _ / _ \ __\___ \| | | | '_ \| __| | __| |/ _ \
-
 | |_| |  __/ |_ ___) | |_| | |_) | |_| | |_| |  __/
-
  \____|\___|\__|____/ \__,_|_.__/ \__|_|\__|_|\___|
 
 GetSubtitle — Workflow Builder
 
 Answer a few questions to generate a command and reusable workflow.
 
+------------------------------------------------------------------------------------------------
 Commands:
-  Enter  Accept default
-  b      Back
-  q      Quit
-  Ctrl-C Cancel
-
+    Enter  Accept default
+    b      Back
+    q      Quit
+    Ctrl-C Cancel
+------------------------------------------------------------------------------------------------
 Q1. What would you like to do?
 
     1) Fetch      Download subtitles from a URL or title
@@ -2319,22 +2941,17 @@ Q1. What would you like to do?
     Selected: fetch + translate + modify + merge.
 
 ------------------------------------------------------------------------------------------------
-Q2. What should getsubtitle work on?                                Progress [◼◼◼◻◻◻◻◻◻◻◻◻◻] 21%
+Q2. Where should we get subtitles from?                             Progress [◼◼◻◻◻◻◻◻◻◻◻◻◻] 19%
 
     1) A movie/show title (The Simpsons, Totoro, The Matrix, …)
     2) A streaming/catalog URL (IMDb, AniList, Netflix, Crunchyroll, …)
     3) A folder or file on disk (your Plex/Movies, ~/Downloads, …)
 
   Number [3 | b=back | q=quit] > totoro
-    Invalid selection. Type 1, 2, or 3. To search for a title, choose 1 first.
+    Detected title search:
+      totoro
 
-  Number [3 | b=back | q=quit] > 1
-
-------------------------------------------------------------------------------------------------
-Q3. Enter the movie or show title.                                  Progress [◼◼◼◼◼◻◻◻◻◻◻◻◻] 36%
-
-  Title [b=back | q=quit] > Totoro
-    Identified as: title search for 'Totoro'
+    Searching for: 'totoro'
 
     No title-resolver hits. Add a TMDB key for richer matches:
       getsubtitle --set-key tmdb
@@ -2343,9 +2960,9 @@ Q3. Enter the movie or show title.                                  Progress [�
   Is this a movie? (No = TV show / anime) [y/N | b=back | q=quit] > n
 
 ------------------------------------------------------------------------------------------------
-Q4. What episode scope?                                             Progress [◼◼◼◼◼◼◻◻◻◻◻◻◻] 50%
+Q3. What episode scope?                                             Progress [◼◼◼◼◻◻◻◻◻◻◻◻◻] 31%
 
-    1) Movie / single item (no season/episode)
+    1) One TV episode — Season 1 Episode 1
     2) A specific season + episode (or range)
     3) Whole season, every episode (-e all)
     4) Auto — let getsubtitle infer from the URL/title metadata
@@ -2359,7 +2976,7 @@ Q4. What episode scope?                                             Progress [�
   Episode or range within each season (e.g. 5, 1-10, all) [1 | b=back | q=quit] > 1
 
 ------------------------------------------------------------------------------------------------
-Q5. Which subtitle languages do you want to collect?                Progress [◼◼◼◼◼◼◼◼◻◻◻◻◻] 64%
+Q4. Which subtitle languages do you want to collect?                Progress [◼◼◼◼◼◼◻◻◻◻◻◻◻] 44%
 
     List them in the order you want them displayed (top → bottom).
 
@@ -2370,8 +2987,12 @@ Q5. Which subtitle languages do you want to collect?                Progress [�
 
   Languages (comma-separated) [ja,en | b=back | q=quit] > ja,en
 
+    Languages selected:
+      ja → Japanese
+      en → English
+
 ------------------------------------------------------------------------------------------------
-Q6. Fill missing subtitles?                                         Progress [◼◼◼◼◼◼◼◼◼◼◻◻◻] 79%
+Q5. Fill missing subtitles?                                         Progress [◼◼◼◼◼◼◼◻◻◻◻◻◻] 56%
 
     1) Skip (use only what's downloaded)
     2) Translate with Argos (local, basic quality)
@@ -2381,37 +3002,83 @@ Q6. Fill missing subtitles?                                         Progress [�
   Number [1 | b=back | q=quit] > 1
 
 ------------------------------------------------------------------------------------------------
-Q7. Reading aids (phonetic guides for the original script).         Progress [◼◼◼◼◼◼◼◼◼◼◼◼◻] 93%
+Q6. Reading aids (phonetic guides for the original script).         Progress [◼◼◼◼◼◼◼◼◼◻◻◻◻] 69%
 
     Example output: 漢字（かんじ）
     Pick any combination by number, or '1' to skip.
     1) No reading aid (skip)
     2) Japanese — hiragana readings for kanji   [ja:hiragana]
-       Preview: 勉強する → べんきょうする
+       Example: 勉強する → べんきょうする
     3) Japanese — katakana readings for kanji   [ja:katakana]
-       Preview: 勉強する → ベンキョウする
+       Example: 勉強する → ベンキョウする
     4) Japanese — full-sentence romaji   [ja:romaji]
-       Preview: 今日は日本語を練習したい → kyou wa nihongo wo renshuu shitai
+       Example: 今日は日本語を練習したい → kyou wa nihongo wo renshuu shitai
 
   Numbers (comma-separated) [1 | b=back | q=quit] > 1
+
+------------------------------------------------------------------------------------------------
+Q7. Final output format.                                            Progress [◼◼◼◼◼◼◼◼◼◼◼◻◻] 81%
+
+    Choose the format that best matches your player.
+    1) SRT  — works almost everywhere
+              Plex, Jellyfin, Smart TVs, tablets, phones, VLC
+    2) ASS  — best for local study playback
+              Better subtitle positioning, sizing, and readability
+    3) VTT  — best for browser-based language learning
+              Works with a browser extension on Netflix, Disney+ & other streaming sites
+    4) SMI  — Korean subtitle format
+              Common in older Korean subtitle archives
+    5) TXT  — plain text without timestamps
+
+    Recommendations:
+      Watching on TV, tablet, phone, Plex, or Jellyfin?
+        → SRT
+
+      Watching local video files on VLC, MPV, or desktop players?
+        → ASS
+
+      Streaming Netflix with multiple subtitles?
+        → VTT (asbplayer browser plug-in required)
+
+    Suggested default: SRT — SRT is the safest general-purpose choice.
+
+  Final format [1 | b=back | q=quit] >
+
+------------------------------------------------------------------------------------------------
+Q8. Subtitle text size?                                             Progress [◼◼◼◼◼◼◼◼◼◼◼◻◻] 83%
+
+    Subtitle text size
+    Format: SRT
+
+    Please note many players ignore font sizes in SRT files.
+    If your player supports sizing, these presets are recommended:
+
+    1) Regular (16px) — recommended
+    2) Smaller (12px)
+    3) Larger (20px)
+    4) Custom — enter exact font size
+
+  Number [1 | b=back | q=quit] >
 
 ======================================================================
 Here's the plan:
 ======================================================================
-  • Fetch ja, en for Totoro  (season 1, episode 1)
+  • Fetch ja, en for totoro  (season 1, episode 1)
   • Clean up cues (single line, strip broadcast noise)
-  • Stack ja, en into one SRT file  →  *.ja-en.srt
-  • Use subtitle text size regular (SRT support depends on player)
+  • Stack ja, en into one SRT file → *.ja-en.srt
+  • Use subtitle text size: Regular
   • Save to ~/Downloads/GetSubtitle
+======================================================================
+Before running:
+======================================================================
+  ⚠ Japanese subtitles can be harder to find automatically; manual search or translation may be needed.
 ======================================================================
 Smart defaults filled in for you (edit via 'Edit a single answer'):
 ======================================================================
-  Display order  ja, en  (top → bottom on screen)
-  Timing master  ja  (first language)
-  Cleanup preset on  (single-line cues + strip broadcast noise)
-  Output format  SRT — plays almost everywhere (Plex, TVs, phones).  Edit to pick SRT / ASS / VTT / SMI / TXT.
-  Text size      regular  (calibrated; edit to change)
-  Output folder  ~/Downloads/GetSubtitle
+  Display order   ja, en  (top → bottom on screen)
+  Timing master   ja  (first language)
+  Cleanup preset  on  (single-line cues + strip broadcast noise)
+  Output folder   ~/Downloads/GetSubtitle
 ======================================================================
 
     1) Run it now
@@ -2428,7 +3095,7 @@ Smart defaults filled in for you (edit via 'Edit a single answer'):
 Saved: {TMP}/totoro-typo.toml
 
 Your totoro-typo.toml runs the same workflow as this command:
-  # getsubtitle --fetch --title Totoro --season 1 --episode 1 --languages ja,en --no-engine --modify --season 1 --episode 1 --strip-cc-noise --single-line --merge --languages ja,en --season 1 --episode 1 --format srt --font-size regular --output ~/Downloads/GetSubtitle
+  # getsubtitle --fetch --title totoro --season 1 --episode 1 --languages ja,en --no-engine --modify --season 1 --episode 1 --strip-cc-noise --single-line --merge --languages ja,en --season 1 --episode 1 --format srt --font-size regular --output ~/Downloads/GetSubtitle
 
 Run it later with:
   getsubtitle --config {TMP}/totoro-typo.toml
@@ -2458,25 +3125,22 @@ CLI flags win over matching TOML settings, so the file can stay as a reusable te
 
 ```text
   ____      _   ____        _     _   _ _   _
-
  / ___| ___| |_/ ___| _   _| |__ | |_| |_| |_| ___
-
 | |  _ / _ \ __\___ \| | | | '_ \| __| | __| |/ _ \
-
 | |_| |  __/ |_ ___) | |_| | |_) | |_| | |_| |  __/
-
  \____|\___|\__|____/ \__,_|_.__/ \__|_|\__|_|\___|
 
 GetSubtitle — Workflow Builder
 
 Answer a few questions to generate a command and reusable workflow.
 
+------------------------------------------------------------------------------------------------
 Commands:
-  Enter  Accept default
-  b      Back
-  q      Quit
-  Ctrl-C Cancel
-
+    Enter  Accept default
+    b      Back
+    q      Quit
+    Ctrl-C Cancel
+------------------------------------------------------------------------------------------------
 Q1. What would you like to do?
 
     1) Fetch      Download subtitles from a URL or title
@@ -2495,25 +3159,38 @@ Q1. What would you like to do?
     Selected: fetch + translate + modify + merge.
 
 ------------------------------------------------------------------------------------------------
-Q2. What should getsubtitle work on?                                Progress [◼◼◼◻◻◻◻◻◻◻◻◻◻] 21%
+Q2. Where should we get subtitles from?                             Progress [◼◼◻◻◻◻◻◻◻◻◻◻◻] 19%
 
     1) A movie/show title (The Simpsons, Totoro, The Matrix, …)
     2) A streaming/catalog URL (IMDb, AniList, Netflix, Crunchyroll, …)
     3) A folder or file on disk (your Plex/Movies, ~/Downloads, …)
 
   Number [3 | b=back | q=quit] > totoro
-    Invalid selection. Type 1, 2, or 3. To search for a title, choose 1 first.
+    Detected title search:
+      totoro
 
-  Number [3 | b=back | q=quit] > 3
+    Searching for: 'totoro'
+
+    No title-resolver hits. Add a TMDB key for richer matches:
+      getsubtitle --set-key tmdb
+    Continuing with raw title text — fetch may still work via
+    AniList or other built-in fallbacks.
+  Is this a movie? (No = TV show / anime) [y/N | b=back | q=quit] > n
 
 ------------------------------------------------------------------------------------------------
-Q3. Enter the folder or file path.                                  Progress [◼◼◼◼◼◻◻◻◻◻◻◻◻] 36%
+Q3. What episode scope?                                             Progress [◼◼◼◼◻◻◻◻◻◻◻◻◻] 31%
 
-  Folder or file path [b=back | q=quit] > {TMP}/Foo
-    Identified as: local subtitle folder: 0 video file(s), 2 subtitle file(s)
+    1) One TV episode — Season 1 Episode 1
+    2) A specific season + episode (or range)
+    3) Whole season, every episode (-e all)
+    4) Auto — let getsubtitle infer from the URL/title metadata
+       (anime URLs typically resolve to single episodes; movies to a
+        single item; TV without -e usually picks S01E01)
+
+  Number [4 | b=back | q=quit] >
 
 ------------------------------------------------------------------------------------------------
-Q4. Which subtitle languages do you want to collect?                Progress [◼◼◼◼◼◼◻◻◻◻◻◻◻] 50%
+Q4. Which subtitle languages do you want to collect?                Progress [◼◼◼◼◼◼◻◻◻◻◻◻◻] 44%
 
     List them in the order you want them displayed (top → bottom).
 
@@ -2524,8 +3201,12 @@ Q4. Which subtitle languages do you want to collect?                Progress [�
 
   Languages (comma-separated) [ja,en | b=back | q=quit] > ja,en
 
+    Languages selected:
+      ja → Japanese
+      en → English
+
 ------------------------------------------------------------------------------------------------
-Q5. Fill missing subtitles?                                         Progress [◼◼◼◼◼◼◼◼◻◻◻◻◻] 64%
+Q5. Fill missing subtitles?                                         Progress [◼◼◼◼◼◼◼◻◻◻◻◻◻] 56%
 
     1) Skip (use only what's downloaded)
     2) Translate with Argos (local, basic quality)
@@ -2535,37 +3216,83 @@ Q5. Fill missing subtitles?                                         Progress [�
   Number [1 | b=back | q=quit] > 1
 
 ------------------------------------------------------------------------------------------------
-Q6. Reading aids (phonetic guides for the original script).         Progress [◼◼◼◼◼◼◼◼◼◼◻◻◻] 79%
+Q6. Reading aids (phonetic guides for the original script).         Progress [◼◼◼◼◼◼◼◼◼◻◻◻◻] 69%
 
     Example output: 漢字（かんじ）
     Pick any combination by number, or '1' to skip.
     1) No reading aid (skip)
     2) Japanese — hiragana readings for kanji   [ja:hiragana]
-       Preview: 勉強する → べんきょうする
+       Example: 勉強する → べんきょうする
     3) Japanese — katakana readings for kanji   [ja:katakana]
-       Preview: 勉強する → ベンキョウする
+       Example: 勉強する → ベンキョウする
     4) Japanese — full-sentence romaji   [ja:romaji]
-       Preview: 今日は日本語を練習したい → kyou wa nihongo wo renshuu shitai
+       Example: 今日は日本語を練習したい → kyou wa nihongo wo renshuu shitai
 
   Numbers (comma-separated) [1 | b=back | q=quit] > 1
+
+------------------------------------------------------------------------------------------------
+Q7. Final output format.                                            Progress [◼◼◼◼◼◼◼◼◼◼◼◻◻] 81%
+
+    Choose the format that best matches your player.
+    1) SRT  — works almost everywhere
+              Plex, Jellyfin, Smart TVs, tablets, phones, VLC
+    2) ASS  — best for local study playback
+              Better subtitle positioning, sizing, and readability
+    3) VTT  — best for browser-based language learning
+              Works with a browser extension on Netflix, Disney+ & other streaming sites
+    4) SMI  — Korean subtitle format
+              Common in older Korean subtitle archives
+    5) TXT  — plain text without timestamps
+
+    Recommendations:
+      Watching on TV, tablet, phone, Plex, or Jellyfin?
+        → SRT
+
+      Watching local video files on VLC, MPV, or desktop players?
+        → ASS
+
+      Streaming Netflix with multiple subtitles?
+        → VTT (asbplayer browser plug-in required)
+
+    Suggested default: SRT — SRT is the safest general-purpose choice.
+
+  Final format [1 | b=back | q=quit] >
+
+------------------------------------------------------------------------------------------------
+Q8. Subtitle text size?                                             Progress [◼◼◼◼◼◼◼◼◼◼◼◻◻] 83%
+
+    Subtitle text size
+    Format: SRT
+
+    Please note many players ignore font sizes in SRT files.
+    If your player supports sizing, these presets are recommended:
+
+    1) Regular (16px) — recommended
+    2) Smaller (12px)
+    3) Larger (20px)
+    4) Custom — enter exact font size
+
+  Number [1 | b=back | q=quit] >
 
 ======================================================================
 Here's the plan:
 ======================================================================
-  • Fetch ja, en for {TMP}/Foo
+  • Fetch ja, en for totoro
   • Clean up cues (single line, strip broadcast noise)
-  • Stack ja, en into one SRT file  →  *.ja-en.srt
-  • Use subtitle text size regular (SRT support depends on player)
-  • Save to {TMP}/Foo
+  • Stack ja, en into one SRT file → *.ja-en.srt
+  • Use subtitle text size: Regular
+  • Save to ~/Downloads/GetSubtitle
+======================================================================
+Before running:
+======================================================================
+  ⚠ Japanese subtitles can be harder to find automatically; manual search or translation may be needed.
 ======================================================================
 Smart defaults filled in for you (edit via 'Edit a single answer'):
 ======================================================================
-  Display order  ja, en  (top → bottom on screen)
-  Timing master  ja  (first language)
-  Cleanup preset on  (single-line cues + strip broadcast noise)
-  Output format  SRT — plays almost everywhere (Plex, TVs, phones).  Edit to pick SRT / ASS / VTT / SMI / TXT.
-  Text size      regular  (calibrated; edit to change)
-  Output folder  {TMP}/Foo  (beside source)
+  Display order   ja, en  (top → bottom on screen)
+  Timing master   ja  (first language)
+  Cleanup preset  on  (single-line cues + strip broadcast noise)
+  Output folder   ~/Downloads/GetSubtitle
 ======================================================================
 
     1) Run it now
@@ -2575,7 +3302,7 @@ Smart defaults filled in for you (edit via 'Edit a single answer'):
     5) Quit
     6) Show the exact command & workflow file
 
-  Number [1 | b=back | q=quit] > 5
+  Number [2 | b=back | q=quit] > 5
 Quit.
 ```
 
@@ -2594,25 +3321,22 @@ Quit.
 
 ```text
   ____      _   ____        _     _   _ _   _
-
  / ___| ___| |_/ ___| _   _| |__ | |_| |_| |_| ___
-
 | |  _ / _ \ __\___ \| | | | '_ \| __| | __| |/ _ \
-
 | |_| |  __/ |_ ___) | |_| | |_) | |_| | |_| |  __/
-
  \____|\___|\__|____/ \__,_|_.__/ \__|_|\__|_|\___|
 
 GetSubtitle — Workflow Builder
 
 Answer a few questions to generate a command and reusable workflow.
 
+------------------------------------------------------------------------------------------------
 Commands:
-  Enter  Accept default
-  b      Back
-  q      Quit
-  Ctrl-C Cancel
-
+    Enter  Accept default
+    b      Back
+    q      Quit
+    Ctrl-C Cancel
+------------------------------------------------------------------------------------------------
 Q1. What would you like to do?
 
     1) Fetch      Download subtitles from a URL or title
@@ -2631,16 +3355,16 @@ Q1. What would you like to do?
     Selected: modify + merge.
 
 ------------------------------------------------------------------------------------------------
-Q2. Folder or file to process.                                      Progress [◼◼◼◼◼◻◻◻◻◻◻◻◻] 38%
+Q2. Folder or file to process.                                      Progress [◼◼◼◼◻◻◻◻◻◻◻◻◻] 30%
 
     Drop a folder of subtitle files, a single subtitle/video file,
     or any local path your selected step(s) should operate on.
 
   Folder or file path [b=back | q=quit] > {TMP}/Wrong
-    Identified as: local subtitle folder: 0 video file(s), 1 subtitle file(s)
+    Searching for: local subtitle folder: 0 video file(s), 1 subtitle file(s)
 
 ------------------------------------------------------------------------------------------------
-Q3. Which subtitle languages do you want to collect?                Progress [◼◼◼◼◼◼◼◼◻◻◻◻◻] 62%
+Q3. Which subtitle languages do you want to collect?                Progress [◼◼◼◼◼◼◻◻◻◻◻◻◻] 50%
 
     List them in the order you want them displayed (top → bottom).
 
@@ -2653,16 +3377,16 @@ Q3. Which subtitle languages do you want to collect?                Progress [�
     Going back to the previous step.
 
 ------------------------------------------------------------------------------------------------
-Q2. Folder or file to process.                                      Progress [◼◼◼◼◼◻◻◻◻◻◻◻◻] 38%
+Q2. Folder or file to process.                                      Progress [◼◼◼◼◻◻◻◻◻◻◻◻◻] 30%
 
     Drop a folder of subtitle files, a single subtitle/video file,
     or any local path your selected step(s) should operate on.
 
   Folder or file path [b=back | q=quit] > {TMP}/Right
-    Identified as: local subtitle folder: 0 video file(s), 2 subtitle file(s)
+    Searching for: local subtitle folder: 0 video file(s), 2 subtitle file(s)
 
 ------------------------------------------------------------------------------------------------
-Q3. Which subtitle languages do you want to collect?                Progress [◼◼◼◼◼◼◼◼◻◻◻◻◻] 62%
+Q3. Which subtitle languages do you want to collect?                Progress [◼◼◼◼◼◼◻◻◻◻◻◻◻] 50%
 
     List them in the order you want them displayed (top → bottom).
 
@@ -2673,38 +3397,84 @@ Q3. Which subtitle languages do you want to collect?                Progress [�
 
   Languages (comma-separated) [ja,en | b=back | q=quit] > ja,en
 
+    Languages selected:
+      ja → Japanese
+      en → English
+
 ------------------------------------------------------------------------------------------------
-Q4. Reading aids (phonetic guides for the original script).         Progress [◼◼◼◼◼◼◼◼◼◼◼◻◻] 88%
+Q4. Reading aids (phonetic guides for the original script).         Progress [◼◼◼◼◼◼◼◼◼◻◻◻◻] 70%
 
     Example output: 漢字（かんじ）
     Pick any combination by number, or '1' to skip.
     1) No reading aid (skip)
     2) Japanese — hiragana readings for kanji   [ja:hiragana]
-       Preview: 勉強する → べんきょうする
+       Example: 勉強する → べんきょうする
     3) Japanese — katakana readings for kanji   [ja:katakana]
-       Preview: 勉強する → ベンキョウする
+       Example: 勉強する → ベンキョウする
     4) Japanese — full-sentence romaji   [ja:romaji]
-       Preview: 今日は日本語を練習したい → kyou wa nihongo wo renshuu shitai
+       Example: 今日は日本語を練習したい → kyou wa nihongo wo renshuu shitai
 
   Numbers (comma-separated) [1 | b=back | q=quit] > 1
+
+------------------------------------------------------------------------------------------------
+Q5. Final output format.                                            Progress [◼◼◼◼◼◼◼◼◼◼◼◼◻] 90%
+
+    Choose the format that best matches your player.
+    1) SRT  — works almost everywhere
+              Plex, Jellyfin, Smart TVs, tablets, phones, VLC
+    2) ASS  — best for local study playback
+              Better subtitle positioning, sizing, and readability
+    3) VTT  — best for browser-based language learning
+              Works with a browser extension on Netflix, Disney+ & other streaming sites
+    4) SMI  — Korean subtitle format
+              Common in older Korean subtitle archives
+    5) TXT  — plain text without timestamps
+
+    Recommendations:
+      Watching on TV, tablet, phone, Plex, or Jellyfin?
+        → SRT
+
+      Watching local video files on VLC, MPV, or desktop players?
+        → ASS
+
+      Streaming Netflix with multiple subtitles?
+        → VTT (asbplayer browser plug-in required)
+
+    Suggested default: SRT — SRT is the safest general-purpose choice.
+
+  Final format [1 | b=back | q=quit] >
+
+------------------------------------------------------------------------------------------------
+Q6. Subtitle text size?                                             Progress [◼◼◼◼◼◼◼◼◼◼◼◼◻] 92%
+
+    Subtitle text size
+    Format: SRT
+
+    Please note many players ignore font sizes in SRT files.
+    If your player supports sizing, these presets are recommended:
+
+    1) Regular (16px) — recommended
+    2) Smaller (12px)
+    3) Larger (20px)
+    4) Custom — enter exact font size
+
+  Number [1 | b=back | q=quit] >
 
 ======================================================================
 Here's the plan:
 ======================================================================
   • Use local ja, en files in {TMP}/Right
   • Clean up cues (single line, strip broadcast noise)
-  • Stack ja, en into one SRT file  →  *.ja-en.srt
-  • Use subtitle text size regular (SRT support depends on player)
+  • Stack ja, en into one SRT file → *.ja-en.srt
+  • Use subtitle text size: Regular
   • Save to {TMP}/Right
 ======================================================================
 Smart defaults filled in for you (edit via 'Edit a single answer'):
 ======================================================================
-  Display order  ja, en  (top → bottom on screen)
-  Timing master  ja  (first language)
-  Cleanup preset on  (single-line cues + strip broadcast noise)
-  Output format  SRT — plays almost everywhere (Plex, TVs, phones).  Edit to pick SRT / ASS / VTT / SMI / TXT.
-  Text size      regular  (calibrated; edit to change)
-  Output folder  {TMP}/Right  (beside source)
+  Display order   ja, en  (top → bottom on screen)
+  Timing master   ja  (first language)
+  Cleanup preset  on  (single-line cues + strip broadcast noise)
+  Output folder   {TMP}/Right  (beside source)
 ======================================================================
 
     1) Run it now
@@ -2751,25 +3521,22 @@ CLI flags win over matching TOML settings, so the file can stay as a reusable te
 
 ```text
   ____      _   ____        _     _   _ _   _
-
  / ___| ___| |_/ ___| _   _| |__ | |_| |_| |_| ___
-
 | |  _ / _ \ __\___ \| | | | '_ \| __| | __| |/ _ \
-
 | |_| |  __/ |_ ___) | |_| | |_) | |_| | |_| |  __/
-
  \____|\___|\__|____/ \__,_|_.__/ \__|_|\__|_|\___|
 
 GetSubtitle — Workflow Builder
 
 Answer a few questions to generate a command and reusable workflow.
 
+------------------------------------------------------------------------------------------------
 Commands:
-  Enter  Accept default
-  b      Back
-  q      Quit
-  Ctrl-C Cancel
-
+    Enter  Accept default
+    b      Back
+    q      Quit
+    Ctrl-C Cancel
+------------------------------------------------------------------------------------------------
 Q1. What would you like to do?
 
     1) Fetch      Download subtitles from a URL or title
@@ -2788,16 +3555,16 @@ Q1. What would you like to do?
     Selected: modify + merge.
 
 ------------------------------------------------------------------------------------------------
-Q2. Folder or file to process.                                      Progress [◼◼◼◼◼◻◻◻◻◻◻◻◻] 38%
+Q2. Folder or file to process.                                      Progress [◼◼◼◼◻◻◻◻◻◻◻◻◻] 30%
 
     Drop a folder of subtitle files, a single subtitle/video file,
     or any local path your selected step(s) should operate on.
 
   Folder or file path [b=back | q=quit] > {TMP}/Show
-    Identified as: local subtitle folder: 0 video file(s), 2 subtitle file(s)
+    Searching for: local subtitle folder: 0 video file(s), 2 subtitle file(s)
 
 ------------------------------------------------------------------------------------------------
-Q3. Which subtitle languages do you want to collect?                Progress [◼◼◼◼◼◼◼◼◻◻◻◻◻] 62%
+Q3. Which subtitle languages do you want to collect?                Progress [◼◼◼◼◼◼◻◻◻◻◻◻◻] 50%
 
     List them in the order you want them displayed (top → bottom).
 
@@ -2808,38 +3575,84 @@ Q3. Which subtitle languages do you want to collect?                Progress [�
 
   Languages (comma-separated) [ja,en | b=back | q=quit] > ja,en
 
+    Languages selected:
+      ja → Japanese
+      en → English
+
 ------------------------------------------------------------------------------------------------
-Q4. Reading aids (phonetic guides for the original script).         Progress [◼◼◼◼◼◼◼◼◼◼◼◻◻] 88%
+Q4. Reading aids (phonetic guides for the original script).         Progress [◼◼◼◼◼◼◼◼◼◻◻◻◻] 70%
 
     Example output: 漢字（かんじ）
     Pick any combination by number, or '1' to skip.
     1) No reading aid (skip)
     2) Japanese — hiragana readings for kanji   [ja:hiragana]
-       Preview: 勉強する → べんきょうする
+       Example: 勉強する → べんきょうする
     3) Japanese — katakana readings for kanji   [ja:katakana]
-       Preview: 勉強する → ベンキョウする
+       Example: 勉強する → ベンキョウする
     4) Japanese — full-sentence romaji   [ja:romaji]
-       Preview: 今日は日本語を練習したい → kyou wa nihongo wo renshuu shitai
+       Example: 今日は日本語を練習したい → kyou wa nihongo wo renshuu shitai
 
   Numbers (comma-separated) [1 | b=back | q=quit] > 1
+
+------------------------------------------------------------------------------------------------
+Q5. Final output format.                                            Progress [◼◼◼◼◼◼◼◼◼◼◼◼◻] 90%
+
+    Choose the format that best matches your player.
+    1) SRT  — works almost everywhere
+              Plex, Jellyfin, Smart TVs, tablets, phones, VLC
+    2) ASS  — best for local study playback
+              Better subtitle positioning, sizing, and readability
+    3) VTT  — best for browser-based language learning
+              Works with a browser extension on Netflix, Disney+ & other streaming sites
+    4) SMI  — Korean subtitle format
+              Common in older Korean subtitle archives
+    5) TXT  — plain text without timestamps
+
+    Recommendations:
+      Watching on TV, tablet, phone, Plex, or Jellyfin?
+        → SRT
+
+      Watching local video files on VLC, MPV, or desktop players?
+        → ASS
+
+      Streaming Netflix with multiple subtitles?
+        → VTT (asbplayer browser plug-in required)
+
+    Suggested default: SRT — SRT is the safest general-purpose choice.
+
+  Final format [1 | b=back | q=quit] >
+
+------------------------------------------------------------------------------------------------
+Q6. Subtitle text size?                                             Progress [◼◼◼◼◼◼◼◼◼◼◼◼◻] 92%
+
+    Subtitle text size
+    Format: SRT
+
+    Please note many players ignore font sizes in SRT files.
+    If your player supports sizing, these presets are recommended:
+
+    1) Regular (16px) — recommended
+    2) Smaller (12px)
+    3) Larger (20px)
+    4) Custom — enter exact font size
+
+  Number [1 | b=back | q=quit] >
 
 ======================================================================
 Here's the plan:
 ======================================================================
   • Use local ja, en files in {TMP}/Show
   • Clean up cues (single line, strip broadcast noise)
-  • Stack ja, en into one SRT file  →  *.ja-en.srt
-  • Use subtitle text size regular (SRT support depends on player)
+  • Stack ja, en into one SRT file → *.ja-en.srt
+  • Use subtitle text size: Regular
   • Save to {TMP}/Show
 ======================================================================
 Smart defaults filled in for you (edit via 'Edit a single answer'):
 ======================================================================
-  Display order  ja, en  (top → bottom on screen)
-  Timing master  ja  (first language)
-  Cleanup preset on  (single-line cues + strip broadcast noise)
-  Output format  SRT — plays almost everywhere (Plex, TVs, phones).  Edit to pick SRT / ASS / VTT / SMI / TXT.
-  Text size      regular  (calibrated; edit to change)
-  Output folder  {TMP}/Show  (beside source)
+  Display order   ja, en  (top → bottom on screen)
+  Timing master   ja  (first language)
+  Cleanup preset  on  (single-line cues + strip broadcast noise)
+  Output folder   {TMP}/Show  (beside source)
 ======================================================================
 
     1) Run it now
@@ -2857,18 +3670,16 @@ Here's the plan:
 ======================================================================
   • Use local ja, en files in {TMP}/Show
   • Clean up cues (single line, strip broadcast noise)
-  • Stack ja, en into one SRT file  →  *.ja-en.srt
-  • Use subtitle text size regular (SRT support depends on player)
+  • Stack ja, en into one SRT file → *.ja-en.srt
+  • Use subtitle text size: Regular
   • Save to {TMP}/Show
 ======================================================================
 Smart defaults filled in for you (edit via 'Edit a single answer'):
 ======================================================================
-  Display order  ja, en  (top → bottom on screen)
-  Timing master  ja  (first language)
-  Cleanup preset on  (single-line cues + strip broadcast noise)
-  Output format  SRT — plays almost everywhere (Plex, TVs, phones).  Edit to pick SRT / ASS / VTT / SMI / TXT.
-  Text size      regular  (calibrated; edit to change)
-  Output folder  {TMP}/Show  (beside source)
+  Display order   ja, en  (top → bottom on screen)
+  Timing master   ja  (first language)
+  Cleanup preset  on  (single-line cues + strip broadcast noise)
+  Output folder   {TMP}/Show  (beside source)
 ======================================================================
 
     1) Run it now
@@ -2897,25 +3708,22 @@ Quit.
 
 ```text
   ____      _   ____        _     _   _ _   _
-
  / ___| ___| |_/ ___| _   _| |__ | |_| |_| |_| ___
-
 | |  _ / _ \ __\___ \| | | | '_ \| __| | __| |/ _ \
-
 | |_| |  __/ |_ ___) | |_| | |_) | |_| | |_| |  __/
-
  \____|\___|\__|____/ \__,_|_.__/ \__|_|\__|_|\___|
 
 GetSubtitle — Workflow Builder
 
 Answer a few questions to generate a command and reusable workflow.
 
+------------------------------------------------------------------------------------------------
 Commands:
-  Enter  Accept default
-  b      Back
-  q      Quit
-  Ctrl-C Cancel
-
+    Enter  Accept default
+    b      Back
+    q      Quit
+    Ctrl-C Cancel
+------------------------------------------------------------------------------------------------
 Q1. What would you like to do?
 
     1) Fetch      Download subtitles from a URL or title
@@ -2934,16 +3742,16 @@ Q1. What would you like to do?
     Selected: modify + merge.
 
 ------------------------------------------------------------------------------------------------
-Q2. Folder or file to process.                                      Progress [◼◼◼◼◼◻◻◻◻◻◻◻◻] 38%
+Q2. Folder or file to process.                                      Progress [◼◼◼◼◻◻◻◻◻◻◻◻◻] 30%
 
     Drop a folder of subtitle files, a single subtitle/video file,
     or any local path your selected step(s) should operate on.
 
   Folder or file path [b=back | q=quit] > {TMP}/Show
-    Identified as: local subtitle folder: 0 video file(s), 2 subtitle file(s)
+    Searching for: local subtitle folder: 0 video file(s), 2 subtitle file(s)
 
 ------------------------------------------------------------------------------------------------
-Q3. Which subtitle languages do you want to collect?                Progress [◼◼◼◼◼◼◼◼◻◻◻◻◻] 62%
+Q3. Which subtitle languages do you want to collect?                Progress [◼◼◼◼◼◼◻◻◻◻◻◻◻] 50%
 
     List them in the order you want them displayed (top → bottom).
 
@@ -2954,38 +3762,84 @@ Q3. Which subtitle languages do you want to collect?                Progress [�
 
   Languages (comma-separated) [ja,en | b=back | q=quit] > ja,en
 
+    Languages selected:
+      ja → Japanese
+      en → English
+
 ------------------------------------------------------------------------------------------------
-Q4. Reading aids (phonetic guides for the original script).         Progress [◼◼◼◼◼◼◼◼◼◼◼◻◻] 88%
+Q4. Reading aids (phonetic guides for the original script).         Progress [◼◼◼◼◼◼◼◼◼◻◻◻◻] 70%
 
     Example output: 漢字（かんじ）
     Pick any combination by number, or '1' to skip.
     1) No reading aid (skip)
     2) Japanese — hiragana readings for kanji   [ja:hiragana]
-       Preview: 勉強する → べんきょうする
+       Example: 勉強する → べんきょうする
     3) Japanese — katakana readings for kanji   [ja:katakana]
-       Preview: 勉強する → ベンキョウする
+       Example: 勉強する → ベンキョウする
     4) Japanese — full-sentence romaji   [ja:romaji]
-       Preview: 今日は日本語を練習したい → kyou wa nihongo wo renshuu shitai
+       Example: 今日は日本語を練習したい → kyou wa nihongo wo renshuu shitai
 
   Numbers (comma-separated) [1 | b=back | q=quit] > 1
+
+------------------------------------------------------------------------------------------------
+Q5. Final output format.                                            Progress [◼◼◼◼◼◼◼◼◼◼◼◼◻] 90%
+
+    Choose the format that best matches your player.
+    1) SRT  — works almost everywhere
+              Plex, Jellyfin, Smart TVs, tablets, phones, VLC
+    2) ASS  — best for local study playback
+              Better subtitle positioning, sizing, and readability
+    3) VTT  — best for browser-based language learning
+              Works with a browser extension on Netflix, Disney+ & other streaming sites
+    4) SMI  — Korean subtitle format
+              Common in older Korean subtitle archives
+    5) TXT  — plain text without timestamps
+
+    Recommendations:
+      Watching on TV, tablet, phone, Plex, or Jellyfin?
+        → SRT
+
+      Watching local video files on VLC, MPV, or desktop players?
+        → ASS
+
+      Streaming Netflix with multiple subtitles?
+        → VTT (asbplayer browser plug-in required)
+
+    Suggested default: SRT — SRT is the safest general-purpose choice.
+
+  Final format [1 | b=back | q=quit] >
+
+------------------------------------------------------------------------------------------------
+Q6. Subtitle text size?                                             Progress [◼◼◼◼◼◼◼◼◼◼◼◼◻] 92%
+
+    Subtitle text size
+    Format: SRT
+
+    Please note many players ignore font sizes in SRT files.
+    If your player supports sizing, these presets are recommended:
+
+    1) Regular (16px) — recommended
+    2) Smaller (12px)
+    3) Larger (20px)
+    4) Custom — enter exact font size
+
+  Number [1 | b=back | q=quit] >
 
 ======================================================================
 Here's the plan:
 ======================================================================
   • Use local ja, en files in {TMP}/Show
   • Clean up cues (single line, strip broadcast noise)
-  • Stack ja, en into one SRT file  →  *.ja-en.srt
-  • Use subtitle text size regular (SRT support depends on player)
+  • Stack ja, en into one SRT file → *.ja-en.srt
+  • Use subtitle text size: Regular
   • Save to {TMP}/Show
 ======================================================================
 Smart defaults filled in for you (edit via 'Edit a single answer'):
 ======================================================================
-  Display order  ja, en  (top → bottom on screen)
-  Timing master  ja  (first language)
-  Cleanup preset on  (single-line cues + strip broadcast noise)
-  Output format  SRT — plays almost everywhere (Plex, TVs, phones).  Edit to pick SRT / ASS / VTT / SMI / TXT.
-  Text size      regular  (calibrated; edit to change)
-  Output folder  {TMP}/Show  (beside source)
+  Display order   ja, en  (top → bottom on screen)
+  Timing master   ja  (first language)
+  Cleanup preset  on  (single-line cues + strip broadcast noise)
+  Output folder   {TMP}/Show  (beside source)
 ======================================================================
 
     1) Run it now
@@ -3001,13 +3855,15 @@ Your answers so far:
   1) steps: modify + merge
   2) source: path — {TMP}/Show
   3) languages: ja, en
-  4) reading aids: none
-  5) output format: SRT
-  6) text size: regular
-  7) output folder: {TMP}/Show
+  4) display order: ja, en
+  5) timing master: ja
+  6) cleanup preset: on
+  7) reading aids: none
+  8) format / extension: SRT
+  9) text size: regular
+  10) output folder: {TMP}/Show
 
-  Number to change (1-7), or 'done' [done | b=back | q=quit] > 1
-
+  Number to change (1-10), or 'done' [done | b=back | q=quit] > 1
 Q1. What would you like to do?
 
     1) Fetch      Download subtitles from a URL or title
@@ -3024,6 +3880,16 @@ Q1. What would you like to do?
 
   Numbers or ranges, or Enter for default [1-4 | q=quit] > 3
     Selected: modify.
+
+Your answers so far:
+  1) steps: modify
+  2) source: path — {TMP}/Show
+  3) languages: ja, en
+  4) cleanup preset: on
+  5) reading aids: none
+  6) output folder: {TMP}/Show
+
+  Number to change (1-6), or 'done' [done | b=back | q=quit] > done
 
 ======================================================================
 Here's the plan:
@@ -3077,25 +3943,22 @@ CLI flags win over matching TOML settings, so the file can stay as a reusable te
 
 ```text
   ____      _   ____        _     _   _ _   _
-
  / ___| ___| |_/ ___| _   _| |__ | |_| |_| |_| ___
-
 | |  _ / _ \ __\___ \| | | | '_ \| __| | __| |/ _ \
-
 | |_| |  __/ |_ ___) | |_| | |_) | |_| | |_| |  __/
-
  \____|\___|\__|____/ \__,_|_.__/ \__|_|\__|_|\___|
 
 GetSubtitle — Workflow Builder
 
 Answer a few questions to generate a command and reusable workflow.
 
+------------------------------------------------------------------------------------------------
 Commands:
-  Enter  Accept default
-  b      Back
-  q      Quit
-  Ctrl-C Cancel
-
+    Enter  Accept default
+    b      Back
+    q      Quit
+    Ctrl-C Cancel
+------------------------------------------------------------------------------------------------
 Q1. What would you like to do?
 
     1) Fetch      Download subtitles from a URL or title
@@ -3114,7 +3977,7 @@ Q1. What would you like to do?
     Selected: fetch + modify + merge.
 
 ------------------------------------------------------------------------------------------------
-Q2. What should getsubtitle work on?                                Progress [◼◼◼◻◻◻◻◻◻◻◻◻◻] 25%
+Q2. Where should we get subtitles from?                             Progress [◼◼◼◻◻◻◻◻◻◻◻◻◻] 21%
 
     1) A movie/show title (The Simpsons, Totoro, The Matrix, …)
     2) A streaming/catalog URL (IMDb, AniList, Netflix, Crunchyroll, …)
@@ -3123,15 +3986,15 @@ Q2. What should getsubtitle work on?                                Progress [�
   Number [3 | b=back | q=quit] > 2
 
 ------------------------------------------------------------------------------------------------
-Q3. Enter the URL.                                                  Progress [◼◼◼◼◼◻◻◻◻◻◻◻◻] 42%
+Q3. Enter the URL.                                                  Progress [◼◼◼◼◼◻◻◻◻◻◻◻◻] 36%
 
   URL [b=back | q=quit] > https://www.imdb.com/title/tt28299608/
-    Identified as: IMDb title URL
+    Searching for: IMDb title URL
 
 ------------------------------------------------------------------------------------------------
-Q4. What episode scope?                                             Progress [◼◼◼◼◼◼◼◼◻◻◻◻◻] 58%
+Q4. What episode scope?                                             Progress [◼◼◼◼◼◼◻◻◻◻◻◻◻] 50%
 
-    1) Movie / single item (no season/episode)
+    1) One TV episode — Season 1 Episode 1
     2) A specific season + episode (or range)
     3) Whole season, every episode (-e all)
     4) Auto — let getsubtitle infer from the URL/title metadata
@@ -3145,7 +4008,7 @@ Q4. What episode scope?                                             Progress [�
   Episode or range within each season (e.g. 5, 1-10, all) [1 | b=back | q=quit] > 1
 
 ------------------------------------------------------------------------------------------------
-Q5. Which subtitle languages do you want to collect?                Progress [◼◼◼◼◼◼◼◼◼◼◻◻◻] 75%
+Q5. Which subtitle languages do you want to collect?                Progress [◼◼◼◼◼◼◼◼◻◻◻◻◻] 64%
 
     List them in the order you want them displayed (top → bottom).
 
@@ -3156,38 +4019,88 @@ Q5. Which subtitle languages do you want to collect?                Progress [�
 
   Languages (comma-separated) [ja,en | b=back | q=quit] > ja,en
 
+    Languages selected:
+      ja → Japanese
+      en → English
+
 ------------------------------------------------------------------------------------------------
-Q6. Reading aids (phonetic guides for the original script).         Progress [◼◼◼◼◼◼◼◼◼◼◼◼◻] 92%
+Q6. Reading aids (phonetic guides for the original script).         Progress [◼◼◼◼◼◼◼◼◼◼◻◻◻] 79%
 
     Example output: 漢字（かんじ）
     Pick any combination by number, or '1' to skip.
     1) No reading aid (skip)
     2) Japanese — hiragana readings for kanji   [ja:hiragana]
-       Preview: 勉強する → べんきょうする
+       Example: 勉強する → べんきょうする
     3) Japanese — katakana readings for kanji   [ja:katakana]
-       Preview: 勉強する → ベンキョウする
+       Example: 勉強する → ベンキョウする
     4) Japanese — full-sentence romaji   [ja:romaji]
-       Preview: 今日は日本語を練習したい → kyou wa nihongo wo renshuu shitai
+       Example: 今日は日本語を練習したい → kyou wa nihongo wo renshuu shitai
 
   Numbers (comma-separated) [1 | b=back | q=quit] > 1
+
+------------------------------------------------------------------------------------------------
+Q7. Final output format.                                            Progress [◼◼◼◼◼◼◼◼◼◼◼◼◻] 93%
+
+    Choose the format that best matches your player.
+    1) SRT  — works almost everywhere
+              Plex, Jellyfin, Smart TVs, tablets, phones, VLC
+    2) ASS  — best for local study playback
+              Better subtitle positioning, sizing, and readability
+    3) VTT  — best for browser-based language learning
+              Works with a browser extension on Netflix, Disney+ & other streaming sites
+    4) SMI  — Korean subtitle format
+              Common in older Korean subtitle archives
+    5) TXT  — plain text without timestamps
+
+    Recommendations:
+      Watching on TV, tablet, phone, Plex, or Jellyfin?
+        → SRT
+
+      Watching local video files on VLC, MPV, or desktop players?
+        → ASS
+
+      Streaming Netflix with multiple subtitles?
+        → VTT (asbplayer browser plug-in required)
+
+    Suggested default: SRT — SRT is the safest general-purpose choice.
+
+  Final format [1 | b=back | q=quit] >
+
+------------------------------------------------------------------------------------------------
+Q8. Subtitle text size?                                             Progress [◼◼◼◼◼◼◼◼◼◼◼◼◻] 94%
+
+    Subtitle text size
+    Format: SRT
+
+    Please note many players ignore font sizes in SRT files.
+    If your player supports sizing, these presets are recommended:
+
+    1) Regular (16px) — recommended
+    2) Smaller (12px)
+    3) Larger (20px)
+    4) Custom — enter exact font size
+
+  Number [1 | b=back | q=quit] >
 
 ======================================================================
 Here's the plan:
 ======================================================================
   • Fetch ja, en for https://www.imdb.com/title/tt28299608/  (season 1, episode 1)
   • Clean up cues (single line, strip broadcast noise)
-  • Stack ja, en into one SRT file  →  *.ja-en.srt
-  • Use subtitle text size regular (SRT support depends on player)
+  • Stack ja, en into one SRT file → *.ja-en.srt
+  • Use subtitle text size: Regular
   • Save to ~/Downloads/GetSubtitle
+======================================================================
+Before running:
+======================================================================
+  ⚠ Japanese subtitles can be harder to find automatically; manual search or translation may be needed.
 ======================================================================
 Smart defaults filled in for you (edit via 'Edit a single answer'):
 ======================================================================
-  Display order  ja, en  (top → bottom on screen)
-  Timing master  ja  (first language)
-  Cleanup preset on  (single-line cues + strip broadcast noise)
-  Output format  SRT — plays almost everywhere (Plex, TVs, phones).  Edit to pick SRT / ASS / VTT / SMI / TXT.
-  Text size      regular  (calibrated; edit to change)
-  Output folder  ~/Downloads/GetSubtitle
+  Display order   ja, en  (top → bottom on screen)
+  Timing master   ja  (first language)
+  Cleanup preset  on  (single-line cues + strip broadcast noise)
+  Output folder   ~/Downloads/GetSubtitle
 ======================================================================
 
     1) Run it now
@@ -3234,25 +4147,22 @@ CLI flags win over matching TOML settings, so the file can stay as a reusable te
 
 ```text
   ____      _   ____        _     _   _ _   _
-
  / ___| ___| |_/ ___| _   _| |__ | |_| |_| |_| ___
-
 | |  _ / _ \ __\___ \| | | | '_ \| __| | __| |/ _ \
-
 | |_| |  __/ |_ ___) | |_| | |_) | |_| | |_| |  __/
-
  \____|\___|\__|____/ \__,_|_.__/ \__|_|\__|_|\___|
 
 GetSubtitle — Workflow Builder
 
 Answer a few questions to generate a command and reusable workflow.
 
+------------------------------------------------------------------------------------------------
 Commands:
-  Enter  Accept default
-  b      Back
-  q      Quit
-  Ctrl-C Cancel
-
+    Enter  Accept default
+    b      Back
+    q      Quit
+    Ctrl-C Cancel
+------------------------------------------------------------------------------------------------
 Q1. What would you like to do?
 
     1) Fetch      Download subtitles from a URL or title
@@ -3271,16 +4181,16 @@ Q1. What would you like to do?
     Selected: modify + merge.
 
 ------------------------------------------------------------------------------------------------
-Q2. Folder or file to process.                                      Progress [◼◼◼◼◼◻◻◻◻◻◻◻◻] 38%
+Q2. Folder or file to process.                                      Progress [◼◼◼◼◻◻◻◻◻◻◻◻◻] 30%
 
     Drop a folder of subtitle files, a single subtitle/video file,
     or any local path your selected step(s) should operate on.
 
   Folder or file path [b=back | q=quit] > {TMP}/Show
-    Identified as: local subtitle folder: 0 video file(s), 2 subtitle file(s)
+    Searching for: local subtitle folder: 0 video file(s), 2 subtitle file(s)
 
 ------------------------------------------------------------------------------------------------
-Q3. Which subtitle languages do you want to collect?                Progress [◼◼◼◼◼◼◼◼◻◻◻◻◻] 62%
+Q3. Which subtitle languages do you want to collect?                Progress [◼◼◼◼◼◼◻◻◻◻◻◻◻] 50%
 
     List them in the order you want them displayed (top → bottom).
 
@@ -3291,38 +4201,84 @@ Q3. Which subtitle languages do you want to collect?                Progress [�
 
   Languages (comma-separated) [ja,en | b=back | q=quit] > ja,en
 
+    Languages selected:
+      ja → Japanese
+      en → English
+
 ------------------------------------------------------------------------------------------------
-Q4. Reading aids (phonetic guides for the original script).         Progress [◼◼◼◼◼◼◼◼◼◼◼◻◻] 88%
+Q4. Reading aids (phonetic guides for the original script).         Progress [◼◼◼◼◼◼◼◼◼◻◻◻◻] 70%
 
     Example output: 漢字（かんじ）
     Pick any combination by number, or '1' to skip.
     1) No reading aid (skip)
     2) Japanese — hiragana readings for kanji   [ja:hiragana]
-       Preview: 勉強する → べんきょうする
+       Example: 勉強する → べんきょうする
     3) Japanese — katakana readings for kanji   [ja:katakana]
-       Preview: 勉強する → ベンキョウする
+       Example: 勉強する → ベンキョウする
     4) Japanese — full-sentence romaji   [ja:romaji]
-       Preview: 今日は日本語を練習したい → kyou wa nihongo wo renshuu shitai
+       Example: 今日は日本語を練習したい → kyou wa nihongo wo renshuu shitai
 
   Numbers (comma-separated) [1 | b=back | q=quit] > 1
+
+------------------------------------------------------------------------------------------------
+Q5. Final output format.                                            Progress [◼◼◼◼◼◼◼◼◼◼◼◼◻] 90%
+
+    Choose the format that best matches your player.
+    1) SRT  — works almost everywhere
+              Plex, Jellyfin, Smart TVs, tablets, phones, VLC
+    2) ASS  — best for local study playback
+              Better subtitle positioning, sizing, and readability
+    3) VTT  — best for browser-based language learning
+              Works with a browser extension on Netflix, Disney+ & other streaming sites
+    4) SMI  — Korean subtitle format
+              Common in older Korean subtitle archives
+    5) TXT  — plain text without timestamps
+
+    Recommendations:
+      Watching on TV, tablet, phone, Plex, or Jellyfin?
+        → SRT
+
+      Watching local video files on VLC, MPV, or desktop players?
+        → ASS
+
+      Streaming Netflix with multiple subtitles?
+        → VTT (asbplayer browser plug-in required)
+
+    Suggested default: SRT — SRT is the safest general-purpose choice.
+
+  Final format [1 | b=back | q=quit] >
+
+------------------------------------------------------------------------------------------------
+Q6. Subtitle text size?                                             Progress [◼◼◼◼◼◼◼◼◼◼◼◼◻] 92%
+
+    Subtitle text size
+    Format: SRT
+
+    Please note many players ignore font sizes in SRT files.
+    If your player supports sizing, these presets are recommended:
+
+    1) Regular (16px) — recommended
+    2) Smaller (12px)
+    3) Larger (20px)
+    4) Custom — enter exact font size
+
+  Number [1 | b=back | q=quit] >
 
 ======================================================================
 Here's the plan:
 ======================================================================
   • Use local ja, en files in {TMP}/Show
   • Clean up cues (single line, strip broadcast noise)
-  • Stack ja, en into one SRT file  →  *.ja-en.srt
-  • Use subtitle text size regular (SRT support depends on player)
+  • Stack ja, en into one SRT file → *.ja-en.srt
+  • Use subtitle text size: Regular
   • Save to {TMP}/Show
 ======================================================================
 Smart defaults filled in for you (edit via 'Edit a single answer'):
 ======================================================================
-  Display order  ja, en  (top → bottom on screen)
-  Timing master  ja  (first language)
-  Cleanup preset on  (single-line cues + strip broadcast noise)
-  Output format  SRT — plays almost everywhere (Plex, TVs, phones).  Edit to pick SRT / ASS / VTT / SMI / TXT.
-  Text size      regular  (calibrated; edit to change)
-  Output folder  {TMP}/Show  (beside source)
+  Display order   ja, en  (top → bottom on screen)
+  Timing master   ja  (first language)
+  Cleanup preset  on  (single-line cues + strip broadcast noise)
+  Output folder   {TMP}/Show  (beside source)
 ======================================================================
 
     1) Run it now
@@ -3369,25 +4325,22 @@ CLI flags win over matching TOML settings, so the file can stay as a reusable te
 
 ```text
   ____      _   ____        _     _   _ _   _
-
  / ___| ___| |_/ ___| _   _| |__ | |_| |_| |_| ___
-
 | |  _ / _ \ __\___ \| | | | '_ \| __| | __| |/ _ \
-
 | |_| |  __/ |_ ___) | |_| | |_) | |_| | |_| |  __/
-
  \____|\___|\__|____/ \__,_|_.__/ \__|_|\__|_|\___|
 
 GetSubtitle — Workflow Builder
 
 Answer a few questions to generate a command and reusable workflow.
 
+------------------------------------------------------------------------------------------------
 Commands:
-  Enter  Accept default
-  b      Back
-  q      Quit
-  Ctrl-C Cancel
-
+    Enter  Accept default
+    b      Back
+    q      Quit
+    Ctrl-C Cancel
+------------------------------------------------------------------------------------------------
 Q1. What would you like to do?
 
     1) Fetch      Download subtitles from a URL or title
@@ -3406,7 +4359,7 @@ Q1. What would you like to do?
     Selected: fetch + modify + merge.
 
 ------------------------------------------------------------------------------------------------
-Q2. What should getsubtitle work on?                                Progress [◼◼◼◻◻◻◻◻◻◻◻◻◻] 25%
+Q2. Where should we get subtitles from?                             Progress [◼◼◼◻◻◻◻◻◻◻◻◻◻] 21%
 
     1) A movie/show title (The Simpsons, Totoro, The Matrix, …)
     2) A streaming/catalog URL (IMDb, AniList, Netflix, Crunchyroll, …)
@@ -3415,15 +4368,15 @@ Q2. What should getsubtitle work on?                                Progress [�
   Number [3 | b=back | q=quit] > 2
 
 ------------------------------------------------------------------------------------------------
-Q3. Enter the URL.                                                  Progress [◼◼◼◼◼◻◻◻◻◻◻◻◻] 42%
+Q3. Enter the URL.                                                  Progress [◼◼◼◼◼◻◻◻◻◻◻◻◻] 36%
 
   URL [b=back | q=quit] > https://www.imdb.com/title/tt28299608/
-    Identified as: IMDb title URL
+    Searching for: IMDb title URL
 
 ------------------------------------------------------------------------------------------------
-Q4. What episode scope?                                             Progress [◼◼◼◼◼◼◼◼◻◻◻◻◻] 58%
+Q4. What episode scope?                                             Progress [◼◼◼◼◼◼◻◻◻◻◻◻◻] 50%
 
-    1) Movie / single item (no season/episode)
+    1) One TV episode — Season 1 Episode 1
     2) A specific season + episode (or range)
     3) Whole season, every episode (-e all)
     4) Auto — let getsubtitle infer from the URL/title metadata
@@ -3437,7 +4390,7 @@ Q4. What episode scope?                                             Progress [�
   Episode or range within each season (e.g. 5, 1-10, all) [1 | b=back | q=quit] > 1
 
 ------------------------------------------------------------------------------------------------
-Q5. Which subtitle languages do you want to collect?                Progress [◼◼◼◼◼◼◼◼◼◼◻◻◻] 75%
+Q5. Which subtitle languages do you want to collect?                Progress [◼◼◼◼◼◼◼◼◻◻◻◻◻] 64%
 
     List them in the order you want them displayed (top → bottom).
 
@@ -3448,36 +4401,82 @@ Q5. Which subtitle languages do you want to collect?                Progress [�
 
   Languages (comma-separated) [ja,en | b=back | q=quit] > ja,en
 
+    Languages selected:
+      ja → Japanese
+      en → English
+
 ------------------------------------------------------------------------------------------------
-Q6. Reading aids (phonetic guides for the original script).         Progress [◼◼◼◼◼◼◼◼◼◼◼◼◻] 92%
+Q6. Reading aids (phonetic guides for the original script).         Progress [◼◼◼◼◼◼◼◼◼◼◻◻◻] 79%
 
     Example output: 漢字（かんじ）
     Pick any combination by number, or '1' to skip.
     1) No reading aid (skip)
     2) Japanese — hiragana readings for kanji   [ja:hiragana]
-       Preview: 勉強する → べんきょうする
+       Example: 勉強する → べんきょうする
     3) Japanese — katakana readings for kanji   [ja:katakana]
-       Preview: 勉強する → ベンキョウする
+       Example: 勉強する → ベンキョウする
     4) Japanese — full-sentence romaji   [ja:romaji]
-       Preview: 今日は日本語を練習したい → kyou wa nihongo wo renshuu shitai
+       Example: 今日は日本語を練習したい → kyou wa nihongo wo renshuu shitai
 
   Numbers (comma-separated) [1 | b=back | q=quit] > 2
+
+------------------------------------------------------------------------------------------------
+Q7. Final output format.                                            Progress [◼◼◼◼◼◼◼◼◼◼◼◼◻] 93%
+
+    Choose the format that best matches your player.
+    1) SRT  — works almost everywhere
+              Plex, Jellyfin, Smart TVs, tablets, phones, VLC
+    2) ASS  — best for local study playback
+              Better subtitle positioning, sizing, and readability
+    3) VTT  — best for browser-based language learning
+              Works with a browser extension on Netflix, Disney+ & other streaming sites
+    4) SMI  — Korean subtitle format
+              Common in older Korean subtitle archives
+    5) TXT  — plain text without timestamps
+
+    Recommendations:
+      Watching on TV, tablet, phone, Plex, or Jellyfin?
+        → SRT
+
+      Watching local video files on VLC, MPV, or desktop players?
+        → ASS
+
+      Streaming Netflix with multiple subtitles?
+        → VTT (asbplayer browser plug-in required)
+
+              Example:
+              VTT:  にほんご　　べんきょう
+                    日本語  を  勉強 したい
+
+              OTHER FORMATS:  日本語(にほんご)を勉強(べんきょう)したい
+
+    Suggested default: VTT — VTT supports true Japanese ruby in browsers/asbplayer; local players vary.
+
+    Reading-aid notes:
+      VTT can show true ruby above Japanese text in browsers/asbplayer.
+      SRT/SMI/ASS use fallback reading-aid layouts instead.
+
+  Final format [3 | b=back | q=quit] >
 
 ======================================================================
 Here's the plan:
 ======================================================================
   • Fetch ja, en for https://www.imdb.com/title/tt28299608/  (season 1, episode 1)
   • Add reading aids: ja:hiragana
-  • Stack ja, en into one VTT file  →  *.ja-en.vtt
+  • Stack ja, en into one VTT file → *.ja-en.vtt
   • Save to ~/Downloads/GetSubtitle
+======================================================================
+Before running:
+======================================================================
+  ⚠ Japanese subtitles can be harder to find automatically; manual search or translation may be needed.
+  ⚠ VTT reading aids work best in browsers/asbplayer; local player support varies.
 ======================================================================
 Smart defaults filled in for you (edit via 'Edit a single answer'):
 ======================================================================
-  Display order  ja, en  (top → bottom on screen)
-  Timing master  ja  (first language)
-  Cleanup preset on  (single-line cues + strip broadcast noise)
-  Output format  VTT — best for browser / asbplayer Japanese ruby.  Edit to pick SRT / ASS / VTT / SMI / TXT.
-  Output folder  ~/Downloads/GetSubtitle
+  Display order   ja, en  (top → bottom on screen)
+  Timing master   ja  (first language)
+  Cleanup preset  on  (single-line cues + strip broadcast noise)
+  Output folder   ~/Downloads/GetSubtitle
 ======================================================================
 
     1) Run it now
@@ -3524,25 +4523,22 @@ CLI flags win over matching TOML settings, so the file can stay as a reusable te
 
 ```text
   ____      _   ____        _     _   _ _   _
-
  / ___| ___| |_/ ___| _   _| |__ | |_| |_| |_| ___
-
 | |  _ / _ \ __\___ \| | | | '_ \| __| | __| |/ _ \
-
 | |_| |  __/ |_ ___) | |_| | |_) | |_| | |_| |  __/
-
  \____|\___|\__|____/ \__,_|_.__/ \__|_|\__|_|\___|
 
 GetSubtitle — Workflow Builder
 
 Answer a few questions to generate a command and reusable workflow.
 
+------------------------------------------------------------------------------------------------
 Commands:
-  Enter  Accept default
-  b      Back
-  q      Quit
-  Ctrl-C Cancel
-
+    Enter  Accept default
+    b      Back
+    q      Quit
+    Ctrl-C Cancel
+------------------------------------------------------------------------------------------------
 Q1. What would you like to do?
 
     1) Fetch      Download subtitles from a URL or title
@@ -3561,7 +4557,7 @@ Q1. What would you like to do?
     Selected: fetch + translate + modify + merge.
 
 ------------------------------------------------------------------------------------------------
-Q2. What should getsubtitle work on?                                Progress [◼◼◼◻◻◻◻◻◻◻◻◻◻] 21%
+Q2. Where should we get subtitles from?                             Progress [◼◼◻◻◻◻◻◻◻◻◻◻◻] 19%
 
     1) A movie/show title (The Simpsons, Totoro, The Matrix, …)
     2) A streaming/catalog URL (IMDb, AniList, Netflix, Crunchyroll, …)
@@ -3570,15 +4566,15 @@ Q2. What should getsubtitle work on?                                Progress [�
   Number [3 | b=back | q=quit] > 2
 
 ------------------------------------------------------------------------------------------------
-Q3. Enter the URL.                                                  Progress [◼◼◼◼◼◻◻◻◻◻◻◻◻] 36%
+Q3. Enter the URL.                                                  Progress [◼◼◼◼◻◻◻◻◻◻◻◻◻] 31%
 
   URL [b=back | q=quit] > https://www.imdb.com/title/tt28299608/
-    Identified as: IMDb title URL
+    Searching for: IMDb title URL
 
 ------------------------------------------------------------------------------------------------
-Q4. What episode scope?                                             Progress [◼◼◼◼◼◼◻◻◻◻◻◻◻] 50%
+Q4. What episode scope?                                             Progress [◼◼◼◼◼◼◻◻◻◻◻◻◻] 44%
 
-    1) Movie / single item (no season/episode)
+    1) One TV episode — Season 1 Episode 1
     2) A specific season + episode (or range)
     3) Whole season, every episode (-e all)
     4) Auto — let getsubtitle infer from the URL/title metadata
@@ -3586,9 +4582,12 @@ Q4. What episode scope?                                             Progress [�
         single item; TV without -e usually picks S01E01)
 
   Number [4 | b=back | q=quit] > 1
+    This selected source looks like a TV/show result, not a movie.
+    If you meant a movie, type 'b' and choose the movie result from title search.
+    For this TV/show source, I will use Season 1 Episode 1.
 
 ------------------------------------------------------------------------------------------------
-Q5. Which subtitle languages do you want to collect?                Progress [◼◼◼◼◼◼◼◼◻◻◻◻◻] 64%
+Q5. Which subtitle languages do you want to collect?                Progress [◼◼◼◼◼◼◼◻◻◻◻◻◻] 56%
 
     List them in the order you want them displayed (top → bottom).
 
@@ -3599,8 +4598,12 @@ Q5. Which subtitle languages do you want to collect?                Progress [�
 
   Languages (comma-separated) [ja,en | b=back | q=quit] > ja,en
 
+    Languages selected:
+      ja → Japanese
+      en → English
+
 ------------------------------------------------------------------------------------------------
-Q6. Fill missing subtitles?                                         Progress [◼◼◼◼◼◼◼◼◼◼◻◻◻] 79%
+Q6. Fill missing subtitles?                                         Progress [◼◼◼◼◼◼◼◼◼◻◻◻◻] 69%
 
     1) Skip (use only what's downloaded)
     2) Translate with Argos (local, basic quality)
@@ -3610,38 +4613,84 @@ Q6. Fill missing subtitles?                                         Progress [�
   Number [1 | b=back | q=quit] > 4
 
 ------------------------------------------------------------------------------------------------
-Q7. Reading aids (phonetic guides for the original script).         Progress [◼◼◼◼◼◼◼◼◼◼◼◼◻] 93%
+Q7. Reading aids (phonetic guides for the original script).         Progress [◼◼◼◼◼◼◼◼◼◼◼◻◻] 81%
 
     Example output: 漢字（かんじ）
     Pick any combination by number, or '1' to skip.
     1) No reading aid (skip)
     2) Japanese — hiragana readings for kanji   [ja:hiragana]
-       Preview: 勉強する → べんきょうする
+       Example: 勉強する → べんきょうする
     3) Japanese — katakana readings for kanji   [ja:katakana]
-       Preview: 勉強する → ベンキョウする
+       Example: 勉強する → ベンキョウする
     4) Japanese — full-sentence romaji   [ja:romaji]
-       Preview: 今日は日本語を練習したい → kyou wa nihongo wo renshuu shitai
+       Example: 今日は日本語を練習したい → kyou wa nihongo wo renshuu shitai
 
   Numbers (comma-separated) [1 | b=back | q=quit] > 1
+
+------------------------------------------------------------------------------------------------
+Q8. Final output format.                                            Progress [◼◼◼◼◼◼◼◼◼◼◼◼◻] 94%
+
+    Choose the format that best matches your player.
+    1) SRT  — works almost everywhere
+              Plex, Jellyfin, Smart TVs, tablets, phones, VLC
+    2) ASS  — best for local study playback
+              Better subtitle positioning, sizing, and readability
+    3) VTT  — best for browser-based language learning
+              Works with a browser extension on Netflix, Disney+ & other streaming sites
+    4) SMI  — Korean subtitle format
+              Common in older Korean subtitle archives
+    5) TXT  — plain text without timestamps
+
+    Recommendations:
+      Watching on TV, tablet, phone, Plex, or Jellyfin?
+        → SRT
+
+      Watching local video files on VLC, MPV, or desktop players?
+        → ASS
+
+      Streaming Netflix with multiple subtitles?
+        → VTT (asbplayer browser plug-in required)
+
+    Suggested default: SRT — SRT is the safest general-purpose choice.
+
+  Final format [1 | b=back | q=quit] >
+
+------------------------------------------------------------------------------------------------
+Q9. Subtitle text size?                                             Progress [◼◼◼◼◼◼◼◼◼◼◼◼◻] 94%
+
+    Subtitle text size
+    Format: SRT
+
+    Please note many players ignore font sizes in SRT files.
+    If your player supports sizing, these presets are recommended:
+
+    1) Regular (16px) — recommended
+    2) Smaller (12px)
+    3) Larger (20px)
+    4) Custom — enter exact font size
+
+  Number [1 | b=back | q=quit] >
 
 ======================================================================
 Here's the plan:
 ======================================================================
-  • Fetch ja, en for https://www.imdb.com/title/tt28299608/
+  • Fetch ja, en for https://www.imdb.com/title/tt28299608/  (season 1, episode 1)
   • Fill gaps with Deepl AI translation
   • Clean up cues (single line, strip broadcast noise)
-  • Stack ja, en into one SRT file  →  *.ja-en.srt
-  • Use subtitle text size regular (SRT support depends on player)
+  • Stack ja, en into one SRT file → *.ja-en.srt
+  • Use subtitle text size: Regular
   • Save to ~/Downloads/GetSubtitle
+======================================================================
+Before running:
+======================================================================
+  ⚠ Japanese subtitles can be harder to find automatically; manual search or translation may be needed.
 ======================================================================
 Smart defaults filled in for you (edit via 'Edit a single answer'):
 ======================================================================
-  Display order  ja, en  (top → bottom on screen)
-  Timing master  ja  (first language)
-  Cleanup preset on  (single-line cues + strip broadcast noise)
-  Output format  SRT — plays almost everywhere (Plex, TVs, phones).  Edit to pick SRT / ASS / VTT / SMI / TXT.
-  Text size      regular  (calibrated; edit to change)
-  Output folder  ~/Downloads/GetSubtitle
+  Display order   ja, en  (top → bottom on screen)
+  Timing master   ja  (first language)
+  Cleanup preset  on  (single-line cues + strip broadcast noise)
+  Output folder   ~/Downloads/GetSubtitle
 ======================================================================
 
     1) Run it now
@@ -3658,7 +4707,7 @@ Smart defaults filled in for you (edit via 'Edit a single answer'):
 Saved: {TMP}/deepl-flow.toml
 
 Your deepl-flow.toml runs the same workflow as this command:
-  # getsubtitle --fetch https://www.imdb.com/title/tt28299608/ --languages ja,en --translate deepl --modify --strip-cc-noise --single-line --merge --languages ja,en --format srt --font-size regular --output ~/Downloads/GetSubtitle
+  # getsubtitle --fetch https://www.imdb.com/title/tt28299608/ --season 1 --episode 1 --languages ja,en --translate deepl --season 1 --episode 1 --modify --season 1 --episode 1 --strip-cc-noise --single-line --merge --languages ja,en --season 1 --episode 1 --format srt --font-size regular --output ~/Downloads/GetSubtitle
 
 Run it later with:
   getsubtitle --config {TMP}/deepl-flow.toml
@@ -3688,25 +4737,22 @@ CLI flags win over matching TOML settings, so the file can stay as a reusable te
 
 ```text
   ____      _   ____        _     _   _ _   _
-
  / ___| ___| |_/ ___| _   _| |__ | |_| |_| |_| ___
-
 | |  _ / _ \ __\___ \| | | | '_ \| __| | __| |/ _ \
-
 | |_| |  __/ |_ ___) | |_| | |_) | |_| | |_| |  __/
-
  \____|\___|\__|____/ \__,_|_.__/ \__|_|\__|_|\___|
 
 GetSubtitle — Workflow Builder
 
 Answer a few questions to generate a command and reusable workflow.
 
+------------------------------------------------------------------------------------------------
 Commands:
-  Enter  Accept default
-  b      Back
-  q      Quit
-  Ctrl-C Cancel
-
+    Enter  Accept default
+    b      Back
+    q      Quit
+    Ctrl-C Cancel
+------------------------------------------------------------------------------------------------
 Q1. What would you like to do?
 
     1) Fetch      Download subtitles from a URL or title
@@ -3725,7 +4771,7 @@ Q1. What would you like to do?
     Selected: fetch + translate + modify + merge.
 
 ------------------------------------------------------------------------------------------------
-Q2. What should getsubtitle work on?                                Progress [◼◼◼◻◻◻◻◻◻◻◻◻◻] 21%
+Q2. Where should we get subtitles from?                             Progress [◼◼◻◻◻◻◻◻◻◻◻◻◻] 19%
 
     1) A movie/show title (The Simpsons, Totoro, The Matrix, …)
     2) A streaming/catalog URL (IMDb, AniList, Netflix, Crunchyroll, …)
@@ -3734,13 +4780,13 @@ Q2. What should getsubtitle work on?                                Progress [�
   Number [3 | b=back | q=quit] >
 
 ------------------------------------------------------------------------------------------------
-Q3. Enter the folder or file path.                                  Progress [◼◼◼◼◼◻◻◻◻◻◻◻◻] 36%
+Q3. Enter the folder or file path.                                  Progress [◼◼◼◼◻◻◻◻◻◻◻◻◻] 31%
 
   Folder or file path [b=back | q=quit] > {TMP}/Foo
-    Identified as: local subtitle folder: 0 video file(s), 2 subtitle file(s)
+    Searching for: local subtitle folder: 0 video file(s), 2 subtitle file(s)
 
 ------------------------------------------------------------------------------------------------
-Q4. Which subtitle languages do you want to collect?                Progress [◼◼◼◼◼◼◻◻◻◻◻◻◻] 50%
+Q4. Which subtitle languages do you want to collect?                Progress [◼◼◼◼◼◼◻◻◻◻◻◻◻] 44%
 
     List them in the order you want them displayed (top → bottom).
 
@@ -3751,8 +4797,12 @@ Q4. Which subtitle languages do you want to collect?                Progress [�
 
   Languages (comma-separated) [ja,en | b=back | q=quit] >
 
+    Languages selected:
+      ja → Japanese
+      en → English
+
 ------------------------------------------------------------------------------------------------
-Q5. Fill missing subtitles?                                         Progress [◼◼◼◼◼◼◼◼◻◻◻◻◻] 64%
+Q5. Fill missing subtitles?                                         Progress [◼◼◼◼◼◼◼◻◻◻◻◻◻] 56%
 
     1) Skip (use only what's downloaded)
     2) Translate with Argos (local, basic quality)
@@ -3762,37 +4812,79 @@ Q5. Fill missing subtitles?                                         Progress [�
   Number [1 | b=back | q=quit] >
 
 ------------------------------------------------------------------------------------------------
-Q6. Reading aids (phonetic guides for the original script).         Progress [◼◼◼◼◼◼◼◼◼◼◻◻◻] 79%
+Q6. Reading aids (phonetic guides for the original script).         Progress [◼◼◼◼◼◼◼◼◼◻◻◻◻] 69%
 
     Example output: 漢字（かんじ）
     Pick any combination by number, or '1' to skip.
     1) No reading aid (skip)
     2) Japanese — hiragana readings for kanji   [ja:hiragana]
-       Preview: 勉強する → べんきょうする
+       Example: 勉強する → べんきょうする
     3) Japanese — katakana readings for kanji   [ja:katakana]
-       Preview: 勉強する → ベンキョウする
+       Example: 勉強する → ベンキョウする
     4) Japanese — full-sentence romaji   [ja:romaji]
-       Preview: 今日は日本語を練習したい → kyou wa nihongo wo renshuu shitai
+       Example: 今日は日本語を練習したい → kyou wa nihongo wo renshuu shitai
 
   Numbers (comma-separated) [1 | b=back | q=quit] >
+
+------------------------------------------------------------------------------------------------
+Q7. Final output format.                                            Progress [◼◼◼◼◼◼◼◼◼◼◼◻◻] 81%
+
+    Choose the format that best matches your player.
+    1) SRT  — works almost everywhere
+              Plex, Jellyfin, Smart TVs, tablets, phones, VLC
+    2) ASS  — best for local study playback
+              Better subtitle positioning, sizing, and readability
+    3) VTT  — best for browser-based language learning
+              Works with a browser extension on Netflix, Disney+ & other streaming sites
+    4) SMI  — Korean subtitle format
+              Common in older Korean subtitle archives
+    5) TXT  — plain text without timestamps
+
+    Recommendations:
+      Watching on TV, tablet, phone, Plex, or Jellyfin?
+        → SRT
+
+      Watching local video files on VLC, MPV, or desktop players?
+        → ASS
+
+      Streaming Netflix with multiple subtitles?
+        → VTT (asbplayer browser plug-in required)
+
+    Suggested default: SRT — SRT is the safest general-purpose choice.
+
+  Final format [1 | b=back | q=quit] >
+
+------------------------------------------------------------------------------------------------
+Q8. Subtitle text size?                                             Progress [◼◼◼◼◼◼◼◼◼◼◼◻◻] 83%
+
+    Subtitle text size
+    Format: SRT
+
+    Please note many players ignore font sizes in SRT files.
+    If your player supports sizing, these presets are recommended:
+
+    1) Regular (16px) — recommended
+    2) Smaller (12px)
+    3) Larger (20px)
+    4) Custom — enter exact font size
+
+  Number [1 | b=back | q=quit] >
 
 ======================================================================
 Here's the plan:
 ======================================================================
   • Fetch ja, en for {TMP}/Foo
   • Clean up cues (single line, strip broadcast noise)
-  • Stack ja, en into one SRT file  →  *.ja-en.srt
-  • Use subtitle text size regular (SRT support depends on player)
+  • Stack ja, en into one SRT file → *.ja-en.srt
+  • Use subtitle text size: Regular
   • Save to {TMP}/Foo
 ======================================================================
 Smart defaults filled in for you (edit via 'Edit a single answer'):
 ======================================================================
-  Display order  ja, en  (top → bottom on screen)
-  Timing master  ja  (first language)
-  Cleanup preset on  (single-line cues + strip broadcast noise)
-  Output format  SRT — plays almost everywhere (Plex, TVs, phones).  Edit to pick SRT / ASS / VTT / SMI / TXT.
-  Text size      regular  (calibrated; edit to change)
-  Output folder  {TMP}/Foo  (beside source)
+  Display order   ja, en  (top → bottom on screen)
+  Timing master   ja  (first language)
+  Cleanup preset  on  (single-line cues + strip broadcast noise)
+  Output folder   {TMP}/Foo  (beside source)
 ======================================================================
 
     1) Run it now
@@ -3816,17 +4908,17 @@ Running:
 ======================================================================
 Workflow summary
 ======================================================================
-Result: completed
+Completed successfully
 Source: {TMP}/Foo
 Scope: auto / not specified
 Languages requested: ja, en
 Output folder: {TMP}/Foo
 Preflight info: 1
 
-Next:
-  Merge later with: getsubtitle merge {TMP}/Foo -l ja,en
-  Re-run this workflow command after any setup fixes:
-    getsubtitle --fetch {TMP}/Foo --languages ja,en --modify --strip-cc-noise --single-line --merge --languages ja,en --format srt --font-size regular --output {TMP}/Foo
+Next steps:
+  1. Merge later with: getsubtitle merge {TMP}/Foo -l ja,en
+  2. Re-run this workflow command after any setup fixes:
+     getsubtitle --fetch {TMP}/Foo --languages ja,en --modify --strip-cc-noise --single-line --merge --languages ja,en --format srt --font-size regular --output {TMP}/Foo
   Open folder? [Y/n] >
 ```
 
@@ -3845,25 +4937,22 @@ Next:
 
 ```text
   ____      _   ____        _     _   _ _   _
-
  / ___| ___| |_/ ___| _   _| |__ | |_| |_| |_| ___
-
 | |  _ / _ \ __\___ \| | | | '_ \| __| | __| |/ _ \
-
 | |_| |  __/ |_ ___) | |_| | |_) | |_| | |_| |  __/
-
  \____|\___|\__|____/ \__,_|_.__/ \__|_|\__|_|\___|
 
 GetSubtitle — Workflow Builder
 
 Answer a few questions to generate a command and reusable workflow.
 
+------------------------------------------------------------------------------------------------
 Commands:
-  Enter  Accept default
-  b      Back
-  q      Quit
-  Ctrl-C Cancel
-
+    Enter  Accept default
+    b      Back
+    q      Quit
+    Ctrl-C Cancel
+------------------------------------------------------------------------------------------------
 Q1. What would you like to do?
 
     1) Fetch      Download subtitles from a URL or title
@@ -3882,16 +4971,16 @@ Q1. What would you like to do?
     Selected: modify + merge.
 
 ------------------------------------------------------------------------------------------------
-Q2. Folder or file to process.                                      Progress [◼◼◼◼◼◻◻◻◻◻◻◻◻] 38%
+Q2. Folder or file to process.                                      Progress [◼◼◼◼◻◻◻◻◻◻◻◻◻] 30%
 
     Drop a folder of subtitle files, a single subtitle/video file,
     or any local path your selected step(s) should operate on.
 
   Folder or file path [b=back | q=quit] > {TMP}/Show
-    Identified as: local subtitle folder: 0 video file(s), 2 subtitle file(s)
+    Searching for: local subtitle folder: 0 video file(s), 2 subtitle file(s)
 
 ------------------------------------------------------------------------------------------------
-Q3. Which subtitle languages do you want to collect?                Progress [◼◼◼◼◼◼◼◼◻◻◻◻◻] 62%
+Q3. Which subtitle languages do you want to collect?                Progress [◼◼◼◼◼◼◻◻◻◻◻◻◻] 50%
 
     List them in the order you want them displayed (top → bottom).
 
@@ -3902,36 +4991,81 @@ Q3. Which subtitle languages do you want to collect?                Progress [�
 
   Languages (comma-separated) [ja,en | b=back | q=quit] > ja,en
 
+    Languages selected:
+      ja → Japanese
+      en → English
+
 ------------------------------------------------------------------------------------------------
-Q4. Reading aids (phonetic guides for the original script).         Progress [◼◼◼◼◼◼◼◼◼◼◼◻◻] 88%
+Q4. Reading aids (phonetic guides for the original script).         Progress [◼◼◼◼◼◼◼◼◼◻◻◻◻] 70%
 
     Example output: 漢字（かんじ）
     Pick any combination by number, or '1' to skip.
     1) No reading aid (skip)
     2) Japanese — hiragana readings for kanji   [ja:hiragana]
-       Preview: 勉強する → べんきょうする
+       Example: 勉強する → べんきょうする
     3) Japanese — katakana readings for kanji   [ja:katakana]
-       Preview: 勉強する → ベンキョウする
+       Example: 勉強する → ベンキョウする
     4) Japanese — full-sentence romaji   [ja:romaji]
-       Preview: 今日は日本語を練習したい → kyou wa nihongo wo renshuu shitai
+       Example: 今日は日本語を練習したい → kyou wa nihongo wo renshuu shitai
 
   Numbers (comma-separated) [1 | b=back | q=quit] > 2
+
+------------------------------------------------------------------------------------------------
+Q5. Final output format.                                            Progress [◼◼◼◼◼◼◼◼◼◼◼◼◻] 90%
+
+    Choose the format that best matches your player.
+    1) SRT  — works almost everywhere
+              Plex, Jellyfin, Smart TVs, tablets, phones, VLC
+    2) ASS  — best for local study playback
+              Better subtitle positioning, sizing, and readability
+    3) VTT  — best for browser-based language learning
+              Works with a browser extension on Netflix, Disney+ & other streaming sites
+    4) SMI  — Korean subtitle format
+              Common in older Korean subtitle archives
+    5) TXT  — plain text without timestamps
+
+    Recommendations:
+      Watching on TV, tablet, phone, Plex, or Jellyfin?
+        → SRT
+
+      Watching local video files on VLC, MPV, or desktop players?
+        → ASS
+
+      Streaming Netflix with multiple subtitles?
+        → VTT (asbplayer browser plug-in required)
+
+              Example:
+              VTT:  にほんご　　べんきょう
+                    日本語  を  勉強 したい
+
+              OTHER FORMATS:  日本語(にほんご)を勉強(べんきょう)したい
+
+    Suggested default: VTT — VTT supports true Japanese ruby in browsers/asbplayer; local players vary.
+
+    Reading-aid notes:
+      VTT can show true ruby above Japanese text in browsers/asbplayer.
+      SRT/SMI/ASS use fallback reading-aid layouts instead.
+
+  Final format [3 | b=back | q=quit] >
 
 ======================================================================
 Here's the plan:
 ======================================================================
   • Use local ja, en files in {TMP}/Show
   • Add reading aids: ja:hiragana
-  • Stack ja, en into one VTT file  →  *.ja-en.vtt
+  • Stack ja, en into one VTT file → *.ja-en.vtt
   • Save to {TMP}/Show
+======================================================================
+Before running:
+======================================================================
+  ⚠ VTT reading aids work best in browsers/asbplayer; local player support varies.
 ======================================================================
 Smart defaults filled in for you (edit via 'Edit a single answer'):
 ======================================================================
-  Display order  ja, en  (top → bottom on screen)
-  Timing master  ja  (first language)
-  Cleanup preset on  (single-line cues + strip broadcast noise)
-  Output format  VTT — best for browser / asbplayer Japanese ruby.  Edit to pick SRT / ASS / VTT / SMI / TXT.
-  Output folder  {TMP}/Show  (beside source)
+  Display order   ja, en  (top → bottom on screen)
+  Timing master   ja  (first language)
+  Cleanup preset  on  (single-line cues + strip broadcast noise)
+  Output folder   {TMP}/Show  (beside source)
 ======================================================================
 
     1) Run it now
@@ -3978,25 +5112,22 @@ CLI flags win over matching TOML settings, so the file can stay as a reusable te
 
 ```text
   ____      _   ____        _     _   _ _   _
-
  / ___| ___| |_/ ___| _   _| |__ | |_| |_| |_| ___
-
 | |  _ / _ \ __\___ \| | | | '_ \| __| | __| |/ _ \
-
 | |_| |  __/ |_ ___) | |_| | |_) | |_| | |_| |  __/
-
  \____|\___|\__|____/ \__,_|_.__/ \__|_|\__|_|\___|
 
 GetSubtitle — Workflow Builder
 
 Answer a few questions to generate a command and reusable workflow.
 
+------------------------------------------------------------------------------------------------
 Commands:
-  Enter  Accept default
-  b      Back
-  q      Quit
-  Ctrl-C Cancel
-
+    Enter  Accept default
+    b      Back
+    q      Quit
+    Ctrl-C Cancel
+------------------------------------------------------------------------------------------------
 Q1. What would you like to do?
 
     1) Fetch      Download subtitles from a URL or title
@@ -4015,16 +5146,16 @@ Q1. What would you like to do?
     Selected: modify + merge.
 
 ------------------------------------------------------------------------------------------------
-Q2. Folder or file to process.                                      Progress [◼◼◼◼◼◻◻◻◻◻◻◻◻] 38%
+Q2. Folder or file to process.                                      Progress [◼◼◼◼◻◻◻◻◻◻◻◻◻] 30%
 
     Drop a folder of subtitle files, a single subtitle/video file,
     or any local path your selected step(s) should operate on.
 
   Folder or file path [b=back | q=quit] > {TMP}/Show
-    Identified as: local subtitle folder: 0 video file(s), 2 subtitle file(s)
+    Searching for: local subtitle folder: 0 video file(s), 2 subtitle file(s)
 
 ------------------------------------------------------------------------------------------------
-Q3. Which subtitle languages do you want to collect?                Progress [◼◼◼◼◼◼◼◼◻◻◻◻◻] 62%
+Q3. Which subtitle languages do you want to collect?                Progress [◼◼◼◼◼◼◻◻◻◻◻◻◻] 50%
 
     List them in the order you want them displayed (top → bottom).
 
@@ -4035,38 +5166,84 @@ Q3. Which subtitle languages do you want to collect?                Progress [�
 
   Languages (comma-separated) [ja,en | b=back | q=quit] > ja,en
 
+    Languages selected:
+      ja → Japanese
+      en → English
+
 ------------------------------------------------------------------------------------------------
-Q4. Reading aids (phonetic guides for the original script).         Progress [◼◼◼◼◼◼◼◼◼◼◼◻◻] 88%
+Q4. Reading aids (phonetic guides for the original script).         Progress [◼◼◼◼◼◼◼◼◼◻◻◻◻] 70%
 
     Example output: 漢字（かんじ）
     Pick any combination by number, or '1' to skip.
     1) No reading aid (skip)
     2) Japanese — hiragana readings for kanji   [ja:hiragana]
-       Preview: 勉強する → べんきょうする
+       Example: 勉強する → べんきょうする
     3) Japanese — katakana readings for kanji   [ja:katakana]
-       Preview: 勉強する → ベンキョウする
+       Example: 勉強する → ベンキョウする
     4) Japanese — full-sentence romaji   [ja:romaji]
-       Preview: 今日は日本語を練習したい → kyou wa nihongo wo renshuu shitai
+       Example: 今日は日本語を練習したい → kyou wa nihongo wo renshuu shitai
 
   Numbers (comma-separated) [1 | b=back | q=quit] > 1
+
+------------------------------------------------------------------------------------------------
+Q5. Final output format.                                            Progress [◼◼◼◼◼◼◼◼◼◼◼◼◻] 90%
+
+    Choose the format that best matches your player.
+    1) SRT  — works almost everywhere
+              Plex, Jellyfin, Smart TVs, tablets, phones, VLC
+    2) ASS  — best for local study playback
+              Better subtitle positioning, sizing, and readability
+    3) VTT  — best for browser-based language learning
+              Works with a browser extension on Netflix, Disney+ & other streaming sites
+    4) SMI  — Korean subtitle format
+              Common in older Korean subtitle archives
+    5) TXT  — plain text without timestamps
+
+    Recommendations:
+      Watching on TV, tablet, phone, Plex, or Jellyfin?
+        → SRT
+
+      Watching local video files on VLC, MPV, or desktop players?
+        → ASS
+
+      Streaming Netflix with multiple subtitles?
+        → VTT (asbplayer browser plug-in required)
+
+    Suggested default: SRT — SRT is the safest general-purpose choice.
+
+  Final format [1 | b=back | q=quit] >
+
+------------------------------------------------------------------------------------------------
+Q6. Subtitle text size?                                             Progress [◼◼◼◼◼◼◼◼◼◼◼◼◻] 92%
+
+    Subtitle text size
+    Format: SRT
+
+    Please note many players ignore font sizes in SRT files.
+    If your player supports sizing, these presets are recommended:
+
+    1) Regular (16px) — recommended
+    2) Smaller (12px)
+    3) Larger (20px)
+    4) Custom — enter exact font size
+
+  Number [1 | b=back | q=quit] >
 
 ======================================================================
 Here's the plan:
 ======================================================================
   • Use local ja, en files in {TMP}/Show
   • Clean up cues (single line, strip broadcast noise)
-  • Stack ja, en into one SRT file  →  *.ja-en.srt
-  • Use subtitle text size regular (SRT support depends on player)
+  • Stack ja, en into one SRT file → *.ja-en.srt
+  • Use subtitle text size: Regular
   • Save to {TMP}/Show
 ======================================================================
 Smart defaults filled in for you (edit via 'Edit a single answer'):
 ======================================================================
-  Display order  ja, en  (top → bottom on screen)
-  Timing master  ja  (first language)
-  Cleanup preset on  (single-line cues + strip broadcast noise)
-  Output format  SRT — plays almost everywhere (Plex, TVs, phones).  Edit to pick SRT / ASS / VTT / SMI / TXT.
-  Text size      regular  (calibrated; edit to change)
-  Output folder  {TMP}/Show  (beside source)
+  Display order   ja, en  (top → bottom on screen)
+  Timing master   ja  (first language)
+  Cleanup preset  on  (single-line cues + strip broadcast noise)
+  Output folder   {TMP}/Show  (beside source)
 ======================================================================
 
     1) Run it now
@@ -4095,25 +5272,22 @@ Quit.
 
 ```text
   ____      _   ____        _     _   _ _   _
-
  / ___| ___| |_/ ___| _   _| |__ | |_| |_| |_| ___
-
 | |  _ / _ \ __\___ \| | | | '_ \| __| | __| |/ _ \
-
 | |_| |  __/ |_ ___) | |_| | |_) | |_| | |_| |  __/
-
  \____|\___|\__|____/ \__,_|_.__/ \__|_|\__|_|\___|
 
 GetSubtitle — Workflow Builder
 
 Answer a few questions to generate a command and reusable workflow.
 
+------------------------------------------------------------------------------------------------
 Commands:
-  Enter  Accept default
-  b      Back
-  q      Quit
-  Ctrl-C Cancel
-
+    Enter  Accept default
+    b      Back
+    q      Quit
+    Ctrl-C Cancel
+------------------------------------------------------------------------------------------------
 Q1. What would you like to do?
 
     1) Fetch      Download subtitles from a URL or title
@@ -4132,16 +5306,16 @@ Q1. What would you like to do?
     Selected: merge.
 
 ------------------------------------------------------------------------------------------------
-Q2. Folder or file to process.                                      Progress [◼◼◼◼◼◼◻◻◻◻◻◻◻] 50%
+Q2. Folder or file to process.                                      Progress [◼◼◼◼◼◻◻◻◻◻◻◻◻] 38%
 
     Drop a folder of subtitle files, a single subtitle/video file,
     or any local path your selected step(s) should operate on.
 
   Folder or file path [b=back | q=quit] > {TMP}/Totoro
-    Identified as: local subtitle folder: 0 video file(s), 2 subtitle file(s)
+    Searching for: local subtitle folder: 0 video file(s), 2 subtitle file(s)
 
 ------------------------------------------------------------------------------------------------
-Q3. Which subtitle languages do you want to collect?                Progress [◼◼◼◼◼◼◼◼◼◼◼◻◻] 83%
+Q3. Which subtitle languages do you want to collect?                Progress [◼◼◼◼◼◼◼◼◻◻◻◻◻] 62%
 
     List them in the order you want them displayed (top → bottom).
 
@@ -4152,26 +5326,72 @@ Q3. Which subtitle languages do you want to collect?                Progress [�
 
   Languages (comma-separated) [ja,en | b=back | q=quit] > ja,en
 
+    Languages selected:
+      ja → Japanese
+      en → English
+
     Japanese furigana reading aids need the Modify step (not selected yet).
   Add Modify so I can offer Japanese furigana reading aids? [Y/n | b=back | q=quit] > n
     No reading aids this run.
+
+------------------------------------------------------------------------------------------------
+Q4. Final output format.                                            Progress [◼◼◼◼◼◼◼◼◼◼◼◻◻] 88%
+
+    Choose the format that best matches your player.
+    1) SRT  — works almost everywhere
+              Plex, Jellyfin, Smart TVs, tablets, phones, VLC
+    2) ASS  — best for local study playback
+              Better subtitle positioning, sizing, and readability
+    3) VTT  — best for browser-based language learning
+              Works with a browser extension on Netflix, Disney+ & other streaming sites
+    4) SMI  — Korean subtitle format
+              Common in older Korean subtitle archives
+    5) TXT  — plain text without timestamps
+
+    Recommendations:
+      Watching on TV, tablet, phone, Plex, or Jellyfin?
+        → SRT
+
+      Watching local video files on VLC, MPV, or desktop players?
+        → ASS
+
+      Streaming Netflix with multiple subtitles?
+        → VTT (asbplayer browser plug-in required)
+
+    Suggested default: SRT — SRT is the safest general-purpose choice.
+
+  Final format [1 | b=back | q=quit] >
+
+------------------------------------------------------------------------------------------------
+Q5. Subtitle text size?                                             Progress [◼◼◼◼◼◼◼◼◼◼◼◼◻] 90%
+
+    Subtitle text size
+    Format: SRT
+
+    Please note many players ignore font sizes in SRT files.
+    If your player supports sizing, these presets are recommended:
+
+    1) Regular (16px) — recommended
+    2) Smaller (12px)
+    3) Larger (20px)
+    4) Custom — enter exact font size
+
+  Number [1 | b=back | q=quit] >
 
 ======================================================================
 Here's the plan:
 ======================================================================
   • Use local ja, en files in {TMP}/Totoro
-  • Stack ja, en into one SRT file  →  *.ja-en.srt
-  • Use subtitle text size regular (SRT support depends on player)
+  • Stack ja, en into one SRT file → *.ja-en.srt
+  • Use subtitle text size: Regular
   • Save to {TMP}/Totoro
 ======================================================================
 Smart defaults filled in for you (edit via 'Edit a single answer'):
 ======================================================================
-  Display order  ja, en  (top → bottom on screen)
-  Timing master  ja  (first language)
-  Cleanup preset on  (single-line cues + strip broadcast noise)
-  Output format  SRT — plays almost everywhere (Plex, TVs, phones).  Edit to pick SRT / ASS / VTT / SMI / TXT.
-  Text size      regular  (calibrated; edit to change)
-  Output folder  {TMP}/Totoro  (beside source)
+  Display order   ja, en  (top → bottom on screen)
+  Timing master   ja  (first language)
+  Cleanup preset  on  (single-line cues + strip broadcast noise)
+  Output folder   {TMP}/Totoro  (beside source)
 ======================================================================
 
     1) Run it now
@@ -4218,25 +5438,22 @@ CLI flags win over matching TOML settings, so the file can stay as a reusable te
 
 ```text
   ____      _   ____        _     _   _ _   _
-
  / ___| ___| |_/ ___| _   _| |__ | |_| |_| |_| ___
-
 | |  _ / _ \ __\___ \| | | | '_ \| __| | __| |/ _ \
-
 | |_| |  __/ |_ ___) | |_| | |_) | |_| | |_| |  __/
-
  \____|\___|\__|____/ \__,_|_.__/ \__|_|\__|_|\___|
 
 GetSubtitle — Workflow Builder
 
 Answer a few questions to generate a command and reusable workflow.
 
+------------------------------------------------------------------------------------------------
 Commands:
-  Enter  Accept default
-  b      Back
-  q      Quit
-  Ctrl-C Cancel
-
+    Enter  Accept default
+    b      Back
+    q      Quit
+    Ctrl-C Cancel
+------------------------------------------------------------------------------------------------
 Q1. What would you like to do?
 
     1) Fetch      Download subtitles from a URL or title
@@ -4255,16 +5472,16 @@ Q1. What would you like to do?
     Selected: modify + merge.
 
 ------------------------------------------------------------------------------------------------
-Q2. Folder or file to process.                                      Progress [◼◼◼◼◼◻◻◻◻◻◻◻◻] 38%
+Q2. Folder or file to process.                                      Progress [◼◼◼◼◻◻◻◻◻◻◻◻◻] 30%
 
     Drop a folder of subtitle files, a single subtitle/video file,
     or any local path your selected step(s) should operate on.
 
   Folder or file path [b=back | q=quit] > {TMP}/Show
-    Identified as: local subtitle folder: 0 video file(s), 3 subtitle file(s)
+    Searching for: local subtitle folder: 0 video file(s), 3 subtitle file(s)
 
 ------------------------------------------------------------------------------------------------
-Q3. Which subtitle languages do you want to collect?                Progress [◼◼◼◼◼◼◼◼◻◻◻◻◻] 62%
+Q3. Which subtitle languages do you want to collect?                Progress [◼◼◼◼◼◼◻◻◻◻◻◻◻] 50%
 
     List them in the order you want them displayed (top → bottom).
 
@@ -4275,38 +5492,84 @@ Q3. Which subtitle languages do you want to collect?                Progress [�
 
   Languages (comma-separated) [ja,en | b=back | q=quit] > ja,en
 
+    Languages selected:
+      ja → Japanese
+      en → English
+
 ------------------------------------------------------------------------------------------------
-Q4. Reading aids (phonetic guides for the original script).         Progress [◼◼◼◼◼◼◼◼◼◼◼◻◻] 88%
+Q4. Reading aids (phonetic guides for the original script).         Progress [◼◼◼◼◼◼◼◼◼◻◻◻◻] 70%
 
     Example output: 漢字（かんじ）
     Pick any combination by number, or '1' to skip.
     1) No reading aid (skip)
     2) Japanese — hiragana readings for kanji   [ja:hiragana]
-       Preview: 勉強する → べんきょうする
+       Example: 勉強する → べんきょうする
     3) Japanese — katakana readings for kanji   [ja:katakana]
-       Preview: 勉強する → ベンキョウする
+       Example: 勉強する → ベンキョウする
     4) Japanese — full-sentence romaji   [ja:romaji]
-       Preview: 今日は日本語を練習したい → kyou wa nihongo wo renshuu shitai
+       Example: 今日は日本語を練習したい → kyou wa nihongo wo renshuu shitai
 
   Numbers (comma-separated) [1 | b=back | q=quit] > 1
+
+------------------------------------------------------------------------------------------------
+Q5. Final output format.                                            Progress [◼◼◼◼◼◼◼◼◼◼◼◼◻] 90%
+
+    Choose the format that best matches your player.
+    1) SRT  — works almost everywhere
+              Plex, Jellyfin, Smart TVs, tablets, phones, VLC
+    2) ASS  — best for local study playback
+              Better subtitle positioning, sizing, and readability
+    3) VTT  — best for browser-based language learning
+              Works with a browser extension on Netflix, Disney+ & other streaming sites
+    4) SMI  — Korean subtitle format
+              Common in older Korean subtitle archives
+    5) TXT  — plain text without timestamps
+
+    Recommendations:
+      Watching on TV, tablet, phone, Plex, or Jellyfin?
+        → SRT
+
+      Watching local video files on VLC, MPV, or desktop players?
+        → ASS
+
+      Streaming Netflix with multiple subtitles?
+        → VTT (asbplayer browser plug-in required)
+
+    Suggested default: SRT — SRT is the safest general-purpose choice.
+
+  Final format [1 | b=back | q=quit] >
+
+------------------------------------------------------------------------------------------------
+Q6. Subtitle text size?                                             Progress [◼◼◼◼◼◼◼◼◼◼◼◼◻] 92%
+
+    Subtitle text size
+    Format: SRT
+
+    Please note many players ignore font sizes in SRT files.
+    If your player supports sizing, these presets are recommended:
+
+    1) Regular (16px) — recommended
+    2) Smaller (12px)
+    3) Larger (20px)
+    4) Custom — enter exact font size
+
+  Number [1 | b=back | q=quit] >
 
 ======================================================================
 Here's the plan:
 ======================================================================
   • Use local ja, en files in {TMP}/Show
   • Clean up cues (single line, strip broadcast noise)
-  • Stack ja, en into one SRT file  →  *.ja-en.srt
-  • Use subtitle text size regular (SRT support depends on player)
+  • Stack ja, en into one SRT file → *.ja-en.srt
+  • Use subtitle text size: Regular
   • Save to {TMP}/Show
 ======================================================================
 Smart defaults filled in for you (edit via 'Edit a single answer'):
 ======================================================================
-  Display order  ja, en  (top → bottom on screen)
-  Timing master  ja  (first language)
-  Cleanup preset on  (single-line cues + strip broadcast noise)
-  Output format  SRT — plays almost everywhere (Plex, TVs, phones).  Edit to pick SRT / ASS / VTT / SMI / TXT.
-  Text size      regular  (calibrated; edit to change)
-  Output folder  {TMP}/Show  (beside source)
+  Display order   ja, en  (top → bottom on screen)
+  Timing master   ja  (first language)
+  Cleanup preset  on  (single-line cues + strip broadcast noise)
+  Output folder   {TMP}/Show  (beside source)
 ======================================================================
 
     1) Run it now
@@ -4333,7 +5596,7 @@ Running:
 ======================================================================
 Workflow summary
 ======================================================================
-Result: completed
+Completed successfully
 Source: {TMP}/Show
 Scope: auto / not specified
 Languages requested: ja, en
@@ -4341,10 +5604,10 @@ Output folder: {TMP}/Show
 Preflight warnings: 1
 Preflight info: 1
 
-Next:
-  Merge later with: getsubtitle merge {TMP}/Show -l ja,en
-  Re-run this workflow command after any setup fixes:
-    getsubtitle --source {TMP}/Show --modify --strip-cc-noise --single-line --merge --languages ja,en --format srt --font-size regular --output {TMP}/Show
+Next steps:
+  1. Merge later with: getsubtitle merge {TMP}/Show -l ja,en
+  2. Re-run this workflow command after any setup fixes:
+     getsubtitle --source {TMP}/Show --modify --strip-cc-noise --single-line --merge --languages ja,en --format srt --font-size regular --output {TMP}/Show
   Open folder? [Y/n] > n
 ```
 
@@ -4363,25 +5626,22 @@ Next:
 
 ```text
   ____      _   ____        _     _   _ _   _
-
  / ___| ___| |_/ ___| _   _| |__ | |_| |_| |_| ___
-
 | |  _ / _ \ __\___ \| | | | '_ \| __| | __| |/ _ \
-
 | |_| |  __/ |_ ___) | |_| | |_) | |_| | |_| |  __/
-
  \____|\___|\__|____/ \__,_|_.__/ \__|_|\__|_|\___|
 
 GetSubtitle — Workflow Builder
 
 Answer a few questions to generate a command and reusable workflow.
 
+------------------------------------------------------------------------------------------------
 Commands:
-  Enter  Accept default
-  b      Back
-  q      Quit
-  Ctrl-C Cancel
-
+    Enter  Accept default
+    b      Back
+    q      Quit
+    Ctrl-C Cancel
+------------------------------------------------------------------------------------------------
 Q1. What would you like to do?
 
     1) Fetch      Download subtitles from a URL or title
@@ -4400,16 +5660,16 @@ Q1. What would you like to do?
     Selected: modify + merge.
 
 ------------------------------------------------------------------------------------------------
-Q2. Folder or file to process.                                      Progress [◼◼◼◼◼◻◻◻◻◻◻◻◻] 38%
+Q2. Folder or file to process.                                      Progress [◼◼◼◼◻◻◻◻◻◻◻◻◻] 30%
 
     Drop a folder of subtitle files, a single subtitle/video file,
     or any local path your selected step(s) should operate on.
 
   Folder or file path [b=back | q=quit] > {TMP}/Show
-    Identified as: local subtitle folder: 0 video file(s), 3 subtitle file(s)
+    Searching for: local subtitle folder: 0 video file(s), 3 subtitle file(s)
 
 ------------------------------------------------------------------------------------------------
-Q3. Which subtitle languages do you want to collect?                Progress [◼◼◼◼◼◼◼◼◻◻◻◻◻] 62%
+Q3. Which subtitle languages do you want to collect?                Progress [◼◼◼◼◼◼◻◻◻◻◻◻◻] 50%
 
     List them in the order you want them displayed (top → bottom).
 
@@ -4420,38 +5680,84 @@ Q3. Which subtitle languages do you want to collect?                Progress [�
 
   Languages (comma-separated) [ja,en | b=back | q=quit] > ja,en
 
+    Languages selected:
+      ja → Japanese
+      en → English
+
 ------------------------------------------------------------------------------------------------
-Q4. Reading aids (phonetic guides for the original script).         Progress [◼◼◼◼◼◼◼◼◼◼◼◻◻] 88%
+Q4. Reading aids (phonetic guides for the original script).         Progress [◼◼◼◼◼◼◼◼◼◻◻◻◻] 70%
 
     Example output: 漢字（かんじ）
     Pick any combination by number, or '1' to skip.
     1) No reading aid (skip)
     2) Japanese — hiragana readings for kanji   [ja:hiragana]
-       Preview: 勉強する → べんきょうする
+       Example: 勉強する → べんきょうする
     3) Japanese — katakana readings for kanji   [ja:katakana]
-       Preview: 勉強する → ベンキョウする
+       Example: 勉強する → ベンキョウする
     4) Japanese — full-sentence romaji   [ja:romaji]
-       Preview: 今日は日本語を練習したい → kyou wa nihongo wo renshuu shitai
+       Example: 今日は日本語を練習したい → kyou wa nihongo wo renshuu shitai
 
   Numbers (comma-separated) [1 | b=back | q=quit] > 1
+
+------------------------------------------------------------------------------------------------
+Q5. Final output format.                                            Progress [◼◼◼◼◼◼◼◼◼◼◼◼◻] 90%
+
+    Choose the format that best matches your player.
+    1) SRT  — works almost everywhere
+              Plex, Jellyfin, Smart TVs, tablets, phones, VLC
+    2) ASS  — best for local study playback
+              Better subtitle positioning, sizing, and readability
+    3) VTT  — best for browser-based language learning
+              Works with a browser extension on Netflix, Disney+ & other streaming sites
+    4) SMI  — Korean subtitle format
+              Common in older Korean subtitle archives
+    5) TXT  — plain text without timestamps
+
+    Recommendations:
+      Watching on TV, tablet, phone, Plex, or Jellyfin?
+        → SRT
+
+      Watching local video files on VLC, MPV, or desktop players?
+        → ASS
+
+      Streaming Netflix with multiple subtitles?
+        → VTT (asbplayer browser plug-in required)
+
+    Suggested default: SRT — SRT is the safest general-purpose choice.
+
+  Final format [1 | b=back | q=quit] >
+
+------------------------------------------------------------------------------------------------
+Q6. Subtitle text size?                                             Progress [◼◼◼◼◼◼◼◼◼◼◼◼◻] 92%
+
+    Subtitle text size
+    Format: SRT
+
+    Please note many players ignore font sizes in SRT files.
+    If your player supports sizing, these presets are recommended:
+
+    1) Regular (16px) — recommended
+    2) Smaller (12px)
+    3) Larger (20px)
+    4) Custom — enter exact font size
+
+  Number [1 | b=back | q=quit] >
 
 ======================================================================
 Here's the plan:
 ======================================================================
   • Use local ja, en files in {TMP}/Show
   • Clean up cues (single line, strip broadcast noise)
-  • Stack ja, en into one SRT file  →  *.ja-en.srt
-  • Use subtitle text size regular (SRT support depends on player)
+  • Stack ja, en into one SRT file → *.ja-en.srt
+  • Use subtitle text size: Regular
   • Save to {TMP}/Show
 ======================================================================
 Smart defaults filled in for you (edit via 'Edit a single answer'):
 ======================================================================
-  Display order  ja, en  (top → bottom on screen)
-  Timing master  ja  (first language)
-  Cleanup preset on  (single-line cues + strip broadcast noise)
-  Output format  SRT — plays almost everywhere (Plex, TVs, phones).  Edit to pick SRT / ASS / VTT / SMI / TXT.
-  Text size      regular  (calibrated; edit to change)
-  Output folder  {TMP}/Show  (beside source)
+  Display order   ja, en  (top → bottom on screen)
+  Timing master   ja  (first language)
+  Cleanup preset  on  (single-line cues + strip broadcast noise)
+  Output folder   {TMP}/Show  (beside source)
 ======================================================================
 
     1) Run it now
@@ -4475,17 +5781,17 @@ Running:
 ======================================================================
 Workflow summary
 ======================================================================
-Result: completed
+Completed successfully
 Source: {TMP}/Show
 Scope: auto / not specified
 Languages requested: ja, en
 Output folder: {TMP}/Show
 Preflight warnings: 1
 
-Next:
-  Merge later with: getsubtitle merge {TMP}/Show -l ja,en
-  Re-run this workflow command after any setup fixes:
-    getsubtitle --source {TMP}/Show --modify --strip-cc-noise --single-line --merge --languages ja,en --format srt --font-size regular --output {TMP}/Show
+Next steps:
+  1. Merge later with: getsubtitle merge {TMP}/Show -l ja,en
+  2. Re-run this workflow command after any setup fixes:
+     getsubtitle --source {TMP}/Show --modify --strip-cc-noise --single-line --merge --languages ja,en --format srt --font-size regular --output {TMP}/Show
   Open folder? [Y/n] > n
 ```
 
@@ -4504,25 +5810,22 @@ Next:
 
 ```text
   ____      _   ____        _     _   _ _   _
-
  / ___| ___| |_/ ___| _   _| |__ | |_| |_| |_| ___
-
 | |  _ / _ \ __\___ \| | | | '_ \| __| | __| |/ _ \
-
 | |_| |  __/ |_ ___) | |_| | |_) | |_| | |_| |  __/
-
  \____|\___|\__|____/ \__,_|_.__/ \__|_|\__|_|\___|
 
 GetSubtitle — Workflow Builder
 
 Answer a few questions to generate a command and reusable workflow.
 
+------------------------------------------------------------------------------------------------
 Commands:
-  Enter  Accept default
-  b      Back
-  q      Quit
-  Ctrl-C Cancel
-
+    Enter  Accept default
+    b      Back
+    q      Quit
+    Ctrl-C Cancel
+------------------------------------------------------------------------------------------------
 Q1. What would you like to do?
 
     1) Fetch      Download subtitles from a URL or title
@@ -4541,16 +5844,16 @@ Q1. What would you like to do?
     Selected: merge.
 
 ------------------------------------------------------------------------------------------------
-Q2. Folder or file to process.                                      Progress [◼◼◼◼◼◼◻◻◻◻◻◻◻] 50%
+Q2. Folder or file to process.                                      Progress [◼◼◼◼◼◻◻◻◻◻◻◻◻] 38%
 
     Drop a folder of subtitle files, a single subtitle/video file,
     or any local path your selected step(s) should operate on.
 
   Folder or file path [b=back | q=quit] > {TMP}/Show
-    Identified as: local movie folder: 1 video file(s), 0 subtitle file(s)
+    Searching for: local movie folder: 1 video file(s), 0 subtitle file(s)
 
 ------------------------------------------------------------------------------------------------
-Q3. Which subtitle languages do you want to collect?                Progress [◼◼◼◼◼◼◼◼◼◼◼◻◻] 83%
+Q3. Which subtitle languages do you want to collect?                Progress [◼◼◼◼◼◼◼◼◻◻◻◻◻] 62%
 
     List them in the order you want them displayed (top → bottom).
 
@@ -4561,26 +5864,72 @@ Q3. Which subtitle languages do you want to collect?                Progress [�
 
   Languages (comma-separated) [ja,en | b=back | q=quit] > ja,en
 
+    Languages selected:
+      ja → Japanese
+      en → English
+
     Japanese furigana reading aids need the Modify step (not selected yet).
   Add Modify so I can offer Japanese furigana reading aids? [Y/n | b=back | q=quit] > n
     No reading aids this run.
+
+------------------------------------------------------------------------------------------------
+Q4. Final output format.                                            Progress [◼◼◼◼◼◼◼◼◼◼◼◻◻] 88%
+
+    Choose the format that best matches your player.
+    1) SRT  — works almost everywhere
+              Plex, Jellyfin, Smart TVs, tablets, phones, VLC
+    2) ASS  — best for local study playback
+              Better subtitle positioning, sizing, and readability
+    3) VTT  — best for browser-based language learning
+              Works with a browser extension on Netflix, Disney+ & other streaming sites
+    4) SMI  — Korean subtitle format
+              Common in older Korean subtitle archives
+    5) TXT  — plain text without timestamps
+
+    Recommendations:
+      Watching on TV, tablet, phone, Plex, or Jellyfin?
+        → SRT
+
+      Watching local video files on VLC, MPV, or desktop players?
+        → ASS
+
+      Streaming Netflix with multiple subtitles?
+        → VTT (asbplayer browser plug-in required)
+
+    Suggested default: SRT — SRT is the safest general-purpose choice.
+
+  Final format [1 | b=back | q=quit] >
+
+------------------------------------------------------------------------------------------------
+Q5. Subtitle text size?                                             Progress [◼◼◼◼◼◼◼◼◼◼◼◼◻] 90%
+
+    Subtitle text size
+    Format: SRT
+
+    Please note many players ignore font sizes in SRT files.
+    If your player supports sizing, these presets are recommended:
+
+    1) Regular (16px) — recommended
+    2) Smaller (12px)
+    3) Larger (20px)
+    4) Custom — enter exact font size
+
+  Number [1 | b=back | q=quit] >
 
 ======================================================================
 Here's the plan:
 ======================================================================
   • Use local ja, en files in {TMP}/Show
-  • Stack ja, en into one SRT file  →  *.ja-en.srt
-  • Use subtitle text size regular (SRT support depends on player)
+  • Stack ja, en into one SRT file → *.ja-en.srt
+  • Use subtitle text size: Regular
   • Save to {TMP}/Show
 ======================================================================
 Smart defaults filled in for you (edit via 'Edit a single answer'):
 ======================================================================
-  Display order  ja, en  (top → bottom on screen)
-  Timing master  ja  (first language)
-  Cleanup preset on  (single-line cues + strip broadcast noise)
-  Output format  SRT — plays almost everywhere (Plex, TVs, phones).  Edit to pick SRT / ASS / VTT / SMI / TXT.
-  Text size      regular  (calibrated; edit to change)
-  Output folder  {TMP}/Show  (beside source)
+  Display order   ja, en  (top → bottom on screen)
+  Timing master   ja  (first language)
+  Cleanup preset  on  (single-line cues + strip broadcast noise)
+  Output folder   {TMP}/Show  (beside source)
 ======================================================================
 
     1) Run it now
@@ -4604,17 +5953,17 @@ Running:
 ======================================================================
 Workflow summary
 ======================================================================
-Result: completed
+Completed successfully
 Source: {TMP}/Show
 Scope: auto / not specified
 Languages requested: ja, en
 Output folder: {TMP}/Show
 Preflight warnings: 1
 
-Next:
-  Merge later with: getsubtitle merge {TMP}/Show -l ja,en
-  Re-run this workflow command after any setup fixes:
-    getsubtitle merge {TMP}/Show --languages ja,en --format srt --font-size regular --output {TMP}/Show
+Next steps:
+  1. Merge later with: getsubtitle merge {TMP}/Show -l ja,en
+  2. Re-run this workflow command after any setup fixes:
+     getsubtitle merge {TMP}/Show --languages ja,en --format srt --font-size regular --output {TMP}/Show
   Open folder? [Y/n] > n
 ```
 

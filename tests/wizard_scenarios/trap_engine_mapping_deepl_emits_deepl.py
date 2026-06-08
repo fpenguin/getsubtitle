@@ -18,6 +18,8 @@ SCENARIO = Scenario(
         "ja,en",
         "4",            # Q6 translate engine: DeepL
         "1",            # reading aids — skip
+        "",             # format — accept recommended SRT
+        "",             # font size — regular
         "2",            # action: save (URL default)
         "{TMP}/deepl-flow.toml",  # save filename
         "n",            # decline open folder

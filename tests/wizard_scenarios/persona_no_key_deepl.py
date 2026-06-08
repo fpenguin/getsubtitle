@@ -20,8 +20,10 @@ SCENARIO = Scenario(
         "ja,en",
         "4",            # translate engine: DeepL
         "1",            # reading aids — skip
+        "",             # format — accept recommended SRT
+        "",             # font size — regular
         "1",            # action: run (so probe fires)
-        "y",            # accept 'Run setup now to fix these?'
+        "y",            # show setup steps
         "n",            # at the per-gap prompt: don't actually run --set-key now
         "y",            # save workflow instead of running
         "{TMP}/deepl-later.toml",

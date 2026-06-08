@@ -18,6 +18,8 @@ SCENARIO = Scenario(
         "ja,en",        # languages
         "1",            # Q6 translate: Skip — accept gap
         "1",            # Q7 reading aids: skip
+        "",             # format — accept recommended SRT
+        "",             # font size — regular
         "2",            # Q12 action: save (default for URL)
         "{TMP}/saved.toml",   # save filename (absolute to avoid cwd pollution)
         "n",            # open folder containing saved file → no

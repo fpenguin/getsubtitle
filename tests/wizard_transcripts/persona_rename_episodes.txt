@@ -1,23 +1,20 @@
   ____      _   ____        _     _   _ _   _
-
  / ___| ___| |_/ ___| _   _| |__ | |_| |_| |_| ___
-
 | |  _ / _ \ __\___ \| | | | '_ \| __| | __| |/ _ \
-
 | |_| |  __/ |_ ___) | |_| | |_) | |_| | |_| |  __/
-
  \____|\___|\__|____/ \__,_|_.__/ \__|_|\__|_|\___|
 
 GetSubtitle â€” Workflow Builder
 
 Answer a few questions to generate a command and reusable workflow.
 
+------------------------------------------------------------------------------------------------
 Commands:
-  Enter  Accept default
-  b      Back
-  q      Quit
-  Ctrl-C Cancel
-
+    Enter  Accept default
+    b      Back
+    q      Quit
+    Ctrl-C Cancel
+------------------------------------------------------------------------------------------------
 Q1. What would you like to do?
 
     1) Fetch      Download subtitles from a URL or title
@@ -41,7 +38,7 @@ Q2. Folder or file to rename.                                       Progress [â—
     Drop a season folder or one subtitle file.
 
   Folder or file path [b=back | q=quit] > {TMP}/Show
-    Identified as: local subtitle folder: 0 video file(s), 5 subtitle file(s)
+    Searching for: local subtitle folder: 0 video file(s), 5 subtitle file(s)
 
 Skipping 1 file(s) that don't match the
   'Title - S03E05.lang.ext' shape (left untouched):

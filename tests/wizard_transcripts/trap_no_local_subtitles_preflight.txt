@@ -1,23 +1,20 @@
   ____      _   ____        _     _   _ _   _
-
  / ___| ___| |_/ ___| _   _| |__ | |_| |_| |_| ___
-
 | |  _ / _ \ __\___ \| | | | '_ \| __| | __| |/ _ \
-
 | |_| |  __/ |_ ___) | |_| | |_) | |_| | |_| |  __/
-
  \____|\___|\__|____/ \__,_|_.__/ \__|_|\__|_|\___|
 
 GetSubtitle — Workflow Builder
 
 Answer a few questions to generate a command and reusable workflow.
 
+------------------------------------------------------------------------------------------------
 Commands:
-  Enter  Accept default
-  b      Back
-  q      Quit
-  Ctrl-C Cancel
-
+    Enter  Accept default
+    b      Back
+    q      Quit
+    Ctrl-C Cancel
+------------------------------------------------------------------------------------------------
 Q1. What would you like to do?
 
     1) Fetch      Download subtitles from a URL or title
@@ -36,16 +33,16 @@ Q1. What would you like to do?
     Selected: merge.
 
 ------------------------------------------------------------------------------------------------
-Q2. Folder or file to process.                                      Progress [◼◼◼◼◼◼◻◻◻◻◻◻◻] 50%
+Q2. Folder or file to process.                                      Progress [◼◼◼◼◼◻◻◻◻◻◻◻◻] 38%
 
     Drop a folder of subtitle files, a single subtitle/video file,
     or any local path your selected step(s) should operate on.
 
   Folder or file path [b=back | q=quit] > {TMP}/Show
-    Identified as: local movie folder: 1 video file(s), 0 subtitle file(s)
+    Searching for: local movie folder: 1 video file(s), 0 subtitle file(s)
 
 ------------------------------------------------------------------------------------------------
-Q3. Which subtitle languages do you want to collect?                Progress [◼◼◼◼◼◼◼◼◼◼◼◻◻] 83%
+Q3. Which subtitle languages do you want to collect?                Progress [◼◼◼◼◼◼◼◼◻◻◻◻◻] 62%
 
     List them in the order you want them displayed (top → bottom).
 
@@ -56,26 +53,72 @@ Q3. Which subtitle languages do you want to collect?                Progress [�
 
   Languages (comma-separated) [ja,en | b=back | q=quit] > ja,en
 
+    Languages selected:
+      ja → Japanese
+      en → English
+
     Japanese furigana reading aids need the Modify step (not selected yet).
   Add Modify so I can offer Japanese furigana reading aids? [Y/n | b=back | q=quit] > n
     No reading aids this run.
+
+------------------------------------------------------------------------------------------------
+Q4. Final output format.                                            Progress [◼◼◼◼◼◼◼◼◼◼◼◻◻] 88%
+
+    Choose the format that best matches your player.
+    1) SRT  — works almost everywhere
+              Plex, Jellyfin, Smart TVs, tablets, phones, VLC
+    2) ASS  — best for local study playback
+              Better subtitle positioning, sizing, and readability
+    3) VTT  — best for browser-based language learning
+              Works with a browser extension on Netflix, Disney+ & other streaming sites
+    4) SMI  — Korean subtitle format
+              Common in older Korean subtitle archives
+    5) TXT  — plain text without timestamps
+
+    Recommendations:
+      Watching on TV, tablet, phone, Plex, or Jellyfin?
+        → SRT
+
+      Watching local video files on VLC, MPV, or desktop players?
+        → ASS
+
+      Streaming Netflix with multiple subtitles?
+        → VTT (asbplayer browser plug-in required)
+
+    Suggested default: SRT — SRT is the safest general-purpose choice.
+
+  Final format [1 | b=back | q=quit] >
+
+------------------------------------------------------------------------------------------------
+Q5. Subtitle text size?                                             Progress [◼◼◼◼◼◼◼◼◼◼◼◼◻] 90%
+
+    Subtitle text size
+    Format: SRT
+
+    Please note many players ignore font sizes in SRT files.
+    If your player supports sizing, these presets are recommended:
+
+    1) Regular (16px) — recommended
+    2) Smaller (12px)
+    3) Larger (20px)
+    4) Custom — enter exact font size
+
+  Number [1 | b=back | q=quit] >
 
 ======================================================================
 Here's the plan:
 ======================================================================
   • Use local ja, en files in {TMP}/Show
-  • Stack ja, en into one SRT file  →  *.ja-en.srt
-  • Use subtitle text size regular (SRT support depends on player)
+  • Stack ja, en into one SRT file → *.ja-en.srt
+  • Use subtitle text size: Regular
   • Save to {TMP}/Show
 ======================================================================
 Smart defaults filled in for you (edit via 'Edit a single answer'):
 ======================================================================
-  Display order  ja, en  (top → bottom on screen)
-  Timing master  ja  (first language)
-  Cleanup preset on  (single-line cues + strip broadcast noise)
-  Output format  SRT — plays almost everywhere (Plex, TVs, phones).  Edit to pick SRT / ASS / VTT / SMI / TXT.
-  Text size      regular  (calibrated; edit to change)
-  Output folder  {TMP}/Show  (beside source)
+  Display order   ja, en  (top → bottom on screen)
+  Timing master   ja  (first language)
+  Cleanup preset  on  (single-line cues + strip broadcast noise)
+  Output folder   {TMP}/Show  (beside source)
 ======================================================================
 
     1) Run it now
@@ -99,15 +142,15 @@ Running:
 ======================================================================
 Workflow summary
 ======================================================================
-Result: completed
+Completed successfully
 Source: {TMP}/Show
 Scope: auto / not specified
 Languages requested: ja, en
 Output folder: {TMP}/Show
 Preflight warnings: 1
 
-Next:
-  Merge later with: getsubtitle merge {TMP}/Show -l ja,en
-  Re-run this workflow command after any setup fixes:
-    getsubtitle merge {TMP}/Show --languages ja,en --format srt --font-size regular --output {TMP}/Show
+Next steps:
+  1. Merge later with: getsubtitle merge {TMP}/Show -l ja,en
+  2. Re-run this workflow command after any setup fixes:
+     getsubtitle merge {TMP}/Show --languages ja,en --format srt --font-size regular --output {TMP}/Show
   Open folder? [Y/n] > n

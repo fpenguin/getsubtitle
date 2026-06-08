@@ -309,6 +309,118 @@ def test_choose_best_prefers_matching_title_over_alphabetical_false_positive():
     assert MODULE["choose_best"](files, media=media, episode="1").name == "The.Simpsons.s01e01.DVDRip.XviD-SChiZO.srt"
 
 
+def test_choose_best_rejects_explicit_episode_mismatches():
+    subtitle = MODULE["SubtitleFile"]
+    media = MODULE["MediaInfo"](
+        source_url="https://www.themoviedb.org/tv/456",
+        provider="tmdb",
+        title="The Simpsons",
+        tmdb_id="456",
+        season="1",
+        episode="1",
+    )
+    files = [
+        subtitle("wyzie", "en", "The.Simpsons.S20E16.HDTV.XviD-0TV.srt", "u", media_title="The Simpsons"),
+        subtitle("wyzie", "en", "The.Simpsons.S08E01.WEB-DL.DSNP.srt", "u", media_title="The Simpsons"),
+    ]
+    assert MODULE["choose_best"](files, media=media, episode="1") is None
+
+
+def test_choose_best_rejects_all_unrelated_title_candidates():
+    subtitle = MODULE["SubtitleFile"]
+    media = MODULE["MediaInfo"](
+        source_url="https://www.themoviedb.org/movie/35",
+        provider="tmdb",
+        title="The Simpsons Movie",
+        tmdb_id="35",
+        is_movie=True,
+    )
+    files = [
+        subtitle(
+            "wyzie",
+            "en",
+            "Cracker (UK) - 01x02 - The Mad Woman in the Attic (2).srt",
+            "u",
+            media_title="Cracker (UK)",
+        )
+    ]
+    assert MODULE["choose_best"](files, media=media, episode="auto") is None
+    low = MODULE["low_confidence_subtitle_candidate"](files, media=media, episode="auto")
+    assert low is files[0]
+    reason = MODULE["low_confidence_subtitle_reason"](low, media)
+    assert "The Simpsons Movie" in reason
+    assert "Cracker" in reason
+
+
+def test_choose_best_allows_opaque_provider_filenames_under_metadata_id():
+    subtitle = MODULE["SubtitleFile"]
+    media = MODULE["MediaInfo"](
+        source_url="https://www.themoviedb.org/movie/35",
+        provider="tmdb",
+        title="The Simpsons Movie",
+        tmdb_id="35",
+        is_movie=True,
+    )
+    files = [subtitle("wyzie", "en", "12345.srt", "u")]
+    assert MODULE["choose_best"](files, media=media, episode="auto") is files[0]
+
+
+def test_enrich_external_ids_from_wikidata_skips_tmdb_tv_property_for_movies(monkeypatch):
+    calls = []
+    g = MODULE["enrich_external_ids_from_wikidata"].__globals__
+    monkeypatch.setitem(
+        g,
+        "wikidata_entity_from_statement",
+        lambda prop, value: calls.append((prop, value)) or None,
+    )
+    media = MODULE["MediaInfo"](
+        source_url="https://www.themoviedb.org/movie/35",
+        provider="tmdb",
+        title="The Simpsons Movie",
+        tmdb_id="35",
+        is_movie=True,
+    )
+    MODULE["enrich_external_ids_from_wikidata"](media)
+    assert ("P4983", "35") not in calls
+
+
+def test_enrich_tmdb_catalog_external_ids_uses_movie_endpoint(monkeypatch):
+    calls = []
+    g = MODULE["enrich_tmdb_catalog_external_ids"].__globals__
+    monkeypatch.setitem(
+        g,
+        "tmdb_external_ids",
+        lambda media_type, tmdb_id: calls.append((media_type, tmdb_id)) or {"imdb_id": "tt0462538"},
+    )
+    media = MODULE["MediaInfo"](
+        source_url="https://www.themoviedb.org/movie/35",
+        provider="tmdb",
+        title="The Simpsons Movie",
+        tmdb_id="35",
+        is_movie=True,
+    )
+    assert MODULE["enrich_tmdb_catalog_external_ids"](media) is True
+    assert calls == [("movie", "35")]
+    assert media.imdb_id == "tt0462538"
+
+
+def test_apply_default_tv_auto_scope_defaults_to_s01e01():
+    media = MODULE["MediaInfo"](
+        source_url="https://www.themoviedb.org/tv/456",
+        provider="tmdb",
+        title="The Simpsons",
+        tmdb_id="456",
+        season="auto",
+        episode="auto",
+        is_movie=False,
+    )
+    episodes, changed = MODULE["apply_default_tv_auto_scope"](media, ["auto"])
+    assert changed is True
+    assert episodes == ["1"]
+    assert media.season == "1"
+    assert media.episode == "1"
+
+
 def test_tmdb_id_from_url():
     media = MODULE["infer_from_catalog_url"]("https://www.themoviedb.org/movie/129", "tmdb")
     assert media.tmdb_id == "129"
@@ -7115,6 +7227,8 @@ def test_translate_main_prints_deepl_usage_after_success():
 
 
 def test_ollama_missing_model_is_pulled_before_translate():
+    import contextlib
+    import io
     import json
 
     calls = []
@@ -7144,8 +7258,10 @@ def test_ollama_missing_model_is_pulled_before_translate():
             assert payload == {"name": "aya-expanse:8b", "stream": True}
             return _Response([
                 {"status": "pulling manifest"},
-                {"status": "pulling layer", "completed": 25, "total": 100},
-                {"status": "pulling layer", "completed": 100, "total": 100},
+                {"status": "pulling 3e4cb1417446", "completed": 25, "total": 100},
+                {"status": "pulling 3e4cb1417446", "completed": 25, "total": 100},
+                {"status": "pulling 3e4cb1417446", "completed": 100, "total": 100},
+                {"status": "pulling 3e4cb1417446", "completed": 100, "total": 100},
                 {"status": "success"},
             ])
         if req.full_url.endswith("/api/generate"):
@@ -7158,13 +7274,20 @@ def test_ollama_missing_model_is_pulled_before_translate():
     saved_urlopen = urllib_mod.request.urlopen
     try:
         urllib_mod.request.urlopen = fake_urlopen
-        out = MODULE["OllamaTranslator"](model="aya-expanse:8b").translate_batch(["こんにちは"], "ja", "ko")
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            out = MODULE["OllamaTranslator"](model="aya-expanse:8b").translate_batch(["こんにちは"], "ja", "ko")
     finally:
         urllib_mod.request.urlopen = saved_urlopen
 
     assert out == ["안녕하세요"]
     assert any(url.endswith("/api/pull") for url in calls)
     assert any(url.endswith("/api/generate") for url in calls)
+    text = buf.getvalue()
+    assert "pulling pulling" not in text
+    assert text.count("3e4cb1417446") == 1
+    assert "Ollama pull status: success" in text
+    assert "Ollama model 'aya-expanse:8b' is ready. Starting translation" in text
 
 
 def test_ollama_pull_failure_gives_model_install_hint():
@@ -7848,6 +7971,66 @@ def test_download_headers_threaded_through_save_subtitle():
 
     assert received["url"].endswith("/original/1/0")
     assert received["headers"] == {"Referer": "https://www.addic7ed.com/x", "User-Agent": "M"}
+
+
+def test_save_subtitle_rejects_obvious_replacement_character_damage(tmp_path):
+    save_globals = MODULE["save_subtitle"].__globals__
+    saved_dl = save_globals["download_bytes"]
+
+    def fake_download_bytes(_url, headers=None):
+        return (
+            "1\n00:00:01,000 --> 00:00:02,000\n"
+            "Ya, Luigi se pas� su d�cimo cumplea�os llorando.\n"
+        ).encode("utf-8")
+
+    try:
+        save_globals["download_bytes"] = fake_download_bytes
+        sub = MODULE["SubtitleFile"](
+            provider="wyzie",
+            language="es",
+            name="bad.es.srt",
+            url="https://example.test/bad.es.srt",
+        )
+        media = MODULE["MediaInfo"](source_url="x", provider="tmdb", title="Movie", season="auto", is_movie=True)
+        try:
+            MODULE["save_subtitle"](sub, tmp_path, media, "auto", "auto")
+        except MODULE["CliError"] as e:
+            msg = str(e)
+        else:
+            raise AssertionError("expected corrupt subtitle to be rejected")
+    finally:
+        save_globals["download_bytes"] = saved_dl
+
+    assert "subtitle text looks corrupted" in msg
+    assert "replacement characters" in msg
+    assert not list(tmp_path.glob("*.srt"))
+
+
+def test_save_subtitle_transcodes_cp1252_text_to_utf8(tmp_path):
+    save_globals = MODULE["save_subtitle"].__globals__
+    saved_dl = save_globals["download_bytes"]
+
+    def fake_download_bytes(_url, headers=None):
+        return (
+            "1\n00:00:01,000 --> 00:00:02,000\n"
+            "Cumpleaños y décimo.\n"
+        ).encode("cp1252")
+
+    try:
+        save_globals["download_bytes"] = fake_download_bytes
+        sub = MODULE["SubtitleFile"](
+            provider="wyzie",
+            language="es",
+            name="good.es.srt",
+            url="https://example.test/good.es.srt",
+        )
+        media = MODULE["MediaInfo"](source_url="x", provider="tmdb", title="Movie", season="auto", is_movie=True)
+        saved = MODULE["save_subtitle"](sub, tmp_path, media, "auto", "auto")
+    finally:
+        save_globals["download_bytes"] = saved_dl
+
+    assert len(saved) == 1
+    assert "Cumpleaños y décimo." in saved[0].read_text(encoding="utf-8")
 
 
 def test_subdivx_parser_handles_empty_and_garbage():
@@ -8773,13 +8956,16 @@ def test_wizard_run_summary_prints_outcome_and_next_steps(tmp_path, capsys):
         MODULE["_wizard_summary_end"]()
     out = capsys.readouterr().out
     assert "Workflow summary" in out
-    assert "Result: completed" in out
+    assert "Completed partially" in out
     assert "Scope: season 4, episode 3-5" in out
     assert "Preflight warnings: 1" in out
     assert "Preflight info: 1" in out
     assert "Fetch: planned 2, wrote 1, missing/issues 1" in out
     assert "Merge: planned 1, wrote 1" in out
-    assert "Open the merged subtitle file" in out
+    assert "Next steps:" in out
+    assert "1. Open the merged subtitle file in your player." in out
+    assert "2. Check subtitle timing and readability." in out
+    assert "3. Adjust font size or format if needed." in out
 
 
 def test_wizard_dependency_check_saves_instead_of_running_with_remaining_blocker():
@@ -8813,6 +8999,114 @@ def test_wizard_dependency_check_saves_instead_of_running_with_remaining_blocker
     assert action == "save"
     assert setup_called == [True]
     assert "Still blocked — the run would fail before it starts:" in out
+
+
+def test_setup_pip_fix_target_parses_preflight_hints():
+    parse = MODULE["_setup_pip_fix_target"]
+    assert parse('pip install -e ".[romanization-zh]"  # or: pip install pypinyin') == (
+        "pypinyin", "romanization-zh"
+    )
+    assert parse('pip install -e ".[furigana]"  # or: pip install pykakasi') == (
+        "pykakasi", "furigana"
+    )
+    assert parse('pip install -e ".[romanization-ko]"  # also installs g2pk') == (
+        "korean-romanizer", "romanization-ko"
+    )
+    assert parse('pip install -e ".[romanization-yue]"  # or: pip install pycantonese') == (
+        "pycantonese", "romanization-yue"
+    )
+    assert parse("pip install g2pk — improves Korean G2P accuracy") == ("g2pk", None)
+    assert parse("pip install argostranslate") == ("argostranslate", None)
+    assert parse("argospm install translate-ja_en") is None
+
+
+def test_wizard_run_setup_can_install_all_pip_blockers(monkeypatch, capsys):
+    calls = []
+    g = MODULE["_wizard_run_setup"].__globals__
+    monkeypatch.setitem(
+        g,
+        "_setup_offer_pip_install",
+        lambda package, extra=None: calls.append((package, extra)) or True,
+    )
+    MODULE["_wizard_run_setup"](
+        _wizard_state(),
+        [
+            ("block", "pykakasi (Japanese reading aids)",
+             'pip install -e ".[furigana]"  # or: pip install pykakasi'),
+            ("block", "korean-romanizer (Korean Revised Romanization)",
+             'pip install -e ".[romanization-ko]"  # also installs g2pk'),
+            ("warn", "g2pk (Korean G2P preprocessing)",
+             "pip install g2pk — improves Korean G2P accuracy"),
+            ("block", "pypinyin (Mandarin pinyin)",
+             'pip install -e ".[romanization-zh]"  # or: pip install pypinyin'),
+            ("block", "pycantonese (Cantonese Jyutping)",
+             'pip install -e ".[romanization-yue]"  # or: pip install pycantonese'),
+            ("block", "argostranslate (offline MT)",
+             "pip install argostranslate"),
+        ],
+    )
+    assert calls == [
+        ("pykakasi", "furigana"),
+        ("korean-romanizer", "romanization-ko"),
+        ("g2pk", None),
+        ("pypinyin", "romanization-zh"),
+        ("pycantonese", "romanization-yue"),
+        ("argostranslate", None),
+    ]
+    out = capsys.readouterr().out
+    assert "Run this in your shell" not in out
+
+
+def test_setup_offer_pip_install_uses_project_root_for_extras(monkeypatch, tmp_path, capsys):
+    project = tmp_path / "repo"
+    project.mkdir()
+    (project / "pyproject.toml").write_text("[project]\nname='getsubtitle'\n", encoding="utf-8")
+    calls = []
+
+    class Result:
+        returncode = 0
+
+    g = MODULE["_setup_offer_pip_install"].__globals__
+    monkeypatch.setitem(g, "_wizard_yesno", lambda _q, default=True: True)
+    monkeypatch.setitem(g, "_setup_project_root", lambda: project)
+    monkeypatch.setitem(g, "_setup_module_exists", lambda _name: True)
+    monkeypatch.setitem(
+        g["subprocess"].__dict__,
+        "run",
+        lambda cmd, check=False, cwd=None: calls.append((cmd, check, cwd)) or Result(),
+    )
+
+    assert MODULE["_setup_offer_pip_install"]("pypinyin", extra="romanization-zh")
+    assert calls
+    cmd, check, cwd = calls[0]
+    assert cmd[-2:] == ["-e", ".[romanization-zh]"]
+    assert check is False
+    assert cwd == str(project)
+    out = capsys.readouterr().out
+    assert "Project folder:" in out
+
+
+def test_setup_offer_pip_install_uses_current_python_for_plain_package(monkeypatch):
+    calls = []
+
+    class Result:
+        returncode = 0
+
+    g = MODULE["_setup_offer_pip_install"].__globals__
+    monkeypatch.setitem(g, "_wizard_yesno", lambda _q, default=True: True)
+    monkeypatch.setitem(g, "_setup_module_exists", lambda _name: True)
+    monkeypatch.setitem(
+        g["subprocess"].__dict__,
+        "run",
+        lambda cmd, check=False, cwd=None: calls.append((cmd, check, cwd)) or Result(),
+    )
+
+    assert MODULE["_setup_offer_pip_install"]("argostranslate")
+    cmd, check, cwd = calls[0]
+    assert cmd[:3] == [g["sys"].executable, "-m", "pip"]
+    assert cmd[-1] == "argostranslate"
+    assert check is False
+    assert cwd is None
 
 
 def test_wizard_state_to_toml_round_trip_safe():
@@ -8858,6 +9152,31 @@ def test_wizard_q5_scope_skipped_for_movies():
     # / episode fields stay empty for the movie path.
     assert s.season == ""
     assert s.episode == ""
+
+
+def test_wizard_q5_scope_tv_single_item_defaults_to_first_episode():
+    import contextlib
+    import io
+
+    s = MODULE["_WizardState"](
+        source="https://www.themoviedb.org/tv/456",
+        source_kind="url",
+        languages=["ko", "en"],
+        is_movie=False,
+    )
+    fn_g = MODULE["_wizard_q5_scope"].__globals__
+    saved_prompt = fn_g["_wizard_prompt"]
+    try:
+        fn_g["_wizard_prompt"] = lambda _q, _d=None, **_kwargs: "1"
+        with contextlib.redirect_stdout(io.StringIO()) as buf:
+            MODULE["_wizard_q5_scope"](s)
+    finally:
+        fn_g["_wizard_prompt"] = saved_prompt
+    out = buf.getvalue()
+    assert s.season == "1"
+    assert s.episode == "1"
+    assert "looks like a TV/show result, not a movie" in out
+    assert "Season 1 Episode 1" in out
 
 
 def test_wizard_q5_scope_keeps_episode_inferred_from_selected_file():
@@ -8929,6 +9248,39 @@ def test_wizard_q5_whole_season_does_not_prompt_for_season():
     assert s.episode == "all"
 
 
+def test_wizard_q5_scope_back_inside_specific_episode_returns_to_scope_menu():
+    import contextlib
+    import io
+
+    s = MODULE["_WizardState"](
+        source="https://www.themoviedb.org/tv/456",
+        source_kind="url",
+        languages=["ko", "en"],
+        is_movie=False,
+    )
+    fn_g = MODULE["_wizard_q5_scope"].__globals__
+    saved_prompt = fn_g["_wizard_prompt"]
+    number_answers = iter(["2", "1"])
+
+    def fake_prompt(label, default="", *args, **kwargs):
+        if label == "Number":
+            return next(number_answers)
+        if label.startswith("Season or range"):
+            raise MODULE["_WizardBack"]()
+        raise AssertionError(f"unexpected prompt: {label}")
+
+    try:
+        fn_g["_wizard_prompt"] = fake_prompt
+        with contextlib.redirect_stdout(io.StringIO()) as buf:
+            MODULE["_wizard_q5_scope"](s)
+    finally:
+        fn_g["_wizard_prompt"] = saved_prompt
+
+    assert s.season == "1"
+    assert s.episode == "1"
+    assert "Going back to episode scope." in buf.getvalue()
+
+
 def test_wizard_prompt_distinguishes_back_from_quit_in_hint():
     import builtins
 
@@ -8988,6 +9340,79 @@ def test_wizard_quit_at_path_prompt_is_not_recoverable_draft():
     assert s.source_kind == "path"
     assert s.source == ""
     assert MODULE["_wizard_has_recoverable_draft"](s) is False
+
+
+def test_wizard_source_picker_treats_free_text_as_title_search():
+    import contextlib
+    import io
+    s = MODULE["_WizardState"](steps={"fetch"})
+    fn = MODULE["_wizard_q1_source"]
+    fn_g = fn.__globals__
+    saved_prompt = fn_g["_wizard_prompt"]
+    saved_picker = fn_g["_wizard_pick_title_candidate"]
+    saved_yesno = fn_g["_wizard_yesno"]
+
+    try:
+        fn_g["_wizard_prompt"] = lambda label, default=None, **kwargs: "the simpsons"
+        fn_g["_wizard_pick_title_candidate"] = lambda title: (
+            "https://www.themoviedb.org/movie/35",
+            "tmdb-movie",
+            "TMDB Movie: The Simpsons Movie (2007)",
+            True,
+        )
+        fn_g["_wizard_yesno"] = lambda _q, default=False: False
+        with contextlib.redirect_stdout(io.StringIO()) as buf:
+            fn(s)
+        out = buf.getvalue()
+    finally:
+        fn_g["_wizard_prompt"] = saved_prompt
+        fn_g["_wizard_pick_title_candidate"] = saved_picker
+        fn_g["_wizard_yesno"] = saved_yesno
+
+    assert s.source_kind == "url"
+    assert s.source == "https://www.themoviedb.org/movie/35"
+    assert s.source_title == "The Simpsons Movie"
+    assert s.is_movie is True
+    assert "Detected title search:" in out
+    assert "Matched title: TMDB Movie: The Simpsons Movie (2007)" in out
+
+
+def test_wizard_source_title_candidate_back_reasks_title():
+    import contextlib
+    import io
+    s = MODULE["_WizardState"](steps={"fetch"})
+    fn = MODULE["_wizard_q1_source"]
+    fn_g = fn.__globals__
+    saved_prompt = fn_g["_wizard_prompt"]
+    saved_picker = fn_g["_wizard_pick_title_candidate"]
+    saved_yesno = fn_g["_wizard_yesno"]
+    try:
+        prompts = iter(["1", "simpsons", "matrix"])
+        fn_g["_wizard_prompt"] = lambda label, default=None, **kwargs: next(prompts)
+
+        def fake_picker(title):
+            if title == "simpsons":
+                raise MODULE["_WizardBack"]()
+            return (
+                "https://www.themoviedb.org/movie/603",
+                "tmdb-movie",
+                "TMDB Movie: The Matrix (1999)",
+                True,
+            )
+
+        fn_g["_wizard_pick_title_candidate"] = fake_picker
+        fn_g["_wizard_yesno"] = lambda _q, default=False: False
+        with contextlib.redirect_stdout(io.StringIO()) as buf:
+            fn(s)
+        out = buf.getvalue()
+    finally:
+        fn_g["_wizard_prompt"] = saved_prompt
+        fn_g["_wizard_pick_title_candidate"] = saved_picker
+        fn_g["_wizard_yesno"] = saved_yesno
+
+    assert s.source == "https://www.themoviedb.org/movie/603"
+    assert s.source_title == "The Matrix"
+    assert "Going back to title entry." in out
 
 
 def test_mediainfo_movie_skips_season_subdir():
@@ -9562,6 +9987,50 @@ def test_wizard_qcount_before_honors_step_gating():
     assert MODULE["_wizard_qcount_before"](full, "reading_aids") == 5  # + languages
 
 
+def test_wizard_languages_clarifies_dot_separator_typo():
+    import contextlib
+    import io
+    s = MODULE["_WizardState"](steps={"merge"})
+    fn_g = MODULE["_wizard_q2_languages"].__globals__
+    saved_prompt = fn_g["_wizard_prompt"]
+    saved_yesno = fn_g["_wizard_yesno"]
+    questions: list[str] = []
+    try:
+        fn_g["_wizard_prompt"] = lambda _q, _d=None: "en.es"
+        fn_g["_wizard_yesno"] = lambda q, default=True: questions.append(q) or True
+        with contextlib.redirect_stdout(io.StringIO()) as buf:
+            MODULE["_wizard_q2_languages"](s)
+        out = buf.getvalue()
+        assert s.languages == ["en", "es"]
+        assert questions == ["Did you mean en,es?"]
+        assert "I don't recognize 'en.es' as written." in out
+        assert "Languages selected:" in out
+        assert "en → English" in out
+        assert "es → Spanish" in out
+    finally:
+        fn_g["_wizard_prompt"] = saved_prompt
+        fn_g["_wizard_yesno"] = saved_yesno
+
+
+def test_wizard_languages_reprompts_unknown_code():
+    import contextlib
+    import io
+    s = MODULE["_WizardState"](steps={"merge"})
+    fn_g = MODULE["_wizard_q2_languages"].__globals__
+    saved_prompt = fn_g["_wizard_prompt"]
+    answers = iter(["zz", "en,es"])
+    try:
+        fn_g["_wizard_prompt"] = lambda _q, _d=None: next(answers)
+        with contextlib.redirect_stdout(io.StringIO()) as buf:
+            MODULE["_wizard_q2_languages"](s)
+        out = buf.getvalue()
+        assert s.languages == ["en", "es"]
+        assert "I don't recognize: zz" in out
+        assert "Use 2-letter codes or full names" in out
+    finally:
+        fn_g["_wizard_prompt"] = saved_prompt
+
+
 def test_wizard_languages_offer_modify_for_korean_reading_aids():
     """Fetch-only + Korean should offer to add Modify so reading aids are
     not silently skipped."""
@@ -9617,6 +10086,7 @@ def test_wizard_languages_warns_and_can_trim_five_language_stack():
         out = buf.getvalue()
         assert s.languages == ["ja", "ko", "en"]
         assert "You selected 5 languages" in out
+        assert "Most people find 2-3 languages easiest to read." in out
         assert "4+ can cover a small screen" in out
         assert "Keep only the first 3" in out
     finally:
@@ -9639,11 +10109,9 @@ def test_wizard_fetch_only_multiple_languages_can_add_merge_for_format_questions
         assert s.languages == ["en", "es"]
         assert s.steps == {"fetch", "merge"}
         assert "Fetch without Merge" in out
-        # Format/text size are smart-defaulted now (not asked); adding Merge
-        # makes them apply, and _wizard_apply_smart_defaults fills them in.
         notes = MODULE["_wizard_apply_smart_defaults"](s)
-        assert s.format
-        assert "Output format" in notes
+        assert s.format == ""
+        assert "Format / extension" not in notes
     finally:
         fn_g["_wizard_prompt"] = saved_prompt
         fn_g["_wizard_yesno"] = saved_yesno
@@ -9668,6 +10136,63 @@ def test_wizard_fetch_only_multiple_languages_can_decline_merge():
     finally:
         fn_g["_wizard_prompt"] = saved_prompt
         fn_g["_wizard_yesno"] = saved_yesno
+
+
+def test_wizard_languages_back_from_recommended_steps_reasks_languages():
+    import contextlib
+    import io
+    s = MODULE["_WizardState"](steps={"fetch"})
+    fn_g = MODULE["_wizard_q2_languages"].__globals__
+    saved_input = fn_g.get("input")
+    saved_back_nav = fn_g.get("_WIZARD_BACK_NAV_ACTIVE", False)
+    answers = iter([
+        "en,ko,zh,ja",  # language entry
+        "1",            # crowded-language warning: continue anyway
+        "b",            # recommended Modify+Merge prompt: go back locally
+        "en,ko",        # re-enter languages
+        "n",            # decline recommended steps
+    ])
+    try:
+        fn_g["_WIZARD_BACK_NAV_ACTIVE"] = True
+        fn_g["input"] = lambda *a, **k: next(answers)
+        with contextlib.redirect_stdout(io.StringIO()) as buf:
+            MODULE["_wizard_q2_languages"](s)
+        out = buf.getvalue()
+    finally:
+        if saved_input is not None:
+            fn_g["input"] = saved_input
+        elif "input" in fn_g:
+            del fn_g["input"]
+        fn_g["_WIZARD_BACK_NAV_ACTIVE"] = saved_back_nav
+
+    assert s.languages == ["en", "ko"]
+    assert s.steps == {"fetch"}
+    assert "Going back to language entry." in out
+    assert "Fetch en, ko, zh, ja" not in out
+
+
+def test_wizard_translate_argos_preflight_back_reasks_engine_choice():
+    import contextlib
+    import io
+    s = MODULE["_WizardState"](steps={"translate"}, languages=["en", "es"])
+    fn_g = MODULE["_wizard_q6_translate"].__globals__
+    saved_prompt = fn_g["_wizard_prompt"]
+    saved_handler = fn_g["_wizard_handle_argos_preflight"]
+    picks = iter(["2", "1"])
+    try:
+        fn_g["_wizard_prompt"] = lambda _q, _d=None, **_kwargs: next(picks)
+        fn_g["_wizard_handle_argos_preflight"] = lambda _state: (_ for _ in ()).throw(
+            MODULE["_WizardBack"]()
+        )
+        with contextlib.redirect_stdout(io.StringIO()) as buf:
+            MODULE["_wizard_q6_translate"](s)
+        out = buf.getvalue()
+    finally:
+        fn_g["_wizard_prompt"] = saved_prompt
+        fn_g["_wizard_handle_argos_preflight"] = saved_handler
+
+    assert s.mt_engine == ""
+    assert "Going back to translation choices." in out
 
 
 def test_wizard_local_missing_languages_can_add_fetch_on_spot():
@@ -10071,7 +10596,7 @@ def test_wizard_q7_reading_aids_no_reading_aid_is_option_one_default():
         out = buf.getvalue()
         assert "1) No reading aid" in out
         assert "2) Japanese — hiragana" in out
-        assert "Preview: 勉強する → べんきょうする" in out
+        assert "Example: 勉強する → べんきょうする" in out
         assert s.reading_aids == []
         # '2' should land on the first real aid (hiragana).
         fn_g["input"] = lambda *a, **k: "2"
@@ -10141,9 +10666,8 @@ def test_wizard_apply_smart_defaults_fills_missing_answers():
     assert s.order == ["ja", "en"]
     assert s.master == ""  # blank = first wins downstream
     assert s.asbplayer is True
-    assert s.format == "vtt"  # ja:hiragana -> recommended VTT, smart-defaulted
+    assert s.format == ""  # format is asked explicitly when Merge is selected
     assert s.output == "~/Downloads/GetSubtitle"
-    assert "Output format" in notes
     # All smart-default notes appear in the banner-friendly summary.
     assert "Display order" in notes
     assert "Timing master" in notes
@@ -10151,18 +10675,64 @@ def test_wizard_apply_smart_defaults_fills_missing_answers():
     assert "Output folder" in notes
 
 
-def test_wizard_smart_defaults_pick_recommended_output_format():
-    """Output format is now smart-defaulted to the recommended choice
-    (shown in the banner, editable). ja,en with no reading aids -> SRT."""
+def test_wizard_final_edit_targets_include_smart_defaults():
+    s = _wizard_state(
+        languages=["en", "ko"],
+        order=[],
+        master="",
+        asbplayer=False,
+        reading_aids=["ko:revised"],
+        format="ass",
+        font_size="",
+        steps={"fetch", "translate", "modify", "merge"},
+    )
+    MODULE["_wizard_apply_smart_defaults"](s)
+    labels = [label for label, _value, _fn in MODULE["_wizard_edit_targets"](s)]
+    for expected in (
+        "display order",
+        "timing master",
+        "cleanup preset",
+        "format / extension",
+        "text size",
+        "output folder",
+    ):
+        assert expected in labels
+
+
+def test_wizard_edit_timing_master_can_override_smart_default(monkeypatch):
+    s = _wizard_state(
+        languages=["en", "ko"],
+        order=["en", "ko"],
+        master="",
+    )
+    g = MODULE["_wizard_prompt"].__globals__
+    answers = iter(["2"])
+    monkeypatch.setitem(g, "input", lambda *a, **k: next(answers))
+    MODULE["_wizard_edit_timing_master"](s)
+    assert s.master == "ko"
+
+
+def test_wizard_edit_cleanup_preset_can_turn_off_smart_default(monkeypatch):
+    s = _wizard_state(asbplayer=True)
+    g = MODULE["_wizard_yesno"].__globals__
+    answers = iter(["n"])
+    monkeypatch.setitem(g, "input", lambda *a, **k: next(answers))
+    MODULE["_wizard_edit_cleanup_preset"](s)
+    assert s.asbplayer is False
+
+
+def test_wizard_format_recommendation_picks_default_output_format():
+    """The format question uses the recommendation as its default, but
+    still asks the user to choose SRT / ASS / VTT / SMI / TXT."""
     s = MODULE["_WizardState"](
         source="https://www.themoviedb.org/movie/8392",
         source_kind="url",
         languages=["ja", "en"],
         reading_aids=[],
     )
-    notes = MODULE["_wizard_apply_smart_defaults"](s)
-    assert s.format == "srt"
-    assert "Output format" in notes
+    fmt, reason = MODULE["_wizard_format_recommendation"](s)
+    assert fmt == "srt"
+    assert "SRT" in reason or "safest" in reason
 
 
 def test_wizard_back_history_skips_current_reentered_step():
@@ -10170,6 +10740,45 @@ def test_wizard_back_history_skips_current_reentered_step():
     previous = MODULE["_wizard_pop_previous_visible_label"](history, "format")
     assert previous == "translate"
     assert history == ["steps", "source", "languages"]
+
+
+def test_wizard_back_history_ignores_silent_steps(monkeypatch):
+    """Back should not get stuck on no-op steps that printed no question.
+
+    Movie episode-scope is one real example: the scope step returns silently
+    for movies, and recording it in visible history made repeated `b` land
+    back on Languages forever.
+    """
+    import contextlib
+    import io
+
+    calls: list[str] = []
+    raised = {"b": False}
+
+    def qa(state):
+        calls.append("a")
+        print(MODULE["_wizard_next_q"](state, "Visible A"))
+
+    def silent(_state):
+        calls.append("silent")
+
+    def qb(state):
+        calls.append("b")
+        print(MODULE["_wizard_next_q"](state, "Visible B"))
+        if not raised["b"]:
+            raised["b"] = True
+            raise MODULE["_WizardBack"]()
+
+    g = MODULE["_run_wizard_with_back_nav"].__globals__
+    monkeypatch.setitem(g, "_WIZARD_STEPS", [("a", qa), ("silent", silent), ("b", qb)])
+    monkeypatch.setitem(g, "_wizard_save_draft", lambda _state: None)
+    monkeypatch.setitem(g, "_wizard_q11_action", lambda _state: "quit")
+
+    state = MODULE["_WizardState"]()
+    with contextlib.redirect_stdout(io.StringIO()):
+        MODULE["_run_wizard_with_back_nav"](state)
+
+    assert calls == ["a", "silent", "b", "a", "silent", "b"]
 
 
 def test_wizard_smart_defaults_local_path_output_lands_beside_source():
@@ -10265,7 +10874,7 @@ def test_wizard_q11_banner_surfaces_smart_defaults():
     assert "Smart defaults filled in for you" in out
     assert "Display order" in out
     assert "Cleanup preset" in out
-    assert "Output format" in out  # format is now a surfaced smart default
+    assert "Format / extension" not in out  # format is now a normal question
 
 
 def test_wizard_default_full_pipeline_still_emits_fetch_modify_merge():
@@ -10418,10 +11027,16 @@ def test_wizard_q9_format_describes_vtt_and_ass_player_fit():
     assert s.format == "vtt"
     assert s.viewing_env == "browser"
     assert "Final output format" in out
-    assert "Recommended:" in out
-    assert "browser/asbplayer" in out
+    assert "Choose the format that best matches your player." in out
+    assert "Recommendations:" in out
+    assert "Streaming Netflix with multiple subtitles?" in out
+    assert "VTT (asbplayer browser plug-in required)" in out
+    assert "Works with a browser extension on Netflix, Disney+ & other streaming sites" in out
+    assert "OTHER FORMATS:" not in out
+    assert "Korean subtitle format" in out
+    assert "Suggested default:" in out
     assert "ASS" in out
-    assert "font size" in out
+    assert "positioning, sizing, and readability" in out
 
 
 def test_wizard_q9_format_carries_reading_aid_rendering_guidance():
@@ -10448,6 +11063,25 @@ def test_wizard_q9_format_carries_reading_aid_rendering_guidance():
     assert "Local-player" in out
 
 
+def test_wizard_q9_format_shows_vtt_example_only_for_japanese_ruby():
+    import io, contextlib
+    fn_g = MODULE["_wizard_q9_format"].__globals__
+    saved_input = fn_g.get("input")
+    try:
+        fn_g["input"] = lambda *a, **k: "3"
+        s = MODULE["_WizardState"](reading_aids=["ja:katakana"])
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            MODULE["_wizard_q9_format"](s)
+    finally:
+        if saved_input is not None:
+            fn_g["input"] = saved_input
+    out = buf.getvalue()
+    assert "Example:" in out
+    assert "VTT:  にほんご" in out
+    assert "OTHER FORMATS:" in out
+
+
 def test_wizard_font_size_labels_follow_selected_format():
     import io, contextlib
     fn_g = MODULE["_wizard_q_font_size"].__globals__
@@ -10472,6 +11106,37 @@ def test_wizard_font_size_labels_follow_selected_format():
     assert "Larger (70)" in out
     assert "Regular (30)" not in out
     assert s.font_size == "regular"
+
+
+def test_wizard_font_size_custom_back_returns_to_size_choices():
+    import io, contextlib
+    fn_g = MODULE["_wizard_q_font_size"].__globals__
+    saved_prompt = fn_g["_wizard_prompt"]
+    answers = iter(["4", "3"])
+
+    def fake_prompt(label, default=None, **kwargs):
+        if label == "Number":
+            return next(answers)
+        if label == "Font size":
+            raise MODULE["_WizardBack"]()
+        raise AssertionError(f"unexpected prompt: {label}")
+
+    try:
+        fn_g["_wizard_prompt"] = fake_prompt
+        s = MODULE["_WizardState"](
+            steps={"merge"},
+            languages=["en", "es"],
+            order=["en", "es"],
+            format="srt",
+        )
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            MODULE["_wizard_q_font_size"](s)
+    finally:
+        fn_g["_wizard_prompt"] = saved_prompt
+
+    assert s.font_size == "larger"
+    assert "Going back to text-size choices." in buf.getvalue()
 
 
 def test_wizard_reading_aid_labels_format_agnostic():
@@ -11758,6 +12423,179 @@ def test_download_planned_subtitles_continues_after_partial_failure():
         assert len(failures) == 1
         assert "en ep1: download failed from wyzie" in failures[0]
         assert "HTTP 502" in failures[0]
+    finally:
+        g["save_subtitle"] = saved_save_subtitle
+
+
+def test_download_bytes_timeout_becomes_clierror(monkeypatch):
+    def fake_urlopen(_req, timeout=0):
+        raise TimeoutError("timed out")
+
+    g = MODULE["download_bytes"].__globals__
+    monkeypatch.setattr(g["urllib"].request, "urlopen", fake_urlopen)
+    try:
+        MODULE["download_bytes"]("https://example.test/slow.srt")
+    except MODULE["CliError"] as e:
+        assert "Download timed out after 60s" in str(e)
+    else:
+        raise AssertionError("TimeoutError should be converted to CliError")
+
+
+def test_download_planned_subtitles_interactive_can_retry_alternate(monkeypatch, tmp_path):
+    import contextlib
+    import io
+
+    fn = MODULE["download_planned_subtitles"]
+    SubtitleFile = MODULE["SubtitleFile"]
+    MediaInfo = MODULE["MediaInfo"]
+    CliError = MODULE["CliError"]
+    g = fn.__globals__
+    saved_save_subtitle = g["save_subtitle"]
+    answers = iter(["2"])  # retry with alternate provider/result
+
+    best = SubtitleFile(
+        provider="wyzie",
+        language="en",
+        name="best.srt",
+        url="https://example.test/best.srt",
+        source_provider="opensubtitles",
+    )
+    alt = SubtitleFile(
+        provider="wyzie",
+        language="en",
+        name="alt.srt",
+        url="https://example.test/alt.srt",
+        source_provider="subdl",
+    )
+
+    def fake_save_subtitle(sub, dest_dir, _media, _season, _episode):
+        if sub.url == best.url:
+            raise CliError("Download timed out after 60s")
+        dest_dir.mkdir(parents=True, exist_ok=True)
+        out = dest_dir / f"saved-{sub.name}"
+        out.write_text("ok", encoding="utf-8")
+        return [out]
+
+    try:
+        g["save_subtitle"] = fake_save_subtitle
+        monkeypatch.setitem(g, "input", lambda *a, **k: next(answers))
+        media = MediaInfo(source_url="https://example.test/movie", provider="tmdb", title="Movie", season="auto", is_movie=True)
+        with contextlib.redirect_stdout(io.StringIO()) as buf:
+            saved, failures = fn(
+                [("en", "auto", best)],
+                base=tmp_path,
+                media=media,
+                season="auto",
+                layout="archive",
+                alternatives={("en", "auto"): [alt]},
+                interactive_recovery=True,
+            )
+        out = buf.getvalue()
+        assert failures == []
+        assert [p.name for p in saved] == ["saved-alt.srt"]
+        assert "Retry with an alternate provider/result" in out
+        assert "Trying alternate: alt.srt [subdl]" in out
+    finally:
+        g["save_subtitle"] = saved_save_subtitle
+
+
+def test_download_planned_subtitles_noninteractive_auto_tries_alternate(tmp_path):
+    import contextlib
+    import io
+
+    fn = MODULE["download_planned_subtitles"]
+    SubtitleFile = MODULE["SubtitleFile"]
+    MediaInfo = MODULE["MediaInfo"]
+    CliError = MODULE["CliError"]
+    g = fn.__globals__
+    saved_save_subtitle = g["save_subtitle"]
+
+    best = SubtitleFile(
+        provider="wyzie",
+        language="es",
+        name="bad.es.srt",
+        url="https://example.test/bad.es.srt",
+        source_provider="opensubtitles",
+    )
+    alt = SubtitleFile(
+        provider="wyzie",
+        language="es",
+        name="good.es.srt",
+        url="https://example.test/good.es.srt",
+        source_provider="subdl",
+    )
+
+    def fake_save_subtitle(sub, dest_dir, _media, _season, _episode):
+        if sub.url == best.url:
+            raise CliError("subtitle text looks corrupted: 42 replacement characters (�)")
+        dest_dir.mkdir(parents=True, exist_ok=True)
+        out = dest_dir / f"saved-{sub.name}"
+        out.write_text("ok", encoding="utf-8")
+        return [out]
+
+    try:
+        g["save_subtitle"] = fake_save_subtitle
+        media = MediaInfo(source_url="https://example.test/movie", provider="tmdb", title="Movie", season="auto", is_movie=True)
+        with contextlib.redirect_stdout(io.StringIO()) as buf:
+            saved, failures = fn(
+                [("es", "auto", best)],
+                base=tmp_path,
+                media=media,
+                season="auto",
+                layout="archive",
+                alternatives={("es", "auto"): [alt]},
+                interactive_recovery=False,
+            )
+        out = buf.getvalue()
+    finally:
+        g["save_subtitle"] = saved_save_subtitle
+
+    assert failures == []
+    assert [p.name for p in saved] == ["saved-good.es.srt"]
+    assert "rejected bad.es.srt [opensubtitles]" in out
+    assert "Trying alternate: good.es.srt [subdl]" in out
+
+
+def test_download_planned_subtitles_interactive_skip_records_subtitle_name(monkeypatch, tmp_path):
+    import contextlib
+    import io
+
+    fn = MODULE["download_planned_subtitles"]
+    SubtitleFile = MODULE["SubtitleFile"]
+    MediaInfo = MODULE["MediaInfo"]
+    CliError = MODULE["CliError"]
+    g = fn.__globals__
+    saved_save_subtitle = g["save_subtitle"]
+    answers = iter(["3"])  # skip this subtitle
+    sub = SubtitleFile(
+        provider="wyzie",
+        language="ko",
+        name="The Matrix.ko.srt",
+        url="https://example.test/ko.srt",
+        source_provider="opensubtitles",
+    )
+
+    def fake_save_subtitle(_sub, _dest_dir, _media, _season, _episode):
+        raise CliError("Download timed out after 60s")
+
+    try:
+        g["save_subtitle"] = fake_save_subtitle
+        monkeypatch.setitem(g, "input", lambda *a, **k: next(answers))
+        media = MediaInfo(source_url="https://example.test/movie", provider="tmdb", title="Movie", season="auto", is_movie=True)
+        with contextlib.redirect_stdout(io.StringIO()) as buf:
+            saved, failures = fn(
+                [("ko", "auto", sub)],
+                base=tmp_path,
+                media=media,
+                season="auto",
+                layout="archive",
+                interactive_recovery=True,
+            )
+        out = buf.getvalue()
+        assert saved == []
+        assert len(failures) == 1
+        assert "skipped The Matrix.ko.srt" in failures[0]
+        assert "3) Skip The Matrix.ko.srt" in out
     finally:
         g["save_subtitle"] = saved_save_subtitle
 

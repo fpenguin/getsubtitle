@@ -16,6 +16,8 @@ SCENARIO = Scenario(
         "{TMP}/Show",   # path
         "ja,en",
         "1",            # reading aids — skip
+        "",             # format — accept recommended SRT
+        "",             # font size — regular
         "2",            # action: save
         "{TMP}/Reusable.toml",  # save filename
         "n",            # decline opening the save folder

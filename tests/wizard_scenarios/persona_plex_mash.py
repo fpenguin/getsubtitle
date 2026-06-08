@@ -45,6 +45,8 @@ SCENARIO = Scenario(
         # scope question shows "already selected" and does NOT prompt
         # (CODEX bug-fix #1). No season/episode re-entry here.
         "1",                                    # reading aids — skip
+        "",                                     # format — accept recommended SRT
+        "",                                     # font size — regular
         "2",                                    # save (URL/title default)
         "{TMP}/mashle.toml",                    # save filename
         "n",                                    # decline open folder

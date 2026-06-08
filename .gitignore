@@ -46,6 +46,11 @@ getsubtitle-workflow*.toml
 /Ja2KoVTT.toml
 /fena.toml
 /jpko.toml
+/-1.toml
+/99.toml
+/cjk-test.toml
+/done.toml
+/x.toml
 
 # Local README comparison drafts.
 /README-old.md

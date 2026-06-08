@@ -1,23 +1,20 @@
   ____      _   ____        _     _   _ _   _
-
  / ___| ___| |_/ ___| _   _| |__ | |_| |_| |_| ___
-
 | |  _ / _ \ __\___ \| | | | '_ \| __| | __| |/ _ \
-
 | |_| |  __/ |_ ___) | |_| | |_) | |_| | |_| |  __/
-
  \____|\___|\__|____/ \__,_|_.__/ \__|_|\__|_|\___|
 
 GetSubtitle — Workflow Builder
 
 Answer a few questions to generate a command and reusable workflow.
 
+------------------------------------------------------------------------------------------------
 Commands:
-  Enter  Accept default
-  b      Back
-  q      Quit
-  Ctrl-C Cancel
-
+    Enter  Accept default
+    b      Back
+    q      Quit
+    Ctrl-C Cancel
+------------------------------------------------------------------------------------------------
 Q1. What would you like to do?
 
     1) Fetch      Download subtitles from a URL or title
@@ -36,7 +33,7 @@ Q1. What would you like to do?
     Selected: fetch + modify + merge.
 
 ------------------------------------------------------------------------------------------------
-Q2. What should getsubtitle work on?                                Progress [◼◼◼◻◻◻◻◻◻◻◻◻◻] 25%
+Q2. Where should we get subtitles from?                             Progress [◼◼◼◻◻◻◻◻◻◻◻◻◻] 21%
 
     1) A movie/show title (The Simpsons, Totoro, The Matrix, …)
     2) A streaming/catalog URL (IMDb, AniList, Netflix, Crunchyroll, …)
@@ -45,15 +42,15 @@ Q2. What should getsubtitle work on?                                Progress [�
   Number [3 | b=back | q=quit] > 2
 
 ------------------------------------------------------------------------------------------------
-Q3. Enter the URL.                                                  Progress [◼◼◼◼◼◻◻◻◻◻◻◻◻] 42%
+Q3. Enter the URL.                                                  Progress [◼◼◼◼◼◻◻◻◻◻◻◻◻] 36%
 
   URL [b=back | q=quit] > https://www.crunchyroll.com/watch/GZ7UDVKPD/miraculous-comeback
-    Identified as: Crunchyroll watch URL
+    Searching for: Crunchyroll watch URL
 
 ------------------------------------------------------------------------------------------------
-Q4. What episode scope?                                             Progress [◼◼◼◼◼◼◼◼◻◻◻◻◻] 58%
+Q4. What episode scope?                                             Progress [◼◼◼◼◼◼◻◻◻◻◻◻◻] 50%
 
-    1) Movie / single item (no season/episode)
+    1) One TV episode — Season 1 Episode 1
     2) A specific season + episode (or range)
     3) Whole season, every episode (-e all)
     4) Auto — let getsubtitle infer from the URL/title metadata
@@ -70,7 +67,7 @@ Q4. What episode scope?                                             Progress [�
   Episode or range within each season (e.g. 5, 1-10, all) [1 | b=back | q=quit] > 1-13
 
 ------------------------------------------------------------------------------------------------
-Q5. How should episode numbers appear in output filenames?          Progress [◼◼◼◼◼◼◼◼◼◼◻◻◻] 75%
+Q5. How should episode numbers appear in output filenames?          Progress [◼◼◼◼◼◼◼◼◻◻◻◻◻] 64%
 
     You are searching Season 3 episode(s): 1-13.
     Some streaming pages continue numbering across seasons, while
@@ -87,7 +84,7 @@ Q5. How should episode numbers appear in output filenames?          Progress [�
     Output filenames will start at S03E25.
 
 ------------------------------------------------------------------------------------------------
-Q6. Which subtitle languages do you want to collect?                Progress [◼◼◼◼◼◼◼◼◼◼◼◼◻] 92%
+Q6. Which subtitle languages do you want to collect?                Progress [◼◼◼◼◼◼◼◼◼◼◻◻◻] 79%
 
     List them in the order you want them displayed (top → bottom).
 
@@ -98,6 +95,10 @@ Q6. Which subtitle languages do you want to collect?                Progress [�
 
   Languages (comma-separated) [ja,en | b=back | q=quit] > ja,ko
 
+    Languages selected:
+      ja → Japanese
+      ko → Korean
+
 ------------------------------------------------------------------------------------------------
 Q7. Reading aids (phonetic guides for the original script).         Progress [◼◼◼◼◼◼◼◼◼◼◼◼◻] 93%
 
@@ -105,35 +106,81 @@ Q7. Reading aids (phonetic guides for the original script).         Progress [�
     Pick any combination by number, or '1' to skip.
     1) No reading aid (skip)
     2) Japanese — hiragana readings for kanji   [ja:hiragana]
-       Preview: 勉強する → べんきょうする
+       Example: 勉強する → べんきょうする
     3) Japanese — katakana readings for kanji   [ja:katakana]
-       Preview: 勉強する → ベンキョウする
+       Example: 勉強する → ベンキョウする
     4) Japanese — full-sentence romaji   [ja:romaji]
-       Preview: 今日は日本語を練習したい → kyou wa nihongo wo renshuu shitai
+       Example: 今日は日本語を練習したい → kyou wa nihongo wo renshuu shitai
     5) Korean — Revised Romanization (G2P)   [ko:revised]
-       Preview: 한국어 공부 → hangugeo gongbu
+       Example: 한국어 공부 → hangugeo gongbu
     6) Korean — Yale Romanization   [ko:yale]
-       Preview: 한국어 공부 → hankwuke kongpwu
+       Example: 한국어 공부 → hankwuke kongpwu
 
   Numbers (comma-separated) [1 | b=back | q=quit] > 1
+
+------------------------------------------------------------------------------------------------
+Q8. Final output format.                                            Progress [◼◼◼◼◼◼◼◼◼◼◼◼◻] 94%
+
+    Choose the format that best matches your player.
+    1) SRT  — works almost everywhere
+              Plex, Jellyfin, Smart TVs, tablets, phones, VLC
+    2) ASS  — best for local study playback
+              Better subtitle positioning, sizing, and readability
+    3) VTT  — best for browser-based language learning
+              Works with a browser extension on Netflix, Disney+ & other streaming sites
+    4) SMI  — Korean subtitle format
+              Common in older Korean subtitle archives
+    5) TXT  — plain text without timestamps
+
+    Recommendations:
+      Watching on TV, tablet, phone, Plex, or Jellyfin?
+        → SRT
+
+      Watching local video files on VLC, MPV, or desktop players?
+        → ASS
+
+      Streaming Netflix with multiple subtitles?
+        → VTT (asbplayer browser plug-in required)
+
+    Suggested default: SRT — SRT is the safest general-purpose choice.
+
+  Final format [1 | b=back | q=quit] >
+
+------------------------------------------------------------------------------------------------
+Q9. Subtitle text size?                                             Progress [◼◼◼◼◼◼◼◼◼◼◼◼◻] 94%
+
+    Subtitle text size
+    Format: SRT
+
+    Please note many players ignore font sizes in SRT files.
+    If your player supports sizing, these presets are recommended:
+
+    1) Regular (16px) — recommended
+    2) Smaller (12px)
+    3) Larger (20px)
+    4) Custom — enter exact font size
+
+  Number [1 | b=back | q=quit] >
 
 ======================================================================
 Here's the plan:
 ======================================================================
   • Fetch ja, ko for https://www.crunchyroll.com/watch/GZ7UDVKPD/miraculous-comeback  (season 3, episode 1-13)
   • Clean up cues (single line, strip broadcast noise)
-  • Stack ja, ko into one SRT file  →  *.ja-ko.srt
-  • Use subtitle text size regular (SRT support depends on player)
+  • Stack ja, ko into one SRT file → *.ja-ko.srt
+  • Use subtitle text size: Regular
   • Save to ~/Downloads/GetSubtitle
+======================================================================
+Before running:
+======================================================================
+  ⚠ Japanese, Korean subtitles can be harder to find automatically; manual search or translation may be needed.
 ======================================================================
 Smart defaults filled in for you (edit via 'Edit a single answer'):
 ======================================================================
-  Display order  ja, ko  (top → bottom on screen)
-  Timing master  ja  (first language)
-  Cleanup preset on  (single-line cues + strip broadcast noise)
-  Output format  SRT — plays almost everywhere (Plex, TVs, phones).  Edit to pick SRT / ASS / VTT / SMI / TXT.
-  Text size      regular  (calibrated; edit to change)
-  Output folder  ~/Downloads/GetSubtitle
+  Display order   ja, ko  (top → bottom on screen)
+  Timing master   ja  (first language)
+  Cleanup preset  on  (single-line cues + strip broadcast noise)
+  Output folder   ~/Downloads/GetSubtitle
 ======================================================================
 
     1) Run it now

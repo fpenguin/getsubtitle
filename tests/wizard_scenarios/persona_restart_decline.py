@@ -19,6 +19,8 @@ SCENARIO = Scenario(
         "{TMP}/Show",
         "ja,en",
         "1",            # reading aids — skip
+        "",             # format — accept recommended SRT
+        "",             # font size — regular
         "4",            # action: restart
         "n",            # confirm: 'Discard all answers and start over?' → no
         "5",            # back at action menu: quit

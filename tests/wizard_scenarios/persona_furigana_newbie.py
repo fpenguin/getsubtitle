@@ -19,6 +19,7 @@ SCENARIO = Scenario(
         "{TMP}/Show",
         "ja,en",
         "2",            # reading aids: pick #2 = ja:hiragana
+        "",             # format — accept recommended VTT
         "2",            # save
         "{TMP}/newbie.toml",
         "n",            # decline open folder
@@ -31,7 +32,8 @@ SCENARIO = Scenario(
         # Description text precedes the menu.
         "Reading aids (phonetic guides for the original script)",
         "Example output: 漢字（かんじ）",
-        "Output format  VTT — best for browser / asbplayer Japanese ruby",
+        "Final output format.",
+        "Suggested default: VTT",
         "1) No reading aid (skip)",
         "Japanese — hiragana readings for kanji",
     ],

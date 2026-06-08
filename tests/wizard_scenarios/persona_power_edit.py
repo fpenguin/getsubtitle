@@ -19,10 +19,13 @@ SCENARIO = Scenario(
         "3,4",          # initial: modify + merge
         "{TMP}/Show",
         "ja,en",
-        "1",            # reading aids — skip (format/size are smart-defaulted)
+        "1",            # reading aids — skip
+        "",             # format — accept recommended SRT
+        "",             # font size — regular
         "3",            # action: edit a single answer
         "1",            # edit target 1) steps
         "3",            # change to modify-only
+        "done",         # leave the edit review loop
         "2",            # back at action menu: save
         "{TMP}/edited.toml",
         "n",

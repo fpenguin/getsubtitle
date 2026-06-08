@@ -14,20 +14,26 @@ Until the app is marketing-ready for v1.0, use pre-1.0 release steps:
 - **v2.0**: a later larger behavior milestone, aimed at an AI-based
   subtitle sync engine.
 
-## v0.9.6.2 — what's new
+## v0.9.6 — what's new
 
-- **Wizard save-path guardrails.** Saved workflow filenames now reject
-  accidental menu answers such as `b`, `y`, or `0`, require `.toml`, and
-  auto-append `.toml` for friendly names like `fena`.
-- **Wizard preflight coverage.** Local workflows now warn before Run when
-  no local subtitles are present, requested languages are only partially
-  covered, or selected merge outputs already exist.
-- **UX audit artifacts.** Added harness-backed wizard structure,
-  representative transcripts, and metadata files for copywriting and
-  beginner-flow reviews.
-
-## v0.9.6.1 — what's new
-
+- **Named pipeline registry.** `getsubtitle run --save NAME workflow.toml`
+  stores a workflow under a short name; `getsubtitle run NAME` runs it
+  (with optional `--source` / `--output` / ... overrides). `run --list` and
+  `run --remove NAME` manage saved pipelines. Names are validated so they
+  cannot escape the registry folder.
+- **`--label-langs` for merge.** Prefix each language's line in a stacked
+  cue with `[JA]` / `[KO]` / ... so tracks are easy to tell apart. Also
+  available as `[merge] label_langs = true`.
+- **Rename mode is safer.** Episode-range renumbering keeps language
+  variants of the same episode paired (E01.ja and E01.en renumber
+  together) and renumbers each season independently. Files that don't
+  match the expected `Title - S03E05.lang.ext` shape are reported as
+  skipped instead of silently ignored; a discarded change no longer locks
+  the field; and a filesystem error mid-apply is reported cleanly (no
+  traceback) with a partial-state warning.
+- **Clearer wizard summary.** The action banner leads with a plain-language
+  "Here's the plan" summary before the exact command and the workflow
+  file, so you can sanity-check intent without reading the flag string.
 - **Interactive wizard polish.** Language selection now warns when a merged
   file is likely to become too crowded, fetch-only multi-language runs can
   opt into merge before format questions, and back-navigation no longer gets
@@ -42,26 +48,21 @@ Until the app is marketing-ready for v1.0, use pre-1.0 release steps:
   match the requested title and episode, reducing false-positive downloads
   from similarly named media.
 
-## v0.9.6 — what's new
-
-- **Named pipeline registry.** `getsubtitle run --save NAME workflow.toml`
-  stores a workflow under a short name; `getsubtitle run NAME` runs it
-  (with optional `--source` / `--output` / … overrides). `run --list` and
-  `run --remove NAME` manage saved pipelines. Names are validated so they
-  cannot escape the registry folder.
-- **`--label-langs` for merge.** Prefix each language's line in a stacked
-  cue with `[JA]` / `[KO]` / … so tracks are easy to tell apart. Also
-  available as `[merge] label_langs = true`.
-- **Rename mode is safer.** Episode-range renumbering keeps language
-  variants of the same episode paired (E01.ja and E01.en renumber
-  together) and renumbers each season independently. Files that don't
-  match the expected `Title - S03E05.lang.ext` shape are reported as
-  skipped instead of silently ignored; a discarded change no longer locks
-  the field; and a filesystem error mid-apply is reported cleanly (no
-  traceback) with a partial-state warning.
-- **Clearer wizard summary.** The action banner leads with a plain-language
-  "Here's the plan" summary before the exact command and the workflow
-  file, so you can sanity-check intent without reading the flag string.
+- **Wizard save-path guardrails.** Saved workflow filenames now reject
+  accidental menu answers such as `b`, `y`, or `0`, require `.toml`, and
+  auto-append `.toml` for friendly names like `fena`.
+- **Editable smart defaults.** The final "Edit a single answer" menu now
+  exposes display order, timing master, cleanup preset, output format, text
+  size, and output folder directly.
+- **Recoverable subtitle download failures.** Download timeouts now become
+  clean errors, and wizard runs can retry the same result, try an alternate
+  provider/result, skip the failed subtitle, or cancel.
+- **Wizard preflight coverage.** Local workflows now warn before Run when
+  no local subtitles are present, requested languages are only partially
+  covered, or selected merge outputs already exist.
+- **UX audit artifacts.** Added harness-backed wizard structure,
+  representative transcripts, and metadata files for copywriting and
+  beginner-flow reviews.
 
 ## Interactive rename maintenance mode
 
@@ -95,6 +96,18 @@ lines. Treat this as a pre-v1.0 quality track.
   should be ignored by default, with a warning/choice only when the user is
   intentionally processing a mixed folder. **CLI/TOML propagation to
   downstream steps is implemented; mixed-folder warning remains planned.**
+- **Downloaded subtitle sanity checks.** After download, inspect a cleaned
+  sample of subtitle text before saving/merging. Planned checks:
+  high-confidence language mismatch (for example requested `en`, detected
+  Norwegian), plus provider/title metadata conflicts that survived search
+  ranking. Obvious replacement-character damage (`�`) is now rejected during
+  download, common CP1252/Latin-1 text subtitles are normalised to UTF-8, and
+  alternate provider/results are tried automatically when available. Remaining
+  interactive language-mismatch options: retry same provider/result
+  alternatives, try another provider, save under the detected language, keep
+  anyway, skip, or copy report details. Keep heavy Latin-script language
+  detection optional (`language-check` extra); use lightweight script checks
+  for CJK/Korean/Arabic/Thai/Russian where possible.
 - **Outcome-oriented translation wording.** Reword the MT question from
   "If a language is missing, what should we do?" to "Fill missing
   subtitles?" with short numeric choices for skip, Argos, Ollama, and DeepL.
@@ -506,7 +519,7 @@ lines. Treat this as a pre-v1.0 quality track.
 
 ### Tests
 
-- 649 automated tests covering URL parsing, provider response shapes, TMDB / AniList resolution, SAMI parsing, VTT/ASS input parsing, MT helpers + auto_load/auto_unload, Argos direct/pivot package preflight, wizard run summaries, output/provider/coverage preflight, workflow save-path guardrails, merge with format hints and font-size styling, the wizard scenario harness, rename mode, the named pipeline registry, pipeline orchestration, `--config` CLI overrides, config validation, source smoke diagnostics, help system, and dispatch routing.
+- 680 automated tests covering URL parsing, provider response shapes, TMDB / AniList resolution, low-confidence subtitle match gating, subtitle download sanity checks, SAMI parsing, VTT/ASS input parsing, MT helpers + auto_load/auto_unload, Argos direct/pivot package preflight, wizard run summaries, output/provider/coverage preflight, in-wizard pip dependency setup, recoverable download timeouts, workflow save-path guardrails, editable smart defaults, explicit format selection, merge with format hints and font-size styling, the wizard scenario harness, rename mode, the named pipeline registry, pipeline orchestration, `--config` CLI overrides, config validation, source smoke diagnostics, help system, and dispatch routing.
 
 ## Planned (post-v0.9.x)
 

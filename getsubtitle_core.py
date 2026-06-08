@@ -304,6 +304,7 @@ class SearchResult:
     status: str
     file: SubtitleFile | None = None
     error: str | None = None
+    confidence: str | None = None
 
 
 @dataclass
@@ -640,6 +641,29 @@ def enrich_media_from_tmdb(
     return False
 
 
+def enrich_tmdb_catalog_external_ids(media: "MediaInfo") -> bool:
+    """Populate external IDs for a TMDB catalog URL.
+
+    `infer_from_catalog_url` can read the TMDB numeric ID from the URL without
+    hitting the API. This follow-up resolves the matching IMDb ID using the
+    correct TMDB endpoint for movie vs TV, avoiding Wikidata TV-ID ambiguity.
+    """
+    if media.provider != "tmdb" or not media.tmdb_id or media.imdb_id:
+        return False
+    media_type = "movie" if media.is_movie else "tv"
+    try:
+        ext = tmdb_external_ids(media_type, media.tmdb_id)
+    except CliError:
+        return False
+    if not ext:
+        return False
+    imdb_id = ext.get("imdb_id")
+    if isinstance(imdb_id, str) and imdb_id.strip():
+        media.imdb_id = imdb_id.strip()
+        return True
+    return False
+
+
 def request_text(url: str) -> str:
     req = urllib.request.Request(
         url,
@@ -668,6 +692,8 @@ def download_bytes(url: str, headers: dict[str, str] | None = None) -> bytes:
         raise CliError(f"HTTP {e.code} downloading {redact_url(url)}: {body[:300]}") from e
     except urllib.error.URLError as e:
         raise CliError(f"Network error downloading {redact_url(url)}: {e.reason}") from e
+    except TimeoutError as e:
+        raise CliError(f"Download timed out after 60s for {redact_url(url)}") from e
 
 
 def redact_url(url: str) -> str:
@@ -1217,7 +1243,9 @@ def enrich_external_ids_from_wikidata(media: MediaInfo) -> None:
         if entity:
             update_media_from_wikidata_entity(media, entity)
             return
-    if media.tmdb_id:
+    # Wikidata P4983 is the TMDB *TV* ID property. TMDB movie IDs share the
+    # same numeric namespace, so never use P4983 for a known movie source.
+    if media.tmdb_id and not media.is_movie:
         entity = wikidata_entity_from_statement("P4983", media.tmdb_id)
         if entity:
             update_media_from_wikidata_entity(media, entity)
@@ -3010,11 +3038,19 @@ LANGUAGE_DISPLAY_NAMES = {
     "pt": "Portuguese",
     "ru": "Russian",
     "it": "Italian",
+    "yue": "Cantonese",
 }
 
 
 def _display_lang(code: str) -> str:
     return LANGUAGE_DISPLAY_NAMES.get(code.lower(), code)
+
+
+def _ollama_pull_detail(status: str, model: str) -> str:
+    detail = (status or "").strip() or model
+    if detail.lower().startswith("pulling "):
+        detail = detail.split(" ", 1)[1].strip()
+    return detail or model
 
 
 class OllamaTranslator(_BaseTranslator):
@@ -3105,6 +3141,7 @@ class OllamaTranslator(_BaseTranslator):
             headers={"Content-Type": "application/json"},
         )
         last_status = ""
+        last_progress: tuple[str, int, int] | None = None
         saw_progress = False
         try:
             with urllib.request.urlopen(req, timeout=1800) as res:
@@ -3127,9 +3164,14 @@ class OllamaTranslator(_BaseTranslator):
                     total = data.get("total")
                     if isinstance(completed, int) and isinstance(total, int) and total > 0:
                         saw_progress = True
-                        progress_bar(completed, total, "pulling", status or self.model, transient=True)
+                        detail = _ollama_pull_detail(status, self.model)
+                        progress_key = (detail, completed, total)
+                        if progress_key == last_progress:
+                            continue
+                        last_progress = progress_key
+                        progress_bar(completed, total, "pulling", detail, transient=True)
                 if not saw_progress:
-                    progress_bar(1, 1, "pulling", last_status or self.model, transient=True)
+                    progress_bar(1, 1, "pulling", _ollama_pull_detail(last_status, self.model), transient=True)
         except urllib.error.HTTPError as e:
             msg = e.read().decode("utf-8", errors="replace").strip()
             detail = f"\nOllama said: {msg[:300]}" if msg else ""
@@ -3146,6 +3188,11 @@ class OllamaTranslator(_BaseTranslator):
             raise TranslatorError(f"Ollama network error while pulling {self.model!r}: {e.reason}") from e
         if last_status:
             print(f"Ollama pull status: {last_status}")
+        if last_status.lower() == "success":
+            print(
+                f"Ollama model {self.model!r} is ready. "
+                "Starting translation; the first response may take a minute while Ollama loads the model."
+            )
 
     def translate_batch(self, texts: list[str], source_lang: str, target_lang: str, on_progress=None) -> list[str]:
         if not texts:
@@ -3741,6 +3788,25 @@ def expand_episodes(value: str, total_episodes: int | None) -> list[str]:
     return episodes
 
 
+def apply_default_tv_auto_scope(media: MediaInfo, episodes: list[str]) -> tuple[list[str], bool]:
+    """Turn unfiltered TV auto-scope into S01E01.
+
+    `episode=auto` is fine for movies, but for TV providers it can mean
+    "search the whole show", which may return different random episodes per
+    language. If we know this is not a movie, keep the existing numeric season
+    when present; otherwise default to season 1, episode 1.
+    """
+    if episodes != ["auto"] or str(media.episode).lower() != "auto" or media.is_movie:
+        return episodes, False
+    season = str(media.season or "auto").strip().lower()
+    if season in {"", "auto"}:
+        media.season = "1"
+    elif not season.isdigit():
+        return episodes, False
+    media.episode = "1"
+    return ["1"], True
+
+
 def normalized_release_source(text: str) -> str | None:
     value = text.lower()
     if any(token in value for token in ["netflix", ".nf.", " nf ", "webrip.nf", "web-dl.nf"]):
@@ -3861,6 +3927,7 @@ TITLE_MATCH_STOPWORDS = {
     "a", "an", "and", "as", "at", "de", "del", "der", "die", "das", "el",
     "en", "for", "la", "las", "le", "les", "los", "of", "on", "or", "the",
     "to", "un", "una", "und", "y",
+    "ass", "srt", "ssa", "vtt", "zip",
 }
 
 
@@ -3870,7 +3937,7 @@ def _title_match_tokens(text: str | None) -> set[str]:
     raw_tokens = re.findall(r"[a-z0-9]+", text.casefold())
     tokens: set[str] = set()
     for token in raw_tokens:
-        if len(token) < 3 or token in TITLE_MATCH_STOPWORDS:
+        if len(token) < 3 or token.isdigit() or token in TITLE_MATCH_STOPWORDS:
             continue
         tokens.add(token)
         if len(token) > 4 and token.endswith("s"):
@@ -3911,6 +3978,60 @@ def subtitle_title_match_score(file: SubtitleFile, media: MediaInfo | None = Non
     if best_overlap:
         return 0
     return 9
+
+
+def subtitle_candidate_title(file: SubtitleFile) -> str:
+    """Best human-facing title/label for a provider result."""
+    for value in (file.media_title, file.release, file.origin, file.name):
+        text = str(value or "").strip()
+        if text:
+            return text
+    return file.name
+
+
+def low_confidence_subtitle_reason(file: SubtitleFile, media: MediaInfo | None) -> str | None:
+    """Return a user-facing reason when a provider result looks unrelated.
+
+    Score 9 means the provider result has searchable title tokens, but none
+    overlap the requested title/aliases. Score 8 is intentionally not blocked:
+    some APIs return opaque filenames under an otherwise useful ID.
+    """
+    if media is None or not media.title:
+        return None
+    score = subtitle_title_match_score(file, media)
+    if score < 9:
+        return None
+    requested = media.title
+    candidate = subtitle_candidate_title(file)
+    return f"title mismatch: requested {requested!r}; provider result {candidate!r}"
+
+
+def low_confidence_subtitle_candidate(
+    files: list[SubtitleFile],
+    *,
+    media: MediaInfo | None = None,
+    episode: str | None = None,
+) -> SubtitleFile | None:
+    """Return the least-bad candidate only when every candidate is a title mismatch."""
+    if not files or media is None or not media.title:
+        return None
+    scored = [(subtitle_title_match_score(file, media), file) for file in files]
+    if not scored or min(score for score, _file in scored) < 9:
+        return None
+    non_episode_mismatches = [
+        file for _score, file in scored
+        if subtitle_episode_match_score(file, media, episode) < 8
+    ]
+    if not non_episode_mismatches:
+        return None
+    return sorted(
+        non_episode_mismatches,
+        key=lambda file: (
+            subtitle_title_match_score(file, media),
+            subtitle_episode_match_score(file, media, episode),
+            subtitle_candidate_title(file).lower(),
+        ),
+    )[0]
 
 
 def subtitle_episode_match_score(file: SubtitleFile, media: MediaInfo | None = None, episode: str | None = None) -> int:
@@ -3956,6 +4077,22 @@ def choose_best(
         matched = [file for file in files if title_scores[id(file)] == 0]
         if matched:
             files = matched
+        elif title_scores and min(title_scores.values()) >= 9:
+            # All candidates name an unrelated title. Returning "not found" is
+            # safer than downloading a polished, totally wrong subtitle file.
+            return None
+        # When the user asked for an explicit TV episode, never accept a file
+        # that clearly names a different season/episode. Provider APIs can
+        # return broad show-level hits, and downloading S08E01 for an S01E01
+        # request is worse than reporting "not found".
+        episode_scores = {
+            id(file): subtitle_episode_match_score(file, media, episode)
+            for file in files
+        }
+        non_mismatched = [file for file in files if episode_scores[id(file)] < 8]
+        if not non_mismatched:
+            return None
+        files = non_mismatched
 
     def score(file: SubtitleFile) -> tuple[int, int, int, int, int, int, int, int, str]:
         ext = Path(file.name).suffix.lower()
@@ -3981,6 +4118,40 @@ def choose_best(
         return source_score, title_scores[id(file)], ep_score, ai_score, hi_score, dubbed_score, ext_score, provider_score, file.name.lower()
 
     return sorted(files, key=score)[0]
+
+
+def subtitle_source_label(file: SubtitleFile) -> str:
+    return file.source_provider or file.provider or "provider"
+
+
+def subtitle_display_name(file: SubtitleFile) -> str:
+    label = subtitle_source_label(file)
+    return f"{file.name} [{label}]"
+
+
+def download_alternates(files: list[SubtitleFile], best: SubtitleFile | None) -> list[SubtitleFile]:
+    """Candidates to try when the chosen subtitle download fails.
+
+    Prefer a different backing source/provider first, then same-source
+    alternates. Dedupe by URL so retry-with-alternate never repeats the
+    exact same download.
+    """
+    if best is None:
+        return []
+    best_source = subtitle_source_label(best)
+    seen = {best.url}
+    out: list[SubtitleFile] = []
+    for file in files:
+        if file.url in seen:
+            continue
+        seen.add(file.url)
+        out.append(file)
+    out.sort(key=lambda f: (
+        0 if subtitle_source_label(f) != best_source else 1,
+        subtitle_source_label(f).lower(),
+        f.name.lower(),
+    ))
+    return out
 
 
 def provider_debug_record(
@@ -4074,6 +4245,53 @@ def _episode_for_output_filename(episode: str, episode_filename_start: int | Non
     return str(int(ep) + episode_filename_start - 1)
 
 
+TEXT_SUBTITLE_EXTENSIONS = {".srt", ".vtt", ".ass", ".ssa", ".smi"}
+
+
+def prepare_downloaded_subtitle_bytes(raw: bytes, ext: str, name: str) -> bytes:
+    """Return UTF-8 text subtitle bytes, or reject obviously damaged files.
+
+    Some providers serve CP1252/Latin-1 subtitles without declaring the
+    encoding; normalising them here preserves accents before later modify/merge
+    steps read everything as UTF-8. If a file already contains repeated U+FFFD
+    replacement characters, the original bytes are gone, so reject it and let
+    the downloader try an alternate result.
+    """
+    ext = ext.lower()
+    if ext not in TEXT_SUBTITLE_EXTENSIONS:
+        return raw
+    encodings = ["utf-8-sig", "utf-8"]
+    if raw.startswith((b"\xff\xfe", b"\xfe\xff")):
+        encodings.insert(0, "utf-16")
+    if ext == ".smi":
+        encodings.extend(["cp949", "cp1252", "latin-1"])
+    else:
+        encodings.extend(["cp1252", "latin-1"])
+
+    text = ""
+    used_encoding = ""
+    for encoding in encodings:
+        try:
+            text = raw.decode(encoding)
+            used_encoding = encoding
+            break
+        except UnicodeDecodeError:
+            continue
+    if not used_encoding:
+        text = raw.decode("utf-8", errors="replace")
+        used_encoding = "utf-8"
+
+    replacement_count = text.count("\ufffd")
+    if replacement_count >= 3:
+        raise CliError(
+            f"subtitle text looks corrupted in {name}: "
+            f"{replacement_count} replacement characters (�). Trying another result is safer."
+        )
+    if used_encoding in {"utf-8", "utf-8-sig"} and "\ufffd" not in text:
+        return raw
+    return text.encode("utf-8")
+
+
 def save_subtitle(
     sub: SubtitleFile,
     dest_dir: Path,
@@ -4086,6 +4304,7 @@ def save_subtitle(
     dest_dir.mkdir(parents=True, exist_ok=True)
     raw = download_bytes(sub.url, headers=sub.download_headers)
     ext = Path(sub.name).suffix.lower() or ".srt"
+    raw = prepare_downloaded_subtitle_bytes(raw, ext, sub.name)
     saved: list[Path] = []
 
     if ext == ".zip":
@@ -4127,6 +4346,8 @@ def download_planned_subtitles(
     season: str,
     layout: str,
     episode_filename_start: int | None = None,
+    alternatives: dict[tuple[str, str], list[SubtitleFile]] | None = None,
+    interactive_recovery: bool = False,
 ) -> tuple[list[Path], list[str]]:
     saved: list[Path] = []
     failures: list[str] = []
@@ -4134,20 +4355,73 @@ def download_planned_subtitles(
     for idx, (_lang, ep, sub) in enumerate(planned, start=1):
         progress_bar(idx, len(planned), "downloading", f"episode {ep} {sub.language}", transient=True)
         dest = output_dir(base, media, season, layout)
-        try:
-            if episode_filename_start and episode_filename_start > 1:
-                saved.extend(
-                    save_subtitle(
-                        sub, dest, media, season, ep,
-                        episode_filename_start=episode_filename_start,
+        current = sub
+        alternates = list((alternatives or {}).get((sub.language, ep), []))
+        while True:
+            try:
+                if episode_filename_start and episode_filename_start > 1:
+                    saved.extend(
+                        save_subtitle(
+                            current, dest, media, season, ep,
+                            episode_filename_start=episode_filename_start,
+                        )
                     )
-                )
-            else:
-                saved.extend(save_subtitle(sub, dest, media, season, ep))
-        except CliError as e:
-            provider = sub.provider or sub.source_provider or "provider"
-            failures.append(f"{sub.language} ep{ep}: download failed from {provider} — {e}")
+                else:
+                    saved.extend(save_subtitle(current, dest, media, season, ep))
+                break
+            except CliError as e:
+                provider = subtitle_source_label(current)
+                if not interactive_recovery:
+                    if alternates:
+                        rejected = current
+                        current = alternates.pop(0)
+                        print(
+                            f"    {rejected.language} ep{ep}: rejected {subtitle_display_name(rejected)} from {provider} — {e}"
+                        )
+                        print(f"    Trying alternate: {subtitle_display_name(current)}")
+                        continue
+                    failures.append(f"{current.language} ep{ep}: download failed from {provider} — {e}")
+                    break
+                action = prompt_download_recovery(current, alternates, ep, str(e))
+                if action == "retry":
+                    continue
+                if action == "alternate":
+                    if not alternates:
+                        print("    No alternate provider/result is available for this subtitle.")
+                        continue
+                    current = alternates.pop(0)
+                    print(f"    Trying alternate: {subtitle_display_name(current)}")
+                    continue
+                if action == "skip":
+                    failures.append(
+                        f"{current.language} ep{ep}: skipped {current.name} after download failure from {provider} — {e}"
+                    )
+                    break
+                raise CliError(f"Download cancelled while fetching {current.language} ep{ep}: {current.name}") from e
     return saved, failures
+
+
+def prompt_download_recovery(
+    sub: SubtitleFile,
+    alternates: list[SubtitleFile],
+    episode: str,
+    error: str,
+) -> str:
+    print()
+    print()
+    print(f"Download failed for {sub.language} {episode_label(episode)}:")
+    print(f"  {subtitle_display_name(sub)}")
+    print(f"Reason: {error}")
+    print()
+    print(f"    1) Retry the same provider/result ({subtitle_source_label(sub)})")
+    if alternates:
+        print(f"    2) Retry with an alternate provider/result ({subtitle_display_name(alternates[0])})")
+    else:
+        print("    2) Retry with an alternate provider/result (none available)")
+    print(f"    3) Skip {sub.name}")
+    print("    4) Cancel")
+    pick = _wizard_read_choice("Number", ["1", "2", "3", "4"], "1")
+    return {"1": "retry", "2": "alternate", "3": "skip", "4": "cancel"}[pick]
 
 
 def ass_escape(text: str) -> str:
@@ -10956,6 +11230,95 @@ def confirm_bulk(count: int, args: argparse.Namespace) -> None:
         raise CliError("Cancelled.")
 
 
+def prompt_low_confidence_subtitle(
+    *,
+    media: MediaInfo,
+    language: str,
+    episode: str,
+    provider: str,
+    file: SubtitleFile,
+) -> str:
+    """Ask what to do with an obviously unrelated provider result.
+
+    Returns one of: skip, manual, download, cancel.
+    """
+    requested = media.title or "requested title"
+    candidate = subtitle_candidate_title(file)
+    print()
+    print("This subtitle may not match your movie/show.")
+    print()
+    print("Requested:")
+    print(f"  {requested}")
+    print()
+    print("Provider result:")
+    print(f"  {candidate}")
+    print()
+    print(f"Language/episode: {language} {episode_label(episode)} [{provider}]")
+    print("These titles do not appear related.")
+    print()
+    print("    1) Skip this subtitle")
+    print("    2) Search manually after this fetch")
+    print("    3) Download anyway")
+    print("    4) Cancel")
+    while True:
+        try:
+            answer = input("  Number [1] > ").strip().lower()
+        except EOFError:
+            return "skip"
+        if answer == "":
+            return "skip"
+        if answer in {"1", "skip", "s"}:
+            return "skip"
+        if answer in {"2", "manual", "m", "search"}:
+            return "manual"
+        if answer in {"3", "download", "d", "anyway", "yes", "y"}:
+            return "download"
+        if answer in {"4", "cancel", "q", "quit"}:
+            return "cancel"
+        print("    Please choose 1, 2, 3, or 4.")
+
+
+def handle_low_confidence_subtitle(
+    *,
+    media: MediaInfo,
+    language: str,
+    episode: str,
+    provider: str,
+    file: SubtitleFile,
+    warnings: list[str],
+    interactive: bool,
+) -> bool:
+    """Return True when the low-confidence subtitle should still download."""
+    reason = low_confidence_subtitle_reason(file, media)
+    if not reason:
+        return True
+    warning = f"{language} {episode_label(episode)} [{provider}]: skipped low-confidence subtitle — {reason}"
+    if not interactive:
+        warnings.append(warning)
+        return False
+    action = prompt_low_confidence_subtitle(
+        media=media,
+        language=language,
+        episode=episode,
+        provider=provider,
+        file=file,
+    )
+    if action == "download":
+        warnings.append(
+            f"{language} {episode_label(episode)} [{provider}]: downloaded despite low confidence — {reason}"
+        )
+        return True
+    if action == "cancel":
+        raise CliError("Cancelled.")
+    if action == "manual":
+        warnings.append(
+            f"{language} {episode_label(episode)} [{provider}]: skipped for manual search — {reason}"
+        )
+    else:
+        warnings.append(warning)
+    return False
+
+
 class _StatusLine:
     """Lightweight 'doing X... done.' status feedback for slow blocking
     operations that would otherwise look frozen (e.g. fetching the Anime-IDs
@@ -11084,6 +11447,7 @@ def print_search_results(results: list[SearchResult]) -> None:
         language_results = [result for result in results if result.language == language]
         found = [result for result in language_results if result.status == "found"]
         missing = [result for result in language_results if result.status == "missing"]
+        skipped = [result for result in language_results if result.status == "skipped"]
         errors = [result for result in language_results if result.status == "error"]
         total = len(language_results)
         parts = [f"Found {len(found)}/{total}"]
@@ -11091,6 +11455,8 @@ def print_search_results(results: list[SearchResult]) -> None:
             parts.append(summarize_episode_labels([result.episode for result in found]))
         if missing:
             parts.append(f"Missing {summarize_episode_labels([result.episode for result in missing])}")
+        if skipped:
+            parts.append(f"Skipped {summarize_episode_labels([result.episode for result in skipped])}")
         if errors:
             parts.append(f"Errors {summarize_episode_labels([result.episode for result in errors])}")
         print(f"  {language}: {', '.join(parts)}")
@@ -11099,6 +11465,11 @@ def print_search_results(results: list[SearchResult]) -> None:
             for result in sorted(found, key=lambda item: episode_sort_key(item.episode)):
                 assert result.file is not None
                 print(f"    - {episode_label(result.episode)}: {result.file.name} [{result.provider}]")
+        if 0 < len(skipped) <= 4:
+            for result in sorted(skipped, key=lambda item: episode_sort_key(item.episode)):
+                assert result.file is not None
+                reason = f" — {result.error}" if result.error else ""
+                print(f"    - {episode_label(result.episode)}: skipped {result.file.name} [{result.provider}]{reason}")
 
 
 def print_planned_downloads(planned: list[tuple[str, str, SubtitleFile]]) -> None:
@@ -11114,6 +11485,21 @@ def print_planned_downloads(planned: list[tuple[str, str, SubtitleFile]]) -> Non
         if len(items) <= 4:
             for ep, sub in sorted(items, key=lambda item: episode_sort_key(item[0])):
                 print(f"    - {episode_label(ep)}: {sub.name}")
+
+
+def print_low_confidence_next_steps(results: list[SearchResult]) -> None:
+    skipped = [r for r in results if r.status == "skipped" and r.confidence == "low"]
+    if not skipped:
+        return
+    print("\nLow-confidence subtitles skipped:")
+    for result in skipped[:6]:
+        candidate = subtitle_candidate_title(result.file) if result.file else "unknown provider result"
+        print(f"  - {result.language} {episode_label(result.episode)}: {candidate}")
+        if result.error:
+            print(f"    {result.error}")
+    if len(skipped) > 6:
+        print(f"  ... and {len(skipped) - 6} more")
+    print("  Next: use manual search, try another metadata source, or download anyway from an interactive run if you verify the match.")
 
 
 @dataclass
@@ -11252,12 +11638,15 @@ def _wizard_print_run_summary(summary: _WizardRunSummary | None, rc: int) -> Non
     print("=" * 70)
     print("Workflow summary")
     print("=" * 70)
-    print(f"Result: {'completed' if rc == 0 else 'finished with issues'}")
+    missing_any = any(
+        s.missing or s.failures for s in summary.steps_by_name.values()
+    )
+    if rc == 0 and not missing_any:
+        print("Completed successfully")
+    else:
+        print("Completed partially")
     if rc != 0:
         # Standardised What / Why / How so a failed run is actionable.
-        missing_any = any(
-            s.missing or s.failures for s in summary.steps_by_name.values()
-        )
         print(_format_failure(
             what="The workflow finished with issues (details per step below).",
             why=("Some subtitles couldn't be found, or a step reported errors."
@@ -11315,20 +11704,34 @@ def _wizard_print_run_summary(summary: _WizardRunSummary | None, rc: int) -> Non
     merge_outputs = summary.steps_by_name.get("merge", _WizardStepSummary()).outputs
     missing_any = any(step.missing or step.failures for step in summary.steps_by_name.values())
     print()
-    print("Next:")
+    print("Next steps:")
+    next_step = 1
     if merge_outputs:
-        print("  Open the merged subtitle file in your player and check timing/readability.")
+        for text in (
+            "Open the merged subtitle file in your player.",
+            "Check subtitle timing and readability.",
+            "Adjust font size or format if needed.",
+        ):
+            print(f"  {next_step}. {text}")
+            next_step += 1
     elif missing_any:
-        print("  Fill missing subtitles manually or with MT, then run merge again.")
+        for text in (
+            "Fill missing subtitles manually or with AI translation.",
+            "Run merge again.",
+        ):
+            print(f"  {next_step}. {text}")
+            next_step += 1
     elif len(summary.order or summary.languages) >= 2:
         target = summary.output or summary.source or "FOLDER"
         langs = ",".join(summary.order or summary.languages)
-        print(f"  Merge later with: getsubtitle merge {shlex.quote(target)} -l {langs}")
+        print(f"  {next_step}. Merge later with: getsubtitle merge {shlex.quote(target)} -l {langs}")
+        next_step += 1
     else:
-        print("  Add another language or reading aid when you want a multi-language file.")
+        print(f"  {next_step}. Add another language or reading aid when you want a multi-language file.")
+        next_step += 1
     if summary.command:
-        print("  Re-run this workflow command after any setup fixes:")
-        print("    " + summary.command)
+        print(f"  {next_step}. Re-run this workflow command after any setup fixes:")
+        print("     " + summary.command)
 
 
 def _manual_search_query_terms(media: MediaInfo) -> list[str]:
@@ -12821,6 +13224,29 @@ _SETUP_INSTALL_HINTS_BY_PACKAGE: dict[str, tuple[str, str]] = {
     "pycantonese":       ("~20 MB", "~30 seconds"),
     "argostranslate":    ("~50 MB", "30-60 seconds"),
 }
+_SETUP_EXTRA_PACKAGES: dict[str, str] = {
+    "furigana": "pykakasi",
+    "romanization-ko": "korean-romanizer",
+    "romanization-zh": "pypinyin",
+    "romanization-yue": "pycantonese",
+}
+
+
+def _setup_project_root() -> Path | None:
+    """Best-effort project root for editable extra installs.
+
+    The wizard may be launched from a movie folder, so `pip install -e .[...]`
+    must not rely on the current working directory."""
+    candidates: list[Path] = []
+    try:
+        candidates.append(Path(__file__).resolve().parent)
+    except NameError:  # pragma: no cover - __file__ exists in normal CLI use
+        pass
+    candidates.append(Path.cwd())
+    for candidate in candidates:
+        if (candidate / "pyproject.toml").exists():
+            return candidate
+    return None
 
 
 def _setup_offer_pip_install(package: str, *, extra: str | None = None) -> bool:
@@ -12831,10 +13257,12 @@ def _setup_offer_pip_install(package: str, *, extra: str | None = None) -> bool:
     Prints a one-line size/duration estimate before asking so the user
     isn't surprised when a heavy extra (e.g. romanization-ko) pulls
     nltk + a corpus."""
+    cwd: Path | None = None
     if extra:
         cmd = [sys.executable, "-m", "pip", "install", "-e", f".[{extra}]"]
         shell_form = f'pip install -e ".[{extra}]"'
         size_hint = _SETUP_INSTALL_HINTS.get(extra)
+        cwd = _setup_project_root()
     else:
         cmd = [sys.executable, "-m", "pip", "install", package]
         shell_form = f"pip install {package}"
@@ -12844,13 +13272,15 @@ def _setup_offer_pip_install(package: str, *, extra: str | None = None) -> bool:
         size, duration = size_hint
         print(f"  Approximate: {size} download, {duration} on a fast connection.")
     print(f"  Will run in: {sys.executable}")
+    if cwd is not None:
+        print(f"  Project folder: {cwd}")
     if not _wizard_yesno("  Install now?", default=True):
         print("  Skipped — install later with the suggested command above.")
         return False
     print("  Running pip — output streams below…")
     print()
     try:
-        rc = subprocess.run(cmd, check=False).returncode
+        rc = subprocess.run(cmd, check=False, cwd=str(cwd) if cwd is not None else None).returncode
     except OSError as e:
         print(f"  pip launch failed: {e}")
         return False
@@ -12870,6 +13300,40 @@ def _setup_offer_pip_install(package: str, *, extra: str | None = None) -> bool:
         print(f"  pip reported success but {package} still isn't importable.")
         print(f"  Try the command manually in a fresh shell: {shell_form}")
     return importable
+
+
+def _setup_pip_fix_target(fix: str) -> tuple[str, str | None] | None:
+    """Parse a preflight pip fix into `(package, extra)`.
+
+    Fix strings are intentionally human-readable, e.g.
+    `pip install -e ".[romanization-zh]"  # or: pip install pypinyin`.
+    This helper extracts only the first concrete pip command."""
+    command = fix.split("#", 1)[0].split("—", 1)[0].strip()
+    if not command.startswith("pip install"):
+        return None
+    try:
+        parts = shlex.split(command)
+    except ValueError:
+        return None
+    if len(parts) < 3 or parts[:2] != ["pip", "install"]:
+        return None
+    if "-e" in parts:
+        idx = parts.index("-e")
+        if idx + 1 >= len(parts):
+            return None
+        editable = parts[idx + 1]
+        m = re.fullmatch(r"\.\[([A-Za-z0-9_-]+)\]", editable)
+        if not m:
+            return None
+        extra = m.group(1)
+        package = _SETUP_EXTRA_PACKAGES.get(extra)
+        if package is None:
+            return None
+        return package, extra
+    package = next((p for p in reversed(parts[2:]) if not p.startswith("-")), None)
+    if not package:
+        return None
+    return package, None
 
 
 _SETUP_SMOKE_URL = "https://www.imdb.com/title/tt0096283/"   # Totoro — small, ja+en widely available
@@ -14010,7 +14474,7 @@ Merge options:
   -l, --langs CODES        Required. Language order for output
   -o, --output DIR         Output folder. Default: beside master subtitle
   --dry-run                Show merge plan without writing files
-  --force                  Overwrite existing outputs and allow low-confidence matches
+  --force                  Overwrite existing outputs
   --open-folder            Open output folder after writing
   --no-open-folder-prompt  Do not ask whether to open output folder
   --no-watermark           Skip GetSubtitle credit/disclaimer cues
@@ -14298,11 +14762,14 @@ Final action menu (answer by number):
   3) Edit an answer  — list current answers, jump to one question.
   4) Start over      — confirms 'discard all answers?' before clearing.
   5) Quit
+  6) Show exact command & workflow file
+                     — prints the full CLI command and equivalent TOML.
 
-Before the action menu the wizard prints both the terminal command AND
-the equivalent workflow file (in TOML, saveable as .toml) so you can
-sanity-check. If a reading aid wants VTT ruby but the format is set to
-something else, a one-line warning surfaces here.
+Before the action menu the wizard prints a plain-language plan and smart
+defaults so you can sanity-check the intent without reading flags. Use
+option 6 when you want the exact terminal command and equivalent workflow
+file (in TOML, saveable as .toml). If a reading aid wants VTT ruby but
+the format is set to something else, a one-line warning surfaces here.
 Rename mode finishes immediately after the confirmed rename preview;
 it does not generate a TOML workflow because it is file maintenance,
 not a reusable fetch/modify/merge recipe. By default it creates renamed
@@ -14963,12 +15430,12 @@ def _wizard_pick_title_candidate(title: str) -> tuple[str, str, str, bool] | Non
             print("    AniList or other built-in fallbacks.")
         return None
     print()
-    print("    Title match candidates:")
+    print("    Possible matches:")
     for i, row in enumerate(rows, start=1):
         print(f"    {i}) {row['label']}")
-    print("    0) Keep raw title text")
+    print("    0) Use exactly what I typed")
     print("    r) Re-enter a different title")
-    pick = _wizard_prompt("Pick candidate number, 0, or r", "1").strip().lower()
+    pick = _wizard_prompt("Which title did you mean? Number, 0, or r", "1").strip().lower()
     if pick in ("r", "retry", "redo"):
         return "retry"
     if pick in ("0", "raw", "title", "keep"):
@@ -15661,7 +16128,7 @@ def _wizard_estimate_total_questions(state: _WizardState) -> int:
     """Rough count of questions for the current step selection, for the
     visual progress bar. Approximate because the flow is dynamic — the
     local-language preflight can add fetch mid-run. Mirrors the gating in
-    `_wizard_step_skip`: format/text-size are smart-defaulted (not asked)."""
+    `_wizard_step_skip`."""
     if "rename" in state.steps:
         return 2  # steps + source (rename runs its own sub-flow after)
     n = 1  # steps
@@ -15673,6 +16140,10 @@ def _wizard_estimate_total_questions(state: _WizardState) -> int:
         n += 1
     if "modify" in state.steps:
         n += 1  # reading aids
+    if "merge" in state.steps:
+        n += 1  # format
+        if _wizard_should_ask_font_size(state):
+            n += 1
     return n
 
 
@@ -15717,7 +16188,6 @@ def _wizard_q0_steps(state: _WizardState) -> None:
     to a single .ja.srt the user already has. Skipping steps avoids
     asking irrelevant questions downstream and keeps the emitted CLI
     short."""
-    print()
     print(_wizard_next_q(state, "What would you like to do?"))
     print("    1) Fetch      Download subtitles from a URL or title")
     print("    2) Translate  Fill missing languages with AI")
@@ -15805,9 +16275,9 @@ def _wizard_q1_source(state: _WizardState) -> None:
                 if state.convert_smi:
                     print("    SMI subtitles found; will convert them to SRT before cleanup/readings.")
             state.source = str(path)
-            print(f"    Identified as: {description}")
+            print(f"    Searching for: {description}")
             return
-    print(_wizard_next_q(state, "What should getsubtitle work on?"))
+    print(_wizard_next_q(state, "Where should we get subtitles from?"))
     print("    1) A movie/show title (The Simpsons, Totoro, The Matrix, …)")
     print("    2) A streaming/catalog URL (IMDb, AniList, Netflix, Crunchyroll, …)")
     print("    3) A folder or file on disk (your Plex/Movies, ~/Downloads, …)")
@@ -15815,37 +16285,68 @@ def _wizard_q1_source(state: _WizardState) -> None:
     # otherwise default to the path branch, which is the most reliable first-
     # time experience.
     default_q1 = "1" if get_provider_api_key("tmdb") else "3"
+    direct_source_value = ""
     while True:
         pick = _wizard_prompt("Number", default_q1).strip()
         if pick in ("1", "2", "3"):
             break
-        print("    Invalid selection. Type 1, 2, or 3. To search for a title, choose 1 first.")
+        cleaned = _wizard_strip_wrapping_quotes(pick)
+        if _looks_like_url(cleaned):
+            state.source_kind = "url"
+            direct_source_value = cleaned
+            print(f"    Detected URL: {cleaned}")
+            break
+        if cleaned:
+            maybe_path = Path(cleaned).expanduser()
+            if maybe_path.exists():
+                state.source_kind = "path"
+                direct_source_value = cleaned
+                print(f"    Detected local path: {cleaned}")
+                break
+        if re.search(r"[A-Za-z0-9가-힣ぁ-んァ-ン一-龯]", cleaned or ""):
+            state.source_kind = "title"
+            direct_source_value = cleaned
+            print("    Detected title search:")
+            print(f"      {cleaned}")
+            break
+        print("    Invalid selection. Type 1, 2, or 3 — or paste a title, URL, or path.")
     if pick == "3":
         state.source_kind = "path"
     elif pick == "1":
         state.source_kind = "title"
-    else:
+    elif pick == "2":
         state.source_kind = "url"
     print()
     if state.source_kind == "url":
+        if direct_source_value:
+            state.source = direct_source_value
+            state.is_movie = _wizard_url_is_movie(direct_source_value)
+            print(f"    Searching for: {_wizard_describe_url_source(direct_source_value)}")
+            return
         print(_wizard_next_q(state, "Enter the URL.", spacer=False))
         while True:
             src = _wizard_prompt("URL")
             if _looks_like_url(src):
                 state.source = src
                 state.is_movie = _wizard_url_is_movie(src)
-                print(f"    Identified as: {_wizard_describe_url_source(src)}")
+                print(f"    Searching for: {_wizard_describe_url_source(src)}")
                 return
             print("    That does not look like an http/https URL. Try again, or enter 'q' to quit.")
     if state.source_kind == "title":
-        print(_wizard_next_q(state, "Enter the movie or show title.", spacer=False))
+        if not direct_source_value:
+            print(_wizard_next_q(state, "Enter the movie or show title.", spacer=False))
         while True:
-            title = _wizard_prompt("Title")
+            title = direct_source_value or _wizard_prompt("Title")
+            direct_source_value = ""
             if _looks_like_url(title):
-                print("    That looks like a URL. Choose option 'a' if you want to use a URL.")
+                print("    That looks like a URL. Choose the URL option if you want to use a URL.")
                 continue
-            print(f"    Identified as: title search for {title!r}")
-            picked = _wizard_pick_title_candidate(title)
+            print(f"    Searching for: {title!r}")
+            try:
+                picked = _wizard_pick_title_candidate(title)
+            except _WizardBack:
+                print("    Going back to title entry.")
+                continue
             if picked == "retry":
                 # User wants to type a different title. Loop without
                 # assigning anything to state.source yet.
@@ -15855,9 +16356,14 @@ def _wizard_q1_source(state: _WizardState) -> None:
                 state.source = title
                 # Title-text input is genuinely ambiguous; ask once so we
                 # can skip Q6 (and avoid Season Unknown / S00E00 on disk).
-                state.is_movie = _wizard_yesno(
-                    "Is this a movie? (No = TV show / anime)", default=False
-                )
+                try:
+                    state.is_movie = _wizard_yesno(
+                        "Is this a movie? (No = TV show / anime)", default=False
+                    )
+                except _WizardBack:
+                    state.source = ""
+                    print("    Going back to title entry.")
+                    continue
             else:
                 picked_url, provider, label, picked_is_movie = picked
                 state.source = picked_url
@@ -15867,19 +16373,89 @@ def _wizard_q1_source(state: _WizardState) -> None:
                 # AniList format=MOVIE both flow through here. URL-shape
                 # detection is the fallback for other providers.
                 state.is_movie = picked_is_movie or _wizard_url_is_movie(picked_url)
-                print(f"    Locked to ID source: {label} [{provider}]")
+                print(f"    Matched title: {label} [{provider}]")
             return
     print(_wizard_next_q(state, "Enter the folder or file path.", spacer=False))
     while True:
-        src = _wizard_prompt("Folder or file path")
+        src = direct_source_value or _wizard_prompt("Folder or file path")
+        direct_source_value = ""
         try:
             path, description = _wizard_describe_path_source(src)
         except CliError as exc:
             print(f"    {exc}")
             continue
         state.source = str(path)
-        print(f"    Identified as: {description}")
+        print(f"    Searching for: {description}")
         return
+
+
+_WIZARD_EXTRA_LANGUAGE_CODES: frozenset[str] = frozenset({"yue"})
+
+
+def _wizard_known_language_codes() -> set[str]:
+    return set(_SETUP_KNOWN_LANG_CODES) | set(_WIZARD_EXTRA_LANGUAGE_CODES)
+
+
+def _wizard_canonical_language_token(token: str) -> str | None:
+    raw = token.strip().lower()
+    if not raw:
+        return None
+    if raw == "cantonese":
+        return "yue"
+    canon = LANGUAGE_ALIASES.get(raw, raw)
+    if canon in _wizard_known_language_codes():
+        return canon
+    return None
+
+
+def _wizard_parse_language_list(raw: str) -> tuple[list[str], list[str]]:
+    parts = [p.strip().lower() for p in raw.split(",") if p.strip()]
+    if not parts:
+        return [], []
+    norm: list[str] = []
+    bad: list[str] = []
+    for part in parts:
+        canon = _wizard_canonical_language_token(part)
+        if canon is None:
+            bad.append(part)
+            continue
+        norm.append(canon)
+    seen: set[str] = set()
+    return [c for c in norm if not (c in seen or seen.add(c))], bad
+
+
+def _wizard_suggest_language_list(raw: str) -> list[str]:
+    """Recover common interactive typos like `en.es` or `japanese korean`.
+
+    The regular CLI stays strict, but the wizard can ask for clarification when
+    a punctuation or whitespace-separated answer looks obviously like multiple
+    language tokens.
+    """
+    pieces = [p.strip().lower() for p in re.split(r"[,.;/|\s]+", raw) if p.strip()]
+    if len(pieces) < 2:
+        return []
+    norm: list[str] = []
+    for piece in pieces:
+        canon = _wizard_canonical_language_token(piece)
+        if canon is None:
+            return []
+        norm.append(canon)
+    seen: set[str] = set()
+    return [c for c in norm if not (c in seen or seen.add(c))]
+
+
+def _wizard_print_language_normalization(raw: str, languages: list[str]) -> None:
+    pieces = [p.strip().lower() for p in re.split(r"[,.;/|\s]+", raw) if p.strip()]
+    if len(pieces) != len(languages):
+        pieces = languages
+    print()
+    print("    Languages selected:")
+    for raw_token, canon in zip(pieces, languages):
+        label = _display_lang(canon)
+        if raw_token == canon:
+            print(f"      {canon} → {label}")
+        else:
+            print(f"      {raw_token} → {label} (normalized to {canon})")
 
 
 def _wizard_q2_languages(state: _WizardState) -> None:
@@ -15893,70 +16469,127 @@ def _wizard_q2_languages(state: _WizardState) -> None:
     print("      japanese,korean,english,spanish : 2-letter codes and full language names both work")
 
     while True:
-        raw = _wizard_prompt("Languages (comma-separated)", "ja,en")
-        parts = [p.strip().lower() for p in raw.split(",") if p.strip()]
-        if not parts:
-            raise CliError("interactive: no languages provided.")
-        # Normalise via existing language alias map. Reject unknown codes early
-        # so the user fixes typos here rather than after a 60-second probe.
-        norm: list[str] = []
-        for p in parts:
-            canon = LANGUAGE_ALIASES.get(p, p)
-            if len(canon) > 3 and canon not in LANGUAGE_ALIASES.values():
-                raise CliError(f"interactive: unrecognised language code {p!r}.")
-            norm.append(canon)
-        # de-dupe preserving order
-        seen: set[str] = set()
-        state.languages = [c for c in norm if not (c in seen or seen.add(c))]
-        if len(state.languages) < 4:
-            break
-        print()
-        print(f"    You selected {len(state.languages)} languages: {', '.join(state.languages)}")
-        print("    Stacked subtitles read most comfortably with 2-3 languages.")
-        print("    4+ can cover a small screen or get hard to read.")
-        print()
-        print("    1) Continue anyway")
-        print(f"    2) Keep only the first 3: {', '.join(state.languages[:3])}")
-        print("    3) Go back and edit languages")
-        pick = _wizard_read_choice("Number", ["1", "2", "3"], "1")
-        if pick == "1":
-            break
-        if pick == "2":
-            state.languages = state.languages[:3]
-            break
-        # pick == "3": loop back and re-ask languages
-        continue
+        while True:
+            raw = _wizard_prompt("Languages (comma-separated)", "ja,en")
+            norm, bad = _wizard_parse_language_list(raw)
+            if bad:
+                suggestion = _wizard_suggest_language_list(raw)
+                if suggestion:
+                    suggested = ",".join(suggestion)
+                    print(f"    I don't recognize {', '.join(repr(b) for b in bad)} as written.")
+                    try:
+                        use_suggestion = _wizard_yesno(f"Did you mean {suggested}?", default=True)
+                    except _WizardBack:
+                        print("    Going back to language entry.")
+                        continue
+                    if use_suggestion:
+                        norm = suggestion
+                        bad = []
+                    else:
+                        print("    Okay, please enter the languages again with commas, like ja,en.")
+                        continue
+                else:
+                    print(f"    I don't recognize: {', '.join(bad)}")
+                    print("    Use 2-letter codes or full names, like ja,en or japanese,korean,english.")
+                    continue
+            if not norm:
+                print("    Please enter at least one language, like ja,en.")
+                continue
+            state.languages = norm
+            _wizard_print_language_normalization(raw, state.languages)
+            if len(state.languages) < 4:
+                break
+            print()
+            print(f"    You selected {len(state.languages)} languages: {', '.join(state.languages)}")
+            print("    Most people find 2-3 languages easiest to read.")
+            print("    4+ can cover a small screen or get hard to read.")
+            print()
+            print("    1) Continue anyway")
+            print(f"    2) Keep only the first 3: {', '.join(state.languages[:3])}")
+            print("    3) Go back and edit languages")
+            try:
+                pick = _wizard_read_choice("Number", ["1", "2", "3"], "1")
+            except _WizardBack:
+                print("    Going back to language entry.")
+                _wizard_clear_step_answer(state, "languages")
+                continue
+            if pick == "1":
+                break
+            if pick == "2":
+                state.languages = state.languages[:3]
+                break
+            # pick == "3": loop back and re-ask languages
+            _wizard_clear_step_answer(state, "languages")
+            continue
 
-    if "fetch" in state.steps and "merge" not in state.steps and len(state.languages) >= 2:
-        print()
-        print("    You selected Fetch without Merge. Fetch downloads separate subtitle files.")
-        print("    To choose a final file format/font size and create one multi-language")
-        print("    subtitle file, add the Merge step.")
-        if _wizard_yesno("Add Merge step?", default=True):
-            state.steps.add("merge")
-            label = " + ".join(s for s in _VALID_STEPS if s in state.steps)
-            print(f"    Selected: {label}.")
-        else:
-            print("    Merge skipped; format/font-size questions apply only to merged files.")
+        original_steps = set(state.steps)
+        try:
+            need_merge = "fetch" in state.steps and "merge" not in state.steps and len(state.languages) >= 2
+            reading_capable = [lang for lang in state.languages if lang in {"ja", "ko", "zh", "yue"}]
+            need_modify = bool(reading_capable and "modify" not in state.steps)
+            offered_combined_recommendation = False
 
-    reading_capable = [lang for lang in state.languages if lang in {"ja", "ko", "zh", "yue"}]
-    if reading_capable and "modify" not in state.steps:
-        names = {
-            "ja": "Japanese furigana",
-            "ko": "Korean romanization",
-            "zh": "Mandarin pinyin",
-            "yue": "Cantonese Jyutping",
-        }
-        label = ", ".join(names[lang] for lang in reading_capable)
-        print()
-        print(f"    {label} reading aids need the Modify step (not selected yet).")
-        if _wizard_yesno(f"Add Modify so I can offer {label} reading aids?", default=True):
-            state.steps.add("modify")
-            picked = " + ".join(s for s in _VALID_STEPS if s in state.steps)
-            print(f"    Selected: {picked}.")
+            if need_merge and need_modify:
+                offered_combined_recommendation = True
+                names = {
+                    "ja": "Japanese furigana",
+                    "ko": "Korean romanization",
+                    "zh": "Mandarin pinyin",
+                    "yue": "Cantonese Jyutping",
+                }
+                label = ", ".join(names[lang] for lang in reading_capable)
+                print()
+                print("    Based on your choices, most language learners also use:")
+                print()
+                print("      Modify")
+                print(f"        Adds {label}.")
+                print()
+                print("      Merge")
+                print("        Creates one multi-language subtitle file.")
+                if _wizard_yesno("Add these recommended steps?", default=True):
+                    state.steps.update({"modify", "merge"})
+                    picked = " + ".join(s for s in _VALID_STEPS if s in state.steps)
+                    print(f"    Selected: {picked}.")
+                else:
+                    print("    Keeping your original steps.")
+                    print("    Format/font-size questions apply only when Merge is selected.")
+                    print("    Reading aids apply only when Modify is selected.")
+            elif need_merge:
+                print()
+                print("    You selected Fetch without Merge. Fetch downloads separate subtitle files.")
+                print("    To choose a final file format/font size and create one multi-language")
+                print("    subtitle file, add the Merge step.")
+                if _wizard_yesno("Add Merge step?", default=True):
+                    state.steps.add("merge")
+                    label = " + ".join(s for s in _VALID_STEPS if s in state.steps)
+                    print(f"    Selected: {label}.")
+                else:
+                    print("    Merge skipped; format/font-size questions apply only to merged files.")
+
+            if need_modify and "modify" not in state.steps and not offered_combined_recommendation:
+                names = {
+                    "ja": "Japanese furigana",
+                    "ko": "Korean romanization",
+                    "zh": "Mandarin pinyin",
+                    "yue": "Cantonese Jyutping",
+                }
+                label = ", ".join(names[lang] for lang in reading_capable)
+                print()
+                print(f"    {label} reading aids need the Modify step (not selected yet).")
+                if _wizard_yesno(f"Add Modify so I can offer {label} reading aids?", default=True):
+                    state.steps.add("modify")
+                    picked = " + ".join(s for s in _VALID_STEPS if s in state.steps)
+                    print(f"    Selected: {picked}.")
+                else:
+                    print("    No reading aids this run.")
+            _wizard_offer_fetch_for_missing_local_languages(state)
+        except _WizardBack:
+            state.steps = original_steps
+            _wizard_clear_step_answer(state, "languages")
+            print("    Going back to language entry.")
+            continue
         else:
-            print("    No reading aids this run.")
-    _wizard_offer_fetch_for_missing_local_languages(state)
+            break
 
 
 def _wizard_local_available_languages(state: _WizardState) -> set[str]:
@@ -16117,6 +16750,52 @@ def _wizard_q4_master(state: _WizardState) -> None:
         state.master = ""
 
 
+def _wizard_edit_display_order(state: _WizardState) -> None:
+    if len(state.languages) <= 1:
+        state.order = list(state.languages)
+        return
+    default_order = ",".join(state.order or state.languages)
+    print()
+    print("Display order controls top → bottom subtitle stacking.")
+    print(f"    Available languages: {', '.join(state.languages)}")
+    while True:
+        raw = _wizard_prompt("Order (comma-separated, top → bottom)", default_order)
+        order = [p.strip().lower() for p in raw.split(",") if p.strip()]
+        order = [LANGUAGE_ALIASES.get(p, p) for p in order]
+        if set(order) == set(state.languages) and len(order) == len(state.languages):
+            state.order = order
+            if state.master and state.master not in state.order:
+                state.master = ""
+            return
+        print(
+            "    Use the same languages exactly once: "
+            + ",".join(state.languages)
+        )
+
+
+def _wizard_edit_timing_master(state: _WizardState) -> None:
+    order = state.order or state.languages
+    if len(order) <= 1:
+        state.master = ""
+        return
+    print()
+    print("Timing master controls which subtitle file supplies cue timing.")
+    for i, code in enumerate(order, start=1):
+        tail = "  (first displayed / default)" if i == 1 else ""
+        print(f"    {i}) {code}{tail}")
+    current = state.master if state.master in order else order[0]
+    default_pick = str(order.index(current) + 1)
+    pick = _wizard_read_choice("Number", [str(i) for i in range(1, len(order) + 1)], default_pick)
+    chosen = order[int(pick) - 1]
+    state.master = "" if chosen == order[0] else chosen
+
+
+def _wizard_edit_cleanup_preset(state: _WizardState) -> None:
+    print()
+    print("Cleanup preset applies single-line cues and strips broadcast noise.")
+    state.asbplayer = _wizard_yesno("Use cleanup preset?", default=bool(state.asbplayer))
+
+
 def _wizard_q5_scope(state: _WizardState) -> None:
     """Episode scope — only when source is a URL or title for a TV series."""
     if state.source_kind not in ("url", "title"):
@@ -16147,7 +16826,7 @@ def _wizard_q5_scope(state: _WizardState) -> None:
     is_crunchyroll = "crunchyroll.com" in parsed_source.netloc.lower()
     print()
     print(_wizard_next_q(state, "What episode scope?"))
-    print("    1) Movie / single item (no season/episode)")
+    print("    1) One TV episode — Season 1 Episode 1")
     print("    2) A specific season + episode (or range)")
     print("    3) Whole season, every episode (-e all)")
     print("    4) Auto — let getsubtitle infer from the URL/title metadata")
@@ -16157,31 +16836,51 @@ def _wizard_q5_scope(state: _WizardState) -> None:
         print()
         print("    Crunchyroll may display Season 3 as E25-E37, but subtitle")
         print("    sources usually search that as Season 3 episodes 1-13.")
-    pick = _wizard_read_choice("Number", ["1", "2", "3", "4"], "2" if is_crunchyroll else "4")
-    if pick == "1":
+    while True:
+        pick = _wizard_read_choice("Number", ["1", "2", "3", "4"], "2" if is_crunchyroll else "4")
+        if pick == "1":
+            print("    This selected source looks like a TV/show result, not a movie.")
+            print("    If you meant a movie, type 'b' and choose the movie result from title search.")
+            print("    For this TV/show source, I will use Season 1 Episode 1.")
+            state.season = "1"
+            state.episode = "1"
+            return
+        if pick == "2":
+            try:
+                state.season = _wizard_prompt("Season or range (e.g. 1, 2-3, all)", "1")
+                state.episode = _wizard_prompt("Episode or range within each season (e.g. 5, 1-10, all)", "1")
+            except _WizardBack:
+                state.season = ""
+                state.episode = ""
+                print("    Going back to episode scope.")
+                continue
+            return
+        if pick == "3":
+            state.season = state.season or "1"
+            state.episode = "all"
+            # Non-anime TV needs TMDB to expand -e all. Heads-up only.
+            if state.source_kind == "title" or (
+                "anilist" not in state.source.lower()
+                and "myanimelist" not in state.source.lower()
+            ):
+                print("    (Note: -e all on non-anime TV requires a TMDB key. "
+                      "Run `getsubtitle --set-key tmdb` later if needed.)")
+            return
+        if pick == "4" and is_crunchyroll:
+            print("    Crunchyroll auto cannot reliably infer the visible season.")
+            print("    Enter the season and episode numbers used by subtitle sources.")
+            try:
+                state.season = _wizard_prompt("Season or range (e.g. 1, 2-3, all)", "1")
+                state.episode = _wizard_prompt("Episode or range within each season (e.g. 5, 1-10, all)", "1")
+            except _WizardBack:
+                state.season = ""
+                state.episode = ""
+                print("    Going back to episode scope.")
+                continue
+            return
         state.season = ""
         state.episode = ""
-    elif pick == "2":
-        state.season = _wizard_prompt("Season or range (e.g. 1, 2-3, all)", "1")
-        state.episode = _wizard_prompt("Episode or range within each season (e.g. 5, 1-10, all)", "1")
-    elif pick == "3":
-        state.season = state.season or "1"
-        state.episode = "all"
-        # Non-anime TV needs TMDB to expand -e all. Heads-up only.
-        if state.source_kind == "title" or (
-            "anilist" not in state.source.lower()
-            and "myanimelist" not in state.source.lower()
-        ):
-            print("    (Note: -e all on non-anime TV requires a TMDB key. "
-                  "Run `getsubtitle --set-key tmdb` later if needed.)")
-    elif pick == "4" and is_crunchyroll:
-        print("    Crunchyroll auto cannot reliably infer the visible season.")
-        print("    Enter the season and episode numbers used by subtitle sources.")
-        state.season = _wizard_prompt("Season or range (e.g. 1, 2-3, all)", "1")
-        state.episode = _wizard_prompt("Episode or range within each season (e.g. 5, 1-10, all)", "1")
-    else:
-        state.season = ""
-        state.episode = ""
+        return
 
 
 def _wizard_should_ask_filename_numbering(state: _WizardState) -> bool:
@@ -16335,7 +17034,12 @@ def _wizard_q6_translate(state: _WizardState) -> None:
         state.mt_engine = {"1": "", "2": "argos", "3": "ollama", "4": "deepl"}[pick]
         if state.mt_engine != "argos":
             return
-        result = _wizard_handle_argos_preflight(state)
+        try:
+            result = _wizard_handle_argos_preflight(state)
+        except _WizardBack:
+            state.mt_engine = ""
+            print("    Going back to translation choices.")
+            continue
         if result in {"ok", "disabled"}:
             return
         print()
@@ -16376,7 +17080,7 @@ def _wizard_q7_reading_aids(state: _WizardState) -> None:
         print(f"    {i}) {label}   [{spec}]")
         preview = _WIZARD_READING_AID_PREVIEWS.get(spec)
         if preview:
-            print(f"       Preview: {preview}")
+            print(f"       Example: {preview}")
     raw = _wizard_prompt(
         "Numbers (comma-separated)",
         "1",
@@ -16444,17 +17148,43 @@ def _wizard_format_recommendation(state: _WizardState) -> tuple[str, str]:
 def _wizard_q9_format(state: _WizardState) -> None:
     needs_ruby = any(spec.startswith("ja:hiragana") or spec.startswith("ja:furigana")
                      for spec in state.reading_aids)
+    show_japanese_ruby_example = any(
+        spec.startswith(("ja:hiragana", "ja:furigana", "ja:katakana"))
+        for spec in state.reading_aids
+    )
     print()
     print(_wizard_next_q(state, "Final output format."))
     default, reason = _wizard_format_recommendation(state)
     default_pick = {"srt": "1", "ass": "2", "vtt": "3", "smi": "4", "txt": "5"}.get(default, "1")
-    print(f"    Recommended: {default.upper()} — {reason}")
-    print()
-    print("    1) SRT  — most compatible; best for Plex, Smart TV, tablet apps.")
-    print("    2) ASS  — best desktop-player control for layout and font size.")
-    print("    3) VTT  — best for browser/asbplayer Japanese ruby; local players vary.")
-    print("    4) SMI  — legacy Korean SAMI; font size is usually player-controlled.")
+    print("    Choose the format that best matches your player.")
+    print("    1) SRT  — works almost everywhere")
+    print("              Plex, Jellyfin, Smart TVs, tablets, phones, VLC")
+    print("    2) ASS  — best for local study playback")
+    print("              Better subtitle positioning, sizing, and readability")
+    print("    3) VTT  — best for browser-based language learning")
+    print("              Works with a browser extension on Netflix, Disney+ & other streaming sites")
+    print("    4) SMI  — Korean subtitle format")
+    print("              Common in older Korean subtitle archives")
     print("    5) TXT  — plain text without timestamps")
+    print()
+    print("    Recommendations:")
+    print("      Watching on TV, tablet, phone, Plex, or Jellyfin?")
+    print("        → SRT")
+    print()
+    print("      Watching local video files on VLC, MPV, or desktop players?")
+    print("        → ASS")
+    print()
+    print("      Streaming Netflix with multiple subtitles?")
+    print("        → VTT (asbplayer browser plug-in required)")
+    if show_japanese_ruby_example:
+        print()
+        print("              Example:")
+        print("              VTT:  にほんご　　べんきょう")
+        print("                    日本語  を  勉強 したい")
+        print()
+        print("              OTHER FORMATS:  日本語(にほんご)を勉強(べんきょう)したい")
+    print()
+    print(f"    Suggested default: {default.upper()} — {reason}")
     if state.reading_aids:
         print()
         print("    Reading-aid notes:")
@@ -16507,33 +17237,44 @@ def _wizard_q_font_size(state: _WizardState) -> None:
     plural = "line" if line_count == 1 else "lines"
     print()
     print(_wizard_next_q(state, "Subtitle text size?"))
-    print(f"    This output will usually show {line_count} {plural} at once.")
+    print("    Subtitle text size")
     print(f"    Format: {fmt.upper()}")
-    print("    SRT and ASS use calibrated presets from player testing.")
-    print("    Calibrated presets: SRT smaller/regular/larger = 12/16/20px;")
-    print("    ASS smaller/regular/larger = 46/58/70.")
+    print()
+    if fmt == "srt":
+        print("    Please note many players ignore font sizes in SRT files.")
+        print("    If your player supports sizing, these presets are recommended:")
+    else:
+        print(f"    This output uses {fmt.upper()} and will usually show {line_count} {plural} at once.")
+        print("    These presets are recommended:")
     print()
     print(f"    1) Regular ({label(regular)}) — recommended")
     print(f"    2) Smaller ({label(smaller)})")
     print(f"    3) Larger ({label(larger)})")
     print("    4) Custom — enter exact font size")
-    pick = _wizard_read_choice("Number", ["1", "2", "3", "4"], "1")
-    if pick == "2":
-        state.font_size = "smaller"
+    while True:
+        pick = _wizard_read_choice("Number", ["1", "2", "3", "4"], "1")
+        if pick == "2":
+            state.font_size = "smaller"
+            return
+        if pick == "3":
+            state.font_size = "larger"
+            return
+        if pick == "4":
+            while True:
+                try:
+                    value = _wizard_prompt("Font size", custom_default).strip()
+                except _WizardBack:
+                    print("    Going back to text-size choices.")
+                    break
+                try:
+                    state.font_size = str(resolve_font_size(value, line_count))
+                    return
+                except CliError as e:
+                    print(f"    {e}")
+                    continue
+            continue
+        state.font_size = "regular"
         return
-    if pick == "3":
-        state.font_size = "larger"
-        return
-    if pick == "4":
-        while True:
-            value = _wizard_prompt("Font size", custom_default).strip()
-            try:
-                state.font_size = str(resolve_font_size(value, line_count))
-                return
-            except CliError as e:
-                print(f"    {e}")
-                continue
-    state.font_size = "regular"
 
 
 def _wizard_q10_output(state: _WizardState) -> None:
@@ -16581,13 +17322,32 @@ def _wizard_plain_plan(state: _WizardState) -> list[str]:
         fmt = (state.format or "srt").upper()
         ext = (state.format or "srt").lower()
         suffix = "-".join(state.order or state.languages)
-        lines.append(f"Stack {langs} into one {fmt} file  →  *.{suffix}.{ext}")
+        lines.append(f"Stack {langs} into one {fmt} file → *.{suffix}.{ext}")
         if state.font_size:
-            support_note = "" if fmt == "ASS" else f" ({fmt} support depends on player)"
-            lines.append(f"Use subtitle text size {state.font_size}{support_note}")
+            size_label = {
+                "regular": "Regular",
+                "smaller": "Smaller",
+                "larger": "Larger",
+            }.get(str(state.font_size).lower(), str(state.font_size))
+            lines.append(f"Use subtitle text size: {size_label}")
     out = _wizard_short_path(state.output) if state.output else "the source folder"
     lines.append(f"Save to {out}")
     return lines
+
+
+def _wizard_review_risks(state: _WizardState) -> list[str]:
+    risks: list[str] = []
+    if len(state.languages) >= 4:
+        risks.append("Most people find 2-3 languages easiest to read; 4+ may crowd smaller screens.")
+    hard_to_find = [lang for lang in state.languages if lang in {"ja", "ko", "zh", "yue"}]
+    if state.source_kind in {"url", "title"} and hard_to_find:
+        labels = ", ".join(_display_lang(lang) for lang in hard_to_find)
+        risks.append(f"{labels} subtitles can be harder to find automatically; manual search or translation may be needed.")
+    if state.reading_aids and state.format == "vtt":
+        risks.append("VTT reading aids work best in browsers/asbplayer; local player support varies.")
+    if state.reading_aids and state.format in {"srt", "smi", "ass"}:
+        risks.append(f"{state.format.upper()} reading aids use parenthetical text instead of true ruby above the script.")
+    return risks
 
 
 def _wizard_short_path(p: str) -> str:
@@ -16623,15 +17383,23 @@ def _wizard_q11_action(state: _WizardState) -> str:
     print(rule)
     for ln in _wizard_plain_plan(state):
         print(f"  • {ln}")
-    # Smart-defaults block: the five questions the wizard no longer
+    risks = _wizard_review_risks(state)
+    if risks:
+        print(rule)
+        print("Before running:")
+        print(rule)
+        for risk in risks:
+            print(f"  ⚠ {risk}")
+    # Smart-defaults block: questions the wizard no longer
     # asks. Surfaced so users see (and can revise) what was auto-picked.
     notes = getattr(state, "_smart_defaults_notes", None) or {}
     if notes:
         print(rule)
         print("Smart defaults filled in for you (edit via 'Edit a single answer'):")
         print(rule)
+        key_width = max(14, *(len(k) for k in notes))
         for k, v in notes.items():
-            print(f"  {k:14} {v}")
+            print(f"  {k:{key_width}}  {v}")
     print(rule)
     # Consistency check: reading aid wants VTT ruby but format is something else.
     needs_ruby = any(
@@ -16677,12 +17445,9 @@ def _wizard_q11_action(state: _WizardState) -> str:
 # Question dispatch table keeps the orchestrator readable and the test
 # harness focused — tests can call individual questions via this table.
 _WIZARD_STEPS: list[tuple[str, "callable"]] = [
-    # Streamlined down to a maximum of 8 user-facing questions. Four
-    # questions were removed in favor of smart defaults applied by
-    # `_wizard_apply_smart_defaults` before the Q-banner: display order
-    # (Q4 already implies it), master timing language (first lang
-    # wins), cleanup preset (always on for learners), output folder
-    # (~/Downloads/GetSubtitle for URL/title, source's parent for local paths).
+    # Display order, master timing language, cleanup preset, and output
+    # folder are filled by `_wizard_apply_smart_defaults` before the final
+    # banner. Format stays explicit because player compatibility matters.
     ("steps",         _wizard_q0_steps),
     ("source",        _wizard_q1_source),
     ("scope",         _wizard_q5_scope),
@@ -16717,37 +17482,8 @@ def _wizard_apply_smart_defaults(state: _WizardState) -> dict[str, str]:
     if state.steps & {"modify", "merge"} and not state.asbplayer:
         state.asbplayer = True
         notes["Cleanup preset"] = "on  (single-line cues + strip broadcast noise)"
-    # Output format: pick the recommended format (browser ruby → VTT,
-    # stacked readings / 3+ lines → ASS, else SRT). Shown here and editable.
-    if "merge" in state.steps and not state.format:
-        fmt, reason = _wizard_format_recommendation(state)
-        state.format = fmt
-        state.viewing_env = {
-            "srt": "tv", "ass": "desktop", "vtt": "browser",
-            "smi": "legacy", "txt": "text",
-        }.get(fmt, "")
-        # Show the REAL format name + a compatibility cue, and make clear it
-        # is selectable — never a generic label, never silently fixed (#4).
-        compat = {
-            "srt": "plays almost everywhere (Plex, TVs, phones)",
-            "ass": "best for desktop players (VLC/mpv/IINA): layout + font size",
-            "vtt": "best for browser / asbplayer Japanese ruby",
-            "smi": "legacy Korean SAMI; sizing is player-controlled",
-            "txt": "plain text, no timestamps",
-        }.get(fmt, reason)
-        notes["Output format"] = (
-            f"{fmt.upper()} — {compat}.  "
-            "Edit to pick SRT / ASS / VTT / SMI / TXT."
-        )
-    # Text size: calibrated 'regular' preset for the size-aware formats.
-    if (
-        "merge" in state.steps
-        and not state.font_size
-        and (state.format or "").lower() in {"srt", "ass"}
-        and len(state.languages) >= 2
-    ):
-        state.font_size = "regular"
-        notes["Text size"] = "regular  (calibrated; edit to change)"
+    # Format and text size are asked explicitly when Merge is selected.
+    # They are too player-dependent to hide as smart defaults.
     # Output folder: URL/title sources land in ~/Downloads/GetSubtitle by
     # default; local-path sources land beside the source file/folder.
     if not state.output:
@@ -16763,6 +17499,39 @@ def _wizard_apply_smart_defaults(state: _WizardState) -> dict[str, str]:
     return notes
 
 
+def _wizard_edit_targets(state: _WizardState) -> list[tuple[str, str, object]]:
+    """Editable answers shown from the final action menu.
+
+    Include the smart-defaulted answers explicitly so the banner's
+    "edit via Edit a single answer" promise is true.
+    """
+    targets: list[tuple[str, str, object]] = [
+        ("steps", " + ".join(s for s in _VALID_STEPS if s in state.steps), _wizard_q0_steps),
+        ("source", f"{state.source_kind or 'path'} — {state.source}", _wizard_q1_source),
+        ("languages", ", ".join(state.languages) or "(none)", _wizard_q2_languages),
+    ]
+    if state.source_kind in ("url", "title"):
+        scope_val = (f"S{state.season} E{state.episode}"
+                     if (state.season or state.episode) else "auto")
+        targets.append(("scope", scope_val, _wizard_q5_scope))
+    if "merge" in state.steps and len(state.languages) >= 2:
+        order = state.order or state.languages
+        targets.append(("display order", ", ".join(order), _wizard_edit_display_order))
+        master = state.master or (order[0] if order else "")
+        targets.append(("timing master", master or "(first language)", _wizard_edit_timing_master))
+    if state.steps & {"modify", "merge"}:
+        targets.append(("cleanup preset", "on" if state.asbplayer else "off", _wizard_edit_cleanup_preset))
+    if "translate" in state.steps:
+        targets.append(("AI translation", state.mt_engine or "skip", _wizard_q6_translate))
+    if "modify" in state.steps:
+        targets.append(("reading aids", ", ".join(state.reading_aids) or "none", _wizard_q7_reading_aids))
+    if "merge" in state.steps:
+        targets.append(("format / extension", (state.format or "").upper() or "(auto)", _wizard_q9_format))
+        targets.append(("text size", state.font_size or "regular", _wizard_q_font_size))
+    targets.append(("output folder", state.output or "(default)", _wizard_q10_output))
+    return targets
+
+
 def _wizard_step_skip(label: str, state: _WizardState) -> bool:
     if "rename" in state.steps:
         return label != "rename" and label not in {"steps", "source"}
@@ -16772,12 +17541,8 @@ def _wizard_step_skip(label: str, state: _WizardState) -> bool:
         "filename_numbering": not _wizard_should_ask_filename_numbering(state),
         "translate":    "translate" not in state.steps,
         "reading_aids": "modify" not in state.steps,
-        # Format and text size are smart-defaulted: the recommendation is
-        # shown by REAL name (SRT/ASS/VTT/SMI/TXT) in the banner with a
-        # compatibility note, and stays fully selectable via 'Edit a single
-        # answer' (never hidden behind a generic label, never removed).
-        "format":       True,
-        "font_size":    True,
+        "format":       "merge" not in state.steps,
+        "font_size":    not _wizard_should_ask_font_size(state),
     }
     return skip.get(label, False)
 
@@ -16890,6 +17655,7 @@ def _run_wizard_with_back_nav(state: _WizardState) -> tuple[_WizardState, str]:
         if _wizard_step_prefilled(label, state):
             step_index += 1
             continue
+        qcount_before = getattr(state, "_qcount", 0)
         try:
             fn(state)
         except _WizardBack:
@@ -16908,15 +17674,15 @@ def _run_wizard_with_back_nav(state: _WizardState) -> tuple[_WizardState, str]:
             print("    Going back to the previous step.")
             continue
         _wizard_save_draft(state)
-        visible_history.append(label)
+        if getattr(state, "_qcount", 0) > qcount_before:
+            visible_history.append(label)
         step_index += 1
     if state.steps == {"rename"}:
         state.final_action = "rename_done"
         return state, "rename_done"
-    # Five questions the wizard no longer asks (display order, master
-    # timing, cleanup preset, output format, output folder) are now
-    # filled in here. The returned notes are surfaced in the Q-banner
-    # so users see what was decided.
+    # Safe defaults the wizard no longer asks (display order, master timing,
+    # cleanup preset, output folder) are filled in here. Format is a normal
+    # question because users often need to choose based on their player.
     state._smart_defaults_notes = _wizard_apply_smart_defaults(state)
     _wizard_save_draft(state)
     while True:
@@ -16940,6 +17706,7 @@ def _run_wizard_with_back_nav(state: _WizardState) -> tuple[_WizardState, str]:
                 if _wizard_step_skip(label, state) or _wizard_step_prefilled(label, state):
                     step_index += 1
                     continue
+                qcount_before = getattr(state, "_qcount", 0)
                 try:
                     fn(state)
                 except _WizardBack:
@@ -16958,7 +17725,8 @@ def _run_wizard_with_back_nav(state: _WizardState) -> tuple[_WizardState, str]:
                     print("    Going back to the previous step.")
                     continue
                 _wizard_save_draft(state)
-                visible_history.append(label)
+                if getattr(state, "_qcount", 0) > qcount_before:
+                    visible_history.append(label)
                 step_index += 1
             state._smart_defaults_notes = _wizard_apply_smart_defaults(state)
             _wizard_save_draft(state)
@@ -16976,45 +17744,39 @@ def _run_wizard_with_back_nav(state: _WizardState) -> tuple[_WizardState, str]:
             state.final_action = action
             return state, action
         # Edit flow: each entry maps a shown answer DIRECTLY to the function
-        # that re-asks it. (The old visible->index math was misaligned with
-        # _WIZARD_STEPS, so editing one answer could re-run a different
-        # question; format/text-size were unreachable entirely.)
-        edit_targets: list[tuple[str, str, object]] = [
-            ("steps", " + ".join(s for s in _VALID_STEPS if s in state.steps), _wizard_q0_steps),
-            ("source", f"{state.source_kind or 'path'} — {state.source}", _wizard_q1_source),
-            ("languages", ", ".join(state.languages) or "(none)", _wizard_q2_languages),
-        ]
-        if state.source_kind in ("url", "title"):
-            scope_val = (f"S{state.season} E{state.episode}"
-                         if (state.season or state.episode) else "auto")
-            edit_targets.append(("scope", scope_val, _wizard_q5_scope))
-        if "translate" in state.steps:
-            edit_targets.append(("AI translation", state.mt_engine or "skip", _wizard_q6_translate))
-        if "modify" in state.steps:
-            edit_targets.append(("reading aids", ", ".join(state.reading_aids) or "none", _wizard_q7_reading_aids))
-        if "merge" in state.steps:
-            edit_targets.append(("output format", (state.format or "").upper() or "(auto)", _wizard_q9_format))
-            edit_targets.append(("text size", state.font_size or "regular", _wizard_q_font_size))
-        edit_targets.append(("output folder", state.output or "(default)", _wizard_q10_output))
-        print()
-        print("Your answers so far:")
-        for i, (label, value, _fn) in enumerate(edit_targets, start=1):
-            print(f"  {i}) {label}: {value}")
-        valid = [str(i) for i in range(1, len(edit_targets) + 1)]
-        pick = _wizard_prompt(
-            f"Number to change (1-{len(edit_targets)}), or 'done'", "done"
-        ).strip().lower()
-        if pick in valid:
+        # that re-asks it. Smart defaults are included explicitly, so the
+        # final banner's "edit via Edit a single answer" line is literal.
+        # Stay in this review loop after a change; editing languages/steps can
+        # add Merge, which then creates newly editable format/extension rows.
+        while True:
+            edit_targets = _wizard_edit_targets(state)
+            print()
+            print("Your answers so far:")
+            for i, (label, value, _fn) in enumerate(edit_targets, start=1):
+                print(f"  {i}) {label}: {value}")
+            valid = [str(i) for i in range(1, len(edit_targets) + 1)]
+            pick = _wizard_prompt(
+                f"Number to change (1-{len(edit_targets)}), or 'done'", "done"
+            ).strip().lower()
+            if pick in ("done", "d"):
+                break
+            if pick not in valid:
+                print(f"    Please enter 1-{len(edit_targets)}, or 'done'.")
+                continue
             label, _value, fn = edit_targets[int(pick) - 1]
             if label == "scope":
                 state.season = ""
                 state.episode = ""
-            elif label == "output format":
+            elif label == "format / extension":
                 state.format = ""          # clear so the recommendation re-asks
+                state.font_size = ""
             elif label == "text size":
                 state.font_size = ""
             state._qcount = 0
             fn(state)
+            if label == "format / extension" and _wizard_should_ask_font_size(state):
+                state.font_size = ""
+                _wizard_q_font_size(state)
             # Re-apply smart defaults — editing reading aids changes the
             # recommended format; editing format changes the text-size offer.
             state._smart_defaults_notes = _wizard_apply_smart_defaults(state)
@@ -17836,7 +18598,12 @@ def _wizard_run_setup(state: _WizardState, gaps: list[tuple[str, str, str]]) -> 
                 if rc == 0:
                     print("    ✓ key saved")
         elif fix.startswith("pip install"):
-            print("    (Run this in your shell, then re-launch the wizard.)")
+            target = _setup_pip_fix_target(fix)
+            if target is None:
+                print("    (Run this in your shell, then re-launch the wizard.)")
+            else:
+                package, extra = target
+                _setup_offer_pip_install(package, extra=extra)
         else:
             print("    (Manual step — re-launch the wizard once done.)")
         print()
@@ -17888,7 +18655,7 @@ def _wizard_dependency_check_before_run(state: _WizardState) -> str:
     if not blockers:
         return "run"
 
-    if _wizard_yesno("Run setup now to fix the blocker(s)?", default=True):
+    if _wizard_yesno("Show setup steps for the blocker(s)?", default=True):
         _wizard_run_setup(state, blockers)
 
     remaining = [g for g in _wizard_probe_dependencies(state) if g[0] == "block"]
@@ -17896,6 +18663,7 @@ def _wizard_dependency_check_before_run(state: _WizardState) -> str:
         return "run"
 
     print()
+    print("I can't run this workflow yet because the required setup is still missing.")
     print("Still blocked — the run would fail before it starts:")
     for _sev, label, fix in remaining:
         print(_format_failure(
@@ -17903,7 +18671,8 @@ def _wizard_dependency_check_before_run(state: _WizardState) -> str:
             why="Required for this workflow.",
             how=fix or "see setup instructions above",
         ))
-    if _wizard_yesno("Save the workflow instead so you can run it after setup?", default=True):
+    if _wizard_yesno("Save a reusable workflow file to run after setup?", default=False):
+        print("  Saving a TOML workflow now. You can run it later with `getsubtitle --config FILE.toml`.")
         return "save"
     return "quit"
 
@@ -17912,24 +18681,22 @@ def _wizard_dependency_check_before_run(state: _WizardState) -> str:
 
 _WIZARD_INTRO = """\
   ____      _   ____        _     _   _ _   _
-
  / ___| ___| |_/ ___| _   _| |__ | |_| |_| |_| ___
-
 | |  _ / _ \\ __\\___ \\| | | | '_ \\| __| | __| |/ _ \\
-
 | |_| |  __/ |_ ___) | |_| | |_) | |_| | |_| |  __/
-
  \\____|\\___|\\__|____/ \\__,_|_.__/ \\__|_|\\__|_|\\___|
 
 GetSubtitle — Workflow Builder
 
 Answer a few questions to generate a command and reusable workflow.
 
+------------------------------------------------------------------------------------------------
 Commands:
-  Enter  Accept default
-  b      Back
-  q      Quit
-  Ctrl-C Cancel"""
+    Enter  Accept default
+    b      Back
+    q      Quit
+    Ctrl-C Cancel
+------------------------------------------------------------------------------------------------"""
 
 
 def interactive_main(argv: list[str] | None = None) -> int:
@@ -18254,6 +19021,7 @@ def main(argv: list[str] | None = None) -> int:
     # Japanese-origin titles when `ja` is requested (preserves AniList
     # path for Jimaku). Pure no-op otherwise.
     enrich_media_from_tmdb(media, langs=langs)
+    enrich_tmdb_catalog_external_ids(media)
     # If the URL gave us a TVDB ID but no IMDb/TMDB yet (e.g. a /thetvdb.com/
     # series page), use Wikidata to bridge. This lets non-anime TVDB shows
     # reach Wyzie without first being routed through AniList.
@@ -18329,7 +19097,9 @@ def main(argv: list[str] | None = None) -> int:
             "for live-action `-e all` expansion."
         )
     if episodes == ["auto"] and media.episode == "auto":
-        episodes = ["auto"]
+        episodes, defaulted_tv_auto = apply_default_tv_auto_scope(media, episodes)
+    else:
+        defaulted_tv_auto = False
 
     print(f"Source: {media.provider}")
     print(f"Title: {media.title or 'unknown'}")
@@ -18348,6 +19118,8 @@ def main(argv: list[str] | None = None) -> int:
         print(f"MAL: {media.mal_id}")
     if media.netflix_id:
         print(f"Netflix: {media.netflix_id}")
+    if defaulted_tv_auto:
+        print("Note: TV source had no episode selected; defaulted to S01E01. Use -s/-e for another episode or season.")
 
     jimaku_provider = (
         JimakuProvider(get_jimaku_api_key())
@@ -18377,6 +19149,7 @@ def main(argv: list[str] | None = None) -> int:
     else:
         preferred_release_source = args.release_source
     planned: list[tuple[str, str, SubtitleFile]] = []
+    download_alternatives: dict[tuple[str, str], list[SubtitleFile]] = {}
     search_results: list[SearchResult] = []
     warnings: list[str] = []
     search_work: list[tuple[str, str, JimakuProvider | WyzieProvider]] = []
@@ -18443,9 +19216,34 @@ def main(argv: list[str] | None = None) -> int:
             if not media.title and best.media_title:
                 media.title = best.media_title
             planned.append((lang, ep, best))
+            download_alternatives[(lang, ep)] = download_alternates(files, best)
             search_results.append(SearchResult(lang, ep, provider.name, "found", file=best))
         else:
-            search_results.append(SearchResult(lang, ep, provider.name, "missing"))
+            low = low_confidence_subtitle_candidate(files, media=media, episode=ep)
+            if low and handle_low_confidence_subtitle(
+                media=media,
+                language=lang,
+                episode=ep,
+                provider=provider.name,
+                file=low,
+                warnings=warnings,
+                interactive=bool(sys.stdin.isatty() and not args.dry_run),
+            ):
+                planned.append((lang, ep, low))
+                download_alternatives[(lang, ep)] = download_alternates(files, low)
+                search_results.append(SearchResult(lang, ep, provider.name, "found", file=low, confidence="low"))
+            elif low:
+                search_results.append(SearchResult(
+                    lang,
+                    ep,
+                    provider.name,
+                    "skipped",
+                    file=low,
+                    error=low_confidence_subtitle_reason(low, media),
+                    confidence="low",
+                ))
+            else:
+                search_results.append(SearchResult(lang, ep, provider.name, "missing"))
 
     if subdl_provider and subdl_provider.configured():
         # Direct SubDL fallback for any requested language/episode not already
@@ -18473,8 +19271,34 @@ def main(argv: list[str] | None = None) -> int:
                 debug_records.append(provider_debug_record("subdl", ep, lang, sd_files))
             best = choose_best(sd_files, preferred_release_source, media=media, episode=ep)
             if not best:
-                if not any(r.language == lang and r.episode == ep for r in search_results):
-                    search_results.append(SearchResult(lang, ep, "subdl", "missing"))
+                low = low_confidence_subtitle_candidate(sd_files, media=media, episode=ep)
+                if low and handle_low_confidence_subtitle(
+                    media=media,
+                    language=lang,
+                    episode=ep,
+                    provider="subdl",
+                    file=low,
+                    warnings=warnings,
+                    interactive=bool(sys.stdin.isatty() and not args.dry_run),
+                ):
+                    best = low
+                elif low:
+                    if not any(r.language == lang and r.episode == ep for r in search_results):
+                        search_results.append(SearchResult(
+                            lang,
+                            ep,
+                            "subdl",
+                            "skipped",
+                            file=low,
+                            error=low_confidence_subtitle_reason(low, media),
+                            confidence="low",
+                        ))
+                    continue
+                else:
+                    if not any(r.language == lang and r.episode == ep for r in search_results):
+                        search_results.append(SearchResult(lang, ep, "subdl", "missing"))
+                    continue
+            if not best:
                 continue
             replaced = False
             for idx_r, r in enumerate(search_results):
@@ -18485,6 +19309,7 @@ def main(argv: list[str] | None = None) -> int:
             if not replaced:
                 search_results.append(SearchResult(lang, ep, "subdl", "found", file=best))
             planned.append((lang, ep, best))
+            download_alternatives[(lang, ep)] = download_alternates(sd_files, best)
     elif (media.imdb_id or media.tmdb_id) and any(
         r.status != "found" and r.language != "ja" for r in search_results
     ):
@@ -18514,7 +19339,45 @@ def main(argv: list[str] | None = None) -> int:
                     debug_records.append(provider_debug_record("subdivx", ep, "es", sd_files))
                 best = choose_best(sd_files, preferred_release_source, media=media, episode=ep)
                 if not best:
-                    continue
+                    low = low_confidence_subtitle_candidate(sd_files, media=media, episode=ep)
+                    if low and handle_low_confidence_subtitle(
+                        media=media,
+                        language="es",
+                        episode=ep,
+                        provider="subdivx",
+                        file=low,
+                        warnings=warnings,
+                        interactive=bool(sys.stdin.isatty() and not args.dry_run),
+                    ):
+                        best = low
+                    elif low:
+                        replaced = False
+                        for idx_r, r in enumerate(search_results):
+                            if r.language == "es" and r.episode == ep and r.status != "found":
+                                search_results[idx_r] = SearchResult(
+                                    "es",
+                                    ep,
+                                    "subdivx",
+                                    "skipped",
+                                    file=low,
+                                    error=low_confidence_subtitle_reason(low, media),
+                                    confidence="low",
+                                )
+                                replaced = True
+                                break
+                        if not replaced:
+                            search_results.append(SearchResult(
+                                "es",
+                                ep,
+                                "subdivx",
+                                "skipped",
+                                file=low,
+                                error=low_confidence_subtitle_reason(low, media),
+                                confidence="low",
+                            ))
+                        continue
+                    else:
+                        continue
                 # Replace existing missing/error result if any; otherwise append.
                 replaced = False
                 for idx_r, r in enumerate(search_results):
@@ -18525,6 +19388,7 @@ def main(argv: list[str] | None = None) -> int:
                 if not replaced:
                     search_results.append(SearchResult("es", ep, "subdivx", "found", file=best))
                 planned.append(("es", ep, best))
+                download_alternatives[("es", ep)] = download_alternates(sd_files, best)
         elif missing_es_episodes and not media.title:
             warnings.append("es: Subdivx fallback skipped — title is unknown, cannot search.")
 
@@ -18551,7 +19415,45 @@ def main(argv: list[str] | None = None) -> int:
                     debug_records.append(provider_debug_record("addic7ed", ep, "ko", a7_files, error=a7_diag if a7_diag and not a7_files else None))
                 best = choose_best(a7_files, preferred_release_source, media=media, episode=ep)
                 if not best:
-                    continue
+                    low = low_confidence_subtitle_candidate(a7_files, media=media, episode=ep)
+                    if low and handle_low_confidence_subtitle(
+                        media=media,
+                        language="ko",
+                        episode=ep,
+                        provider="addic7ed",
+                        file=low,
+                        warnings=warnings,
+                        interactive=bool(sys.stdin.isatty() and not args.dry_run),
+                    ):
+                        best = low
+                    elif low:
+                        replaced = False
+                        for idx_r, r in enumerate(search_results):
+                            if r.language == "ko" and r.episode == ep and r.status != "found":
+                                search_results[idx_r] = SearchResult(
+                                    "ko",
+                                    ep,
+                                    "addic7ed",
+                                    "skipped",
+                                    file=low,
+                                    error=low_confidence_subtitle_reason(low, media),
+                                    confidence="low",
+                                )
+                                replaced = True
+                                break
+                        if not replaced:
+                            search_results.append(SearchResult(
+                                "ko",
+                                ep,
+                                "addic7ed",
+                                "skipped",
+                                file=low,
+                                error=low_confidence_subtitle_reason(low, media),
+                                confidence="low",
+                            ))
+                        continue
+                    else:
+                        continue
                 replaced = False
                 for idx_r, r in enumerate(search_results):
                     if r.language == "ko" and r.episode == ep and r.status != "found":
@@ -18561,6 +19463,7 @@ def main(argv: list[str] | None = None) -> int:
                 if not replaced:
                     search_results.append(SearchResult("ko", ep, "addic7ed", "found", file=best))
                 planned.append(("ko", ep, best))
+                download_alternatives[("ko", ep)] = download_alternates(a7_files, best)
         elif missing_ko_episodes and not media.title:
             warnings.append("ko: Addic7ed fallback skipped — title is unknown, cannot search.")
 
@@ -18568,6 +19471,7 @@ def main(argv: list[str] | None = None) -> int:
         print_provider_debug(debug_records)
 
     print_search_results(search_results)
+    print_low_confidence_next_steps(search_results)
     print_warnings(warnings)
     expected_dir = output_dir(Path(args.output).expanduser(), media, media.season, args.layout)
     print_missing_subtitle_next_steps(
@@ -18625,6 +19529,8 @@ def main(argv: list[str] | None = None) -> int:
         season=media.season,
         layout=args.layout,
         episode_filename_start=args.episode_filename_start,
+        alternatives=download_alternatives,
+        interactive_recovery=bool(_wizard_summary_active() is not None and sys.stdin.isatty()),
     )
 
     if download_failures:

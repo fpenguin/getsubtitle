@@ -22,6 +22,8 @@ SCENARIO = Scenario(
         "{TMP}/Right",
         "ja,en",
         "1",            # reading aids — skip
+        "",             # format — accept recommended SRT
+        "",             # font size — regular
         "2",            # save workflow
         "{TMP}/back.toml",
         "n",            # do not open folder

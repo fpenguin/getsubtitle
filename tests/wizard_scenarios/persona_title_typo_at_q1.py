@@ -1,12 +1,8 @@
-"""Persona: typo-at-Q1 recovery.
+"""Persona: natural title at Q2.
 
-User typing the show title at the Q1 source-kind prompt is a common
-mis-step. The wizard must reject the free-text answer and keep the
-user on Q1 (with an explanatory hint), then accept the correct
-numeric pick on the retry.
-
-This is the same trap as `trap_q1_rejects_free_text` but the recovery
-path follows through to the title prompt + raw-text fallback."""
+User typing the show title at the source-kind prompt is a common
+first-run move. The wizard should infer "title search" and continue
+instead of making the user back up and choose the title option first."""
 
 from wizard_harness import Scenario
 
@@ -15,9 +11,7 @@ SCENARIO = Scenario(
     files={},
     inputs=[
         "",         # steps default (1-4)
-        "totoro",   # wrong: free text at Q1
-        "1",        # correct: title search
-        "Totoro",   # title to search
+        "totoro",   # source-kind prompt accepts free text as title search
         "n",        # "Is this a movie?" → no
         "2",        # scope: specific season + episode
         "1",        # season
@@ -25,16 +19,18 @@ SCENARIO = Scenario(
         "ja,en",    # languages
         "1",        # missing-language action — skip
         "1",        # reading aids — skip
+        "",         # format — accept recommended SRT
+        "",         # font size — regular
         "2",        # save action
         "{TMP}/totoro-typo.toml",
         "n",        # decline open folder
     ],
     expect_state={
-        "source": "Totoro",
+        "source": "totoro",
         "source_kind": "title",
     },
     expect_stdout_contains=[
-        "Invalid selection. Type 1, 2, or 3.",
-        "title search for 'Totoro'",
+        "Detected title search:",
+        "Searching for: 'totoro'",
     ],
 )

@@ -20,6 +20,8 @@ SCENARIO = Scenario(
         "'{TMP}/Shows/Foo Bar'",        # single-quoted path
         "ja,en",
         "1",                            # reading aids — skip
+        "",                             # format — accept recommended SRT
+        "",                             # font size — regular
         "2",                            # save
         "{TMP}/drag.toml",
         "n",

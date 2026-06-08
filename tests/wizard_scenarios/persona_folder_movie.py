@@ -23,6 +23,8 @@ SCENARIO = Scenario(
         "{TMP}/Totoro", # folder
         "ja,en",
         "n",            # decline 'Add Modify step for reading aids?'
+        "",             # format — accept recommended SRT
+        "",             # font size — regular
         "2",            # save action (deterministic vs path-default '1')
         "{TMP}/totoro.toml",
         "n",            # decline open folder

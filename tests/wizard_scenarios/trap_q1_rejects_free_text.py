@@ -1,14 +1,7 @@
-"""Trap: typing a title at the Q1 source-kind choice prompt must be
-rejected (it's a numbered pick, not a free-text input) and the user
-must stay on Q1.
+"""Trap: typing a title at the source-kind prompt is accepted.
 
-Regression: an earlier version silently accepted any input at Q1's
-source-kind prompt, which produced confusing downstream behavior
-because `state.source_kind` was inferred from the typed string in
-ways the user didn't intend.
-
-After the wrong input, the user picks '3' (folder) and a real local
-path so the wizard can complete and we can assert the steady state."""
+Regression target changed: natural text input should now be treated
+as a title search, not rejected as an invalid menu number."""
 
 from wizard_harness import Scenario
 
@@ -19,28 +12,32 @@ SCENARIO = Scenario(
         "{TMP}/Foo/Foo.en.srt": "1\n00:00:01,000 --> 00:00:02,000\nhi\n",
     },
     # 1) Q1 steps: default 1-4 (Enter).
-    # 2) source: free-text "totoro" → must reprompt.
-    # 3) source retry: "3" (folder/file).
-    # 4) path: the staged folder.
+    # 2) source: free-text "totoro" → title search.
+    # 3) raw-title movie? no.
+    # 4) scope: auto.
     # 5) languages: ja,en.
     # 6) missing-language action: 1 (skip AI translation).
     # 7) reading aids: 1 (skip).
-    # 8) action: 5 (quit).
+    # 8) format/font/action defaults as scripted.
     inputs=[
         "",       # Q1 steps default
-        "totoro", # invalid source pick
-        "3",      # correct source pick (folder/file)
-        "{TMP}/Foo",  # path
+        "totoro", # title search
+        "n",      # raw title is TV/show
+        "",       # scope auto
         "ja,en",  # languages
         "1",      # missing-language action — skip
         "1",      # reading aids — skip
+        "",       # format — accept recommended SRT
+        "",       # font size — regular
         "5",      # quit at action menu
     ],
     expect_stdout_contains=[
-        "Invalid selection. Type 1, 2, or 3.",
+        "Detected title search:",
+        "Searching for: 'totoro'",
     ],
     expect_state={
-        "source_kind": "path",
+        "source_kind": "title",
+        "source": "totoro",
         "languages": ["ja", "en"],
     },
 )
