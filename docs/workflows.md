@@ -31,6 +31,40 @@ getsubtitle run anime --source /Plex/NewShow
 getsubtitle run --list
 ```
 
+## Helper-generated workflows
+
+Helpers can generate the same TOML shape that the interactive wizard saves.
+The planned [Netflix Helper](../NetflixHelper.md) uses this idea: read safe
+page metadata, choose episodes/languages, then create a GetSubtitle workflow
+for external subtitle search and learner-friendly output.
+
+Example helper output:
+
+```toml
+[fetch]
+source = "https://www.netflix.com/watch/81234567"
+season = "1"
+episode = "1-12"
+languages = "ja,en,ko"
+
+[modify]
+single_line = true
+strip_cc_noise = true
+reading = "ja:hiragana"
+
+[merge]
+format = "vtt"
+
+[output]
+target = "~/Downloads/GetSubtitle"
+```
+
+Run it later:
+
+```sh
+getsubtitle --config netflix-study.toml
+```
+
 ## User Defaults
 
 Per-user defaults live in `user_settings.toml`:

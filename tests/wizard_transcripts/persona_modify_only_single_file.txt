@@ -88,13 +88,12 @@ Smart defaults
 
 What next?
   1) Run it now
-  2) Save as a reusable workflow file
-  3) Change something
-  4) Start over
-  5) Quit
-  6) Show exact command and workflow file
+  2) Change a setting
+  3) Show exact command and workflow file
+  4) Save as a reusable workflow file
+  5) Start over
 
-  Number [1 | b=back | q=quit] > 2
+  Number [1 | b=back | q=quit] > 4
 
 
   Save to (relative paths OK) [getsubtitle-workflow.toml] > {TMP}/single-file.toml

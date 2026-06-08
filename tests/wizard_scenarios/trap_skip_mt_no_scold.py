@@ -20,7 +20,7 @@ SCENARIO = Scenario(
         "1",            # Q7 reading aids: skip
         "",             # format — accept recommended SRT
         "",             # font size — regular
-        "2",            # Q12 action: save (default for URL)
+        "4",            # Q12 action: save (default for URL)
         "{TMP}/saved.toml",   # save filename (absolute to avoid cwd pollution)
         "n",            # open folder containing saved file → no
     ],

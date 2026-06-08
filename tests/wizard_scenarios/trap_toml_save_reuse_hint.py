@@ -18,7 +18,7 @@ SCENARIO = Scenario(
         "1",            # reading aids — skip
         "",             # format — accept recommended SRT
         "",             # font size — regular
-        "2",            # action: save
+        "4",            # action: save
         "{TMP}/Reusable.toml",  # save filename
         "1",            # show exact command/details
         "2",            # open containing folder

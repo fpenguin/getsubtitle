@@ -228,7 +228,7 @@ PATHS: list[dict[str, object]] = [
     {
         "id": "path-21",
         "scenario": "persona_power_edit",
-        "name": "Edit a single answer from final screen",
+        "name": "Change a setting from final screen",
         "workflow": ["modify"],
         "category": "edge",
         "user_intent": "Change one answer after reviewing the plan.",

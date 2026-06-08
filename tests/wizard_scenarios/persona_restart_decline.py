@@ -21,9 +21,9 @@ SCENARIO = Scenario(
         "1",            # reading aids — skip
         "",             # format — accept recommended SRT
         "",             # font size — regular
-        "4",            # action: restart
+        "5",            # action: restart
         "n",            # confirm: 'Discard all answers and start over?' → no
-        "5",            # back at action menu: quit
+        "q",            # back at action menu: quit
     ],
     expect_state={
         # Confirms state survived the restart-cancel: languages still set.

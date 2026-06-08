@@ -22,7 +22,7 @@ SCENARIO = Scenario(
         "1",        # reading aids — skip
         "",         # format — accept recommended SRT
         "",         # font size — regular
-        "2",        # save action
+        "4",        # save action
         "{TMP}/totoro-typo.toml",
         "n",        # decline open folder
     ],

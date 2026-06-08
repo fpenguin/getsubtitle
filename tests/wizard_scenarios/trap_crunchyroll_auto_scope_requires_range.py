@@ -23,7 +23,7 @@ SCENARIO = Scenario(
         "1",            # reading aids — skip
         "",             # format — accept recommended SRT
         "",             # font size — regular
-        "2",            # save workflow
+        "4",            # save workflow
         "{TMP}/mfghost-s3.toml",
         "n",            # decline open folder
     ],

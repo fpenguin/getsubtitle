@@ -23,7 +23,7 @@ SCENARIO = Scenario(
         "ja,en",
         "2",            # reading aids: pick #2 = ja:hiragana
         "",             # format — accept recommended VTT
-        "2",            # action: save
+        "4",            # action: save
         "{TMP}/vtt-ja.toml",
         "n",            # decline open folder
     ],

@@ -1,6 +1,6 @@
 """Persona: power user revises a single answer.
 
-After answering everything, the user picks 'Change something',
+After answering everything, the user picks 'Change a setting',
 goes back to Q1 (the step picker), drops merge, then chooses save.
 
 The wizard must re-derive downstream answers correctly: state.steps
@@ -22,11 +22,11 @@ SCENARIO = Scenario(
         "1",            # reading aids — skip
         "",             # format — accept recommended SRT
         "",             # font size — regular
-        "3",            # action: edit a single answer
+        "2",            # action: change something
         "1",            # edit target 1) steps
         "3",            # change to modify-only
         "done",         # leave the edit review loop
-        "2",            # back at action menu: save
+        "4",            # back at action menu: save
         "{TMP}/edited.toml",
         "n",
     ],

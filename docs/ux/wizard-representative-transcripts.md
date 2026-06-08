@@ -151,29 +151,30 @@ Q8. Subtitle text size?                                             Progress [�
 
   Number [1 | b=back | q=quit] >
 
-======================================================================
-Here's the plan:
-======================================================================
-  • Fetch ja, en for {TMP}/Foo
+------------------------------------------------------------------------------------------------
+Review your workflow                                                Progress [◼◼◼◼◼◼◼◼◼◼◼◼◻] 99%
+
+Plan
+  • Fetch ja, en for:
+    {TMP}/Foo
   • Clean up cues (single line, strip broadcast noise)
-  • Stack ja, en into one SRT file → *.ja-en.srt
+  • Stack ja, en into one SRT file: *.ja-en.srt
   • Use subtitle text size: Regular
-  • Save to {TMP}/Foo
-======================================================================
-Smart defaults filled in for you (edit via 'Edit a single answer'):
-======================================================================
+  • Save to:
+    {TMP}/Foo
+
+Smart defaults
   Display order   ja, en  (top → bottom on screen)
   Timing master   ja  (first language)
   Cleanup preset  on  (single-line cues + strip broadcast noise)
-  Output folder   {TMP}/Foo  (beside source)
-======================================================================
+  Output folder   beside source
 
-    1) Run it now
-    2) Save as a reusable workflow file
-    3) Edit a single answer
-    4) Start over from beginning
-    5) Quit
-    6) Show the exact command & workflow file
+What next?
+  1) Run it now
+  2) Change a setting
+  3) Show exact command and workflow file
+  4) Save as a reusable workflow file
+  5) Start over
 
   Number [1 | b=back | q=quit] >
 
@@ -182,24 +183,20 @@ Preflight check — 1 item(s) to know about:
       Why: Heads-up — no action needed before running.
       Fix: Fast scan checked 2 subtitle candidate(s).
 
+------------------------------------------------------------------------------------------------
 Running:
-  getsubtitle --fetch {TMP}/Foo --languages ja,en --modify --strip-cc-noise --single-line --merge --languages ja,en --format srt --font-size regular --output {TMP}/Foo
+  getsubtitle --fetch {TMP}/Foo --languages ja,en --modify --strip-cc-noise --single-line --merge --format srt --font-size regular --output {TMP}/Foo
 
 
 ======================================================================
 Workflow summary
 ======================================================================
 Completed successfully
-Source: {TMP}/Foo
-Scope: auto / not specified
-Languages requested: ja, en
-Output folder: {TMP}/Foo
-Preflight info: 1
 
 Next steps:
   1. Merge later with: getsubtitle merge {TMP}/Foo -l ja,en
   2. Re-run this workflow command after any setup fixes:
-     getsubtitle --fetch {TMP}/Foo --languages ja,en --modify --strip-cc-noise --single-line --merge --languages ja,en --format srt --font-size regular --output {TMP}/Foo
+     getsubtitle --fetch {TMP}/Foo --languages ja,en --modify --strip-cc-noise --single-line --merge --format srt --font-size regular --output {TMP}/Foo
   Open folder? [Y/n] >
 ```
 
@@ -351,53 +348,50 @@ Q6. Subtitle text size?                                             Progress [�
 
   Number [1 | b=back | q=quit] >
 
-======================================================================
-Here's the plan:
-======================================================================
-  • Fetch ja, en for Mashle  (season 2, episode 13)
+------------------------------------------------------------------------------------------------
+Review your workflow                                                Progress [◼◼◼◼◼◼◼◼◼◼◼◼◻] 99%
+
+Plan
+  • Fetch ja, en for:
+    Mashle  (season 2, episode 13)
   • Clean up cues (single line, strip broadcast noise)
-  • Stack ja, en into one SRT file → *.ja-en.srt
+  • Stack ja, en into one SRT file: *.ja-en.srt
   • Use subtitle text size: Regular
-  • Save to {TMP}/Mashle
-======================================================================
-Before running:
-======================================================================
-  ⚠ Japanese subtitles can be harder to find automatically; manual search or translation may be needed.
-======================================================================
-Smart defaults filled in for you (edit via 'Edit a single answer'):
-======================================================================
+  • Save to:
+    {TMP}/Mashle
+
+Before you run
+  ⚠ Japanese subtitles can be harder to find automatically; manual
+    search or translation may be needed.
+
+Smart defaults
   Display order   ja, en  (top → bottom on screen)
   Timing master   ja  (first language)
   Cleanup preset  on  (single-line cues + strip broadcast noise)
-======================================================================
 
-    1) Run it now
-    2) Save as a reusable workflow file
-    3) Edit a single answer
-    4) Start over from beginning
-    5) Quit
-    6) Show the exact command & workflow file
+What next?
+  1) Run it now
+  2) Change a setting
+  3) Show exact command and workflow file
+  4) Save as a reusable workflow file
+  5) Start over
 
-  Number [2 | b=back | q=quit] > 2
+  Number [4 | b=back | q=quit] > 4
 
 
   Save to (relative paths OK) [getsubtitle-workflow.toml] > {TMP}/mashle.toml
-Saved: {TMP}/mashle.toml
 
-Your mashle.toml runs the same workflow as this command:
-  # getsubtitle --fetch --title Mashle --season 2 --episode 13 --languages ja,en --no-engine --modify --season 2 --episode 13 --convert smi-to-srt --strip-cc-noise --single-line --merge --languages ja,en --season 2 --episode 13 --format srt --font-size regular --output {TMP}/Mashle
+Saved workflow:
+  {TMP}/mashle.toml
 
-Run it later with:
+Run later:
   getsubtitle --config {TMP}/mashle.toml
 
-You can recycle this TOML and override saved settings with extra CLI flags.
-For example, reuse the same language, reading-aid, translation, and merge
-choices on another show or season:
-  getsubtitle --config {TMP}/mashle.toml --source 'https://www.imdb.com/title/tt1234567/' --season 3 --episode all --output "$HOME/Downloads/GetSubtitle/TV Show/Season 03"
+    1) Show exact command
+    2) Open containing folder
+    3) Done
 
-CLI flags win over matching TOML settings, so the file can stay as a reusable template.
-
-  Open folder containing mashle.toml? [Y/n] > n
+  Number [3] > n
 ```
 
 </details>
@@ -520,59 +514,52 @@ Q5. Final output format.                                            Progress [�
 
     Suggested default: VTT — VTT supports true Japanese ruby in browsers/asbplayer; local players vary.
 
-    Reading-aid notes:
-      VTT can show true ruby above Japanese text in browsers/asbplayer.
-      SRT/SMI/ASS use fallback reading-aid layouts instead.
-
   Final format [3 | b=back | q=quit] >
 
-======================================================================
-Here's the plan:
-======================================================================
-  • Use local ja, en files in {TMP}/Show
+------------------------------------------------------------------------------------------------
+Review your workflow                                                Progress [◼◼◼◼◼◼◼◼◼◼◼◼◻] 99%
+
+Plan
+  • Use local ja, en files in:
+    {TMP}/Show
   • Add reading aids: ja:hiragana
-  • Stack ja, en into one VTT file → *.ja-en.vtt
-  • Save to {TMP}/Show
-======================================================================
-Before running:
-======================================================================
-  ⚠ VTT reading aids work best in browsers/asbplayer; local player support varies.
-======================================================================
-Smart defaults filled in for you (edit via 'Edit a single answer'):
-======================================================================
+  • Stack ja, en into one VTT file: *.ja-en.vtt
+  • Save to:
+    {TMP}/Show
+
+Before you run
+  ⚠ VTT reading aids work best in browsers/asbplayer; local player
+    support varies.
+
+Smart defaults
   Display order   ja, en  (top → bottom on screen)
   Timing master   ja  (first language)
   Cleanup preset  on  (single-line cues + strip broadcast noise)
-  Output folder   {TMP}/Show  (beside source)
-======================================================================
+  Output folder   beside source
 
-    1) Run it now
-    2) Save as a reusable workflow file
-    3) Edit a single answer
-    4) Start over from beginning
-    5) Quit
-    6) Show the exact command & workflow file
+What next?
+  1) Run it now
+  2) Change a setting
+  3) Show exact command and workflow file
+  4) Save as a reusable workflow file
+  5) Start over
 
-  Number [1 | b=back | q=quit] > 2
+  Number [1 | b=back | q=quit] > 4
 
 
   Save to (relative paths OK) [getsubtitle-workflow.toml] > {TMP}/newbie.toml
-Saved: {TMP}/newbie.toml
 
-Your newbie.toml runs the same workflow as this command:
-  # getsubtitle --source {TMP}/Show --modify --strip-cc-noise --single-line --reading ja:hiragana --reading-format vtt --merge --languages ja,en --reading ja:hiragana --format vtt --output {TMP}/Show
+Saved workflow:
+  {TMP}/newbie.toml
 
-Run it later with:
+Run later:
   getsubtitle --config {TMP}/newbie.toml
 
-You can recycle this TOML and override saved settings with extra CLI flags.
-For example, reuse the same language, reading-aid, translation, and merge
-choices on another show or season:
-  getsubtitle --config {TMP}/newbie.toml --source 'https://www.imdb.com/title/tt1234567/' --season 3 --episode all --output "$HOME/Downloads/GetSubtitle/TV Show/Season 03"
+    1) Show exact command
+    2) Open containing folder
+    3) Done
 
-CLI flags win over matching TOML settings, so the file can stay as a reusable template.
-
-  Open folder containing newbie.toml? [Y/n] > n
+  Number [3] > n
 ```
 
 </details>
@@ -687,10 +674,6 @@ Q5. Final output format.                                            Progress [�
 
     Suggested default: ASS — ASS is best for local-player stacked Korean/Chinese/Cantonese readings.
 
-    Reading-aid notes:
-      ASS is usually the clearest local-player choice for Korean,
-      Chinese, or Cantonese reading aids.
-
   Final format [2 | b=back | q=quit] >
 
 ------------------------------------------------------------------------------------------------
@@ -709,54 +692,51 @@ Q6. Subtitle text size?                                             Progress [�
 
   Number [1 | b=back | q=quit] >
 
-======================================================================
-Here's the plan:
-======================================================================
-  • Use local ko, en files in {TMP}/Show
+------------------------------------------------------------------------------------------------
+Review your workflow                                                Progress [◼◼◼◼◼◼◼◼◼◼◼◼◻] 99%
+
+Plan
+  • Use local ko, en files in:
+    {TMP}/Show
   • Add reading aids: ko:revised
-  • Stack ko, en into one ASS file → *.ko-en.ass
+  • Stack ko, en into one ASS file: *.ko-en.ass
   • Use subtitle text size: Regular
-  • Save to {TMP}/Show
-======================================================================
-Before running:
-======================================================================
-  ⚠ ASS reading aids use parenthetical text instead of true ruby above the script.
-======================================================================
-Smart defaults filled in for you (edit via 'Edit a single answer'):
-======================================================================
+  • Save to:
+    {TMP}/Show
+
+Before you run
+  ⚠ ASS reading aids use parenthetical text instead of true ruby above
+    the script.
+
+Smart defaults
   Display order   ko, en  (top → bottom on screen)
   Timing master   ko  (first language)
   Cleanup preset  on  (single-line cues + strip broadcast noise)
-  Output folder   {TMP}/Show  (beside source)
-======================================================================
+  Output folder   beside source
 
-    1) Run it now
-    2) Save as a reusable workflow file
-    3) Edit a single answer
-    4) Start over from beginning
-    5) Quit
-    6) Show the exact command & workflow file
+What next?
+  1) Run it now
+  2) Change a setting
+  3) Show exact command and workflow file
+  4) Save as a reusable workflow file
+  5) Start over
 
-  Number [1 | b=back | q=quit] > 2
+  Number [1 | b=back | q=quit] > 4
 
 
   Save to (relative paths OK) [getsubtitle-workflow.toml] > {TMP}/korean.toml
-Saved: {TMP}/korean.toml
 
-Your korean.toml runs the same workflow as this command:
-  # getsubtitle --source {TMP}/Show --modify --strip-cc-noise --single-line --reading ko:revised --merge --languages ko,en --format ass --font-size regular --output {TMP}/Show
+Saved workflow:
+  {TMP}/korean.toml
 
-Run it later with:
+Run later:
   getsubtitle --config {TMP}/korean.toml
 
-You can recycle this TOML and override saved settings with extra CLI flags.
-For example, reuse the same language, reading-aid, translation, and merge
-choices on another show or season:
-  getsubtitle --config {TMP}/korean.toml --source 'https://www.imdb.com/title/tt1234567/' --season 3 --episode all --output "$HOME/Downloads/GetSubtitle/TV Show/Season 03"
+    1) Show exact command
+    2) Open containing folder
+    3) Done
 
-CLI flags win over matching TOML settings, so the file can stay as a reusable template.
-
-  Open folder containing korean.toml? [Y/n] > n
+  Number [3] > n
 ```
 
 </details>
@@ -880,49 +860,46 @@ Q5. Subtitle text size?                                             Progress [�
 
   Number [1 | b=back | q=quit] >
 
-======================================================================
-Here's the plan:
-======================================================================
-  • Use local ja, en files in {TMP}/Show
-  • Stack ja, en into one SRT file → *.ja-en.srt
+------------------------------------------------------------------------------------------------
+Review your workflow                                                Progress [◼◼◼◼◼◼◼◼◼◼◼◼◻] 99%
+
+Plan
+  • Use local ja, en files in:
+    {TMP}/Show
+  • Stack ja, en into one SRT file: *.ja-en.srt
   • Use subtitle text size: Regular
-  • Save to {TMP}/Show
-======================================================================
-Smart defaults filled in for you (edit via 'Edit a single answer'):
-======================================================================
+  • Save to:
+    {TMP}/Show
+
+Smart defaults
   Display order   ja, en  (top → bottom on screen)
   Timing master   ja  (first language)
   Cleanup preset  on  (single-line cues + strip broadcast noise)
-  Output folder   {TMP}/Show  (beside source)
-======================================================================
+  Output folder   beside source
 
-    1) Run it now
-    2) Save as a reusable workflow file
-    3) Edit a single answer
-    4) Start over from beginning
-    5) Quit
-    6) Show the exact command & workflow file
+What next?
+  1) Run it now
+  2) Change a setting
+  3) Show exact command and workflow file
+  4) Save as a reusable workflow file
+  5) Start over
 
-  Number [1 | b=back | q=quit] > 2
+  Number [1 | b=back | q=quit] > 4
 
 
   Save to (relative paths OK) [getsubtitle-workflow.toml] > {TMP}/merge-only.toml
-Saved: {TMP}/merge-only.toml
 
-Your merge-only.toml runs the same workflow as this command:
-  # getsubtitle merge {TMP}/Show --languages ja,en --format srt --font-size regular --output {TMP}/Show
+Saved workflow:
+  {TMP}/merge-only.toml
 
-Run it later with:
+Run later:
   getsubtitle --config {TMP}/merge-only.toml
 
-You can recycle this TOML and override saved settings with extra CLI flags.
-For example, reuse the same language, reading-aid, translation, and merge
-choices on another show or season:
-  getsubtitle --config {TMP}/merge-only.toml --source 'https://www.imdb.com/title/tt1234567/' --season 3 --episode all --output "$HOME/Downloads/GetSubtitle/TV Show/Season 03"
+    1) Show exact command
+    2) Open containing folder
+    3) Done
 
-CLI flags win over matching TOML settings, so the file can stay as a reusable template.
-
-  Open folder containing merge-only.toml? [Y/n] > n
+  Number [3] > n
 ```
 
 </details>
@@ -1013,46 +990,43 @@ Q4. Reading aids (phonetic guides for the original script).         Progress [�
 
   Numbers (comma-separated) [1 | b=back | q=quit] > 2
 
-======================================================================
-Here's the plan:
-======================================================================
-  • Use local ja files in {TMP}/Foo.ja.srt
+------------------------------------------------------------------------------------------------
+Review your workflow                                                Progress [◼◼◼◼◼◼◼◼◼◼◼◼◻] 99%
+
+Plan
+  • Use local ja files in:
+    {TMP}/Foo.ja.srt
   • Add reading aids: ja:hiragana
-  • Save to {TMP}
-======================================================================
-Smart defaults filled in for you (edit via 'Edit a single answer'):
-======================================================================
+  • Save to:
+    {TMP}
+
+Smart defaults
   Cleanup preset  on  (single-line cues + strip broadcast noise)
-  Output folder   {TMP}  (beside source)
-======================================================================
+  Output folder   beside source
 
-    1) Run it now
-    2) Save as a reusable workflow file
-    3) Edit a single answer
-    4) Start over from beginning
-    5) Quit
-    6) Show the exact command & workflow file
+What next?
+  1) Run it now
+  2) Change a setting
+  3) Show exact command and workflow file
+  4) Save as a reusable workflow file
+  5) Start over
 
-  Number [1 | b=back | q=quit] > 2
+  Number [1 | b=back | q=quit] > 4
 
 
   Save to (relative paths OK) [getsubtitle-workflow.toml] > {TMP}/single-file.toml
-Saved: {TMP}/single-file.toml
 
-Your single-file.toml runs the same workflow as this command:
-  # getsubtitle modify {TMP}/Foo.ja.srt --season 0 --episode 0 --strip-cc-noise --single-line --reading ja:hiragana
+Saved workflow:
+  {TMP}/single-file.toml
 
-Run it later with:
+Run later:
   getsubtitle --config {TMP}/single-file.toml
 
-You can recycle this TOML and override saved settings with extra CLI flags.
-For example, reuse the same language, reading-aid, translation, and merge
-choices on another show or season:
-  getsubtitle --config {TMP}/single-file.toml --source 'https://www.imdb.com/title/tt1234567/' --season 3 --episode all --output "$HOME/Downloads/GetSubtitle/TV Show/Season 03"
+    1) Show exact command
+    2) Open containing folder
+    3) Done
 
-CLI flags win over matching TOML settings, so the file can stay as a reusable template.
-
-  Open folder containing single-file.toml? [Y/n] > n
+  Number [3] > n
 ```
 
 </details>
@@ -1314,30 +1288,31 @@ Q7. Subtitle text size?                                             Progress [�
 
   Number [1 | b=back | q=quit] >
 
-======================================================================
-Here's the plan:
-======================================================================
-  • Use local ja, en files in {TMP}/Show
+------------------------------------------------------------------------------------------------
+Review your workflow                                                Progress [◼◼◼◼◼◼◼◼◼◼◼◼◻] 99%
+
+Plan
+  • Use local ja, en files in:
+    {TMP}/Show
   • Fill gaps with Deepl AI translation
   • Clean up cues (single line, strip broadcast noise)
-  • Stack ja, en into one SRT file → *.ja-en.srt
+  • Stack ja, en into one SRT file: *.ja-en.srt
   • Use subtitle text size: Regular
-  • Save to {TMP}/Show
-======================================================================
-Smart defaults filled in for you (edit via 'Edit a single answer'):
-======================================================================
+  • Save to:
+    {TMP}/Show
+
+Smart defaults
   Display order   ja, en  (top → bottom on screen)
   Timing master   ja  (first language)
   Cleanup preset  on  (single-line cues + strip broadcast noise)
-  Output folder   {TMP}/Show  (beside source)
-======================================================================
+  Output folder   beside source
 
-    1) Run it now
-    2) Save as a reusable workflow file
-    3) Edit a single answer
-    4) Start over from beginning
-    5) Quit
-    6) Show the exact command & workflow file
+What next?
+  1) Run it now
+  2) Change a setting
+  3) Show exact command and workflow file
+  4) Save as a reusable workflow file
+  5) Start over
 
   Number [1 | b=back | q=quit] > 1
 
@@ -1367,22 +1342,18 @@ Still blocked — the run would fail before it starts:
 
 
   Save to (relative paths OK) [getsubtitle-workflow.toml] > {TMP}/deepl-later.toml
-Saved: {TMP}/deepl-later.toml
 
-Your deepl-later.toml runs the same workflow as this command:
-  # getsubtitle --source {TMP}/Show --translate deepl --languages ja,en --modify --strip-cc-noise --single-line --merge --languages ja,en --format srt --font-size regular --output {TMP}/Show
+Saved workflow:
+  {TMP}/deepl-later.toml
 
-Run it later with:
+Run later:
   getsubtitle --config {TMP}/deepl-later.toml
 
-You can recycle this TOML and override saved settings with extra CLI flags.
-For example, reuse the same language, reading-aid, translation, and merge
-choices on another show or season:
-  getsubtitle --config {TMP}/deepl-later.toml --source 'https://www.imdb.com/title/tt1234567/' --season 3 --episode all --output "$HOME/Downloads/GetSubtitle/TV Show/Season 03"
+    1) Show exact command
+    2) Open containing folder
+    3) Done
 
-CLI flags win over matching TOML settings, so the file can stay as a reusable template.
-
-  Open folder containing deepl-later.toml? [Y/n] > n
+  Number [3] > n
 ```
 
 </details>
@@ -1527,30 +1498,31 @@ Q7. Subtitle text size?                                             Progress [�
 
   Number [1 | b=back | q=quit] >
 
-======================================================================
-Here's the plan:
-======================================================================
-  • Use local ja, en files in {TMP}/Show
+------------------------------------------------------------------------------------------------
+Review your workflow                                                Progress [◼◼◼◼◼◼◼◼◼◼◼◼◻] 99%
+
+Plan
+  • Use local ja, en files in:
+    {TMP}/Show
   • Fill gaps with Ollama AI translation
   • Clean up cues (single line, strip broadcast noise)
-  • Stack ja, en into one SRT file → *.ja-en.srt
+  • Stack ja, en into one SRT file: *.ja-en.srt
   • Use subtitle text size: Regular
-  • Save to {TMP}/Show
-======================================================================
-Smart defaults filled in for you (edit via 'Edit a single answer'):
-======================================================================
+  • Save to:
+    {TMP}/Show
+
+Smart defaults
   Display order   ja, en  (top → bottom on screen)
   Timing master   ja  (first language)
   Cleanup preset  on  (single-line cues + strip broadcast noise)
-  Output folder   {TMP}/Show  (beside source)
-======================================================================
+  Output folder   beside source
 
-    1) Run it now
-    2) Save as a reusable workflow file
-    3) Edit a single answer
-    4) Start over from beginning
-    5) Quit
-    6) Show the exact command & workflow file
+What next?
+  1) Run it now
+  2) Change a setting
+  3) Show exact command and workflow file
+  4) Save as a reusable workflow file
+  5) Start over
 
   Number [1 | b=back | q=quit] > 1
 
@@ -1580,22 +1552,18 @@ Still blocked — the run would fail before it starts:
 
 
   Save to (relative paths OK) [getsubtitle-workflow.toml] > {TMP}/ollama-later.toml
-Saved: {TMP}/ollama-later.toml
 
-Your ollama-later.toml runs the same workflow as this command:
-  # getsubtitle --source {TMP}/Show --translate ollama --languages ja,en --modify --strip-cc-noise --single-line --merge --languages ja,en --format srt --font-size regular --output {TMP}/Show
+Saved workflow:
+  {TMP}/ollama-later.toml
 
-Run it later with:
+Run later:
   getsubtitle --config {TMP}/ollama-later.toml
 
-You can recycle this TOML and override saved settings with extra CLI flags.
-For example, reuse the same language, reading-aid, translation, and merge
-choices on another show or season:
-  getsubtitle --config {TMP}/ollama-later.toml --source 'https://www.imdb.com/title/tt1234567/' --season 3 --episode all --output "$HOME/Downloads/GetSubtitle/TV Show/Season 03"
+    1) Show exact command
+    2) Open containing folder
+    3) Done
 
-CLI flags win over matching TOML settings, so the file can stay as a reusable template.
-
-  Open folder containing ollama-later.toml? [Y/n] > n
+  Number [3] > n
 ```
 
 </details>
@@ -1739,31 +1707,32 @@ Q6. Subtitle text size?                                             Progress [�
 
   Number [1 | b=back | q=quit] >
 
-======================================================================
-Here's the plan:
-======================================================================
-  • Use local ja, en files in {TMP}/Foo
+------------------------------------------------------------------------------------------------
+Review your workflow                                                Progress [◼◼◼◼◼◼◼◼◼◼◼◼◻] 99%
+
+Plan
+  • Use local ja, en files in:
+    {TMP}/Foo
   • Clean up cues (single line, strip broadcast noise)
-  • Stack ja, en into one SRT file → *.ja-en.srt
+  • Stack ja, en into one SRT file: *.ja-en.srt
   • Use subtitle text size: Regular
-  • Save to {TMP}/Foo
-======================================================================
-Smart defaults filled in for you (edit via 'Edit a single answer'):
-======================================================================
+  • Save to:
+    {TMP}/Foo
+
+Smart defaults
   Display order   ja, en  (top → bottom on screen)
   Timing master   ja  (first language)
   Cleanup preset  on  (single-line cues + strip broadcast noise)
-  Output folder   {TMP}/Foo  (beside source)
-======================================================================
+  Output folder   beside source
 
-    1) Run it now
-    2) Save as a reusable workflow file
-    3) Edit a single answer
-    4) Start over from beginning
-    5) Quit
-    6) Show the exact command & workflow file
+What next?
+  1) Run it now
+  2) Change a setting
+  3) Show exact command and workflow file
+  4) Save as a reusable workflow file
+  5) Start over
 
-  Number [1 | b=back | q=quit] > 5
+  Number [1 | b=back | q=quit] > q
 Quit.
 ```
 
@@ -1833,17 +1802,14 @@ Q3. Enter the URL.                                                  Progress [�
 ------------------------------------------------------------------------------------------------
 Q4. What episode scope?                                             Progress [◼◼◼◼◼◼◻◻◻◻◻◻◻] 44%
 
-    1) One TV episode — Season 1 Episode 1
-    2) A specific season + episode (or range)
-    3) Whole season, every episode (-e all)
-    4) Auto — let getsubtitle infer from the URL/title metadata
+    1) Specific season + episode (or range)
+       Defaults to Season 1 Episode 1.
+    2) Whole season, every episode (-e all)
+    3) Auto — let getsubtitle infer from the URL/title metadata
        (anime URLs typically resolve to single episodes; movies to a
         single item; TV without -e usually picks S01E01)
 
-  Number [4 | b=back | q=quit] > 1
-    This selected source looks like a TV/show result, not a movie.
-    If you meant a movie, type 'b' and choose the movie result from title search.
-    For this TV/show source, I will use Season 1 Episode 1.
+  Number [3 | b=back | q=quit] > 3
 
 ------------------------------------------------------------------------------------------------
 Q5. Which subtitle languages do you want to collect?                Progress [◼◼◼◼◼◼◼◻◻◻◻◻◻] 56%
@@ -1930,54 +1896,51 @@ Q9. Subtitle text size?                                             Progress [�
 
   Number [1 | b=back | q=quit] >
 
-======================================================================
-Here's the plan:
-======================================================================
-  • Fetch ja, en for https://www.imdb.com/title/tt28299608/  (season 1, episode 1)
+------------------------------------------------------------------------------------------------
+Review your workflow                                                Progress [◼◼◼◼◼◼◼◼◼◼◼◼◻] 99%
+
+Plan
+  • Fetch ja, en for:
+    https://www.imdb.com/title/tt28299608/
   • Clean up cues (single line, strip broadcast noise)
-  • Stack ja, en into one SRT file → *.ja-en.srt
+  • Stack ja, en into one SRT file: *.ja-en.srt
   • Use subtitle text size: Regular
-  • Save to ~/Downloads/GetSubtitle
-======================================================================
-Before running:
-======================================================================
-  ⚠ Japanese subtitles can be harder to find automatically; manual search or translation may be needed.
-======================================================================
-Smart defaults filled in for you (edit via 'Edit a single answer'):
-======================================================================
+  • Save to:
+    ~/Downloads/GetSubtitle
+
+Before you run
+  ⚠ Japanese subtitles can be harder to find automatically; manual
+    search or translation may be needed.
+
+Smart defaults
   Display order   ja, en  (top → bottom on screen)
   Timing master   ja  (first language)
   Cleanup preset  on  (single-line cues + strip broadcast noise)
   Output folder   ~/Downloads/GetSubtitle
-======================================================================
 
-    1) Run it now
-    2) Save as a reusable workflow file
-    3) Edit a single answer
-    4) Start over from beginning
-    5) Quit
-    6) Show the exact command & workflow file
+What next?
+  1) Run it now
+  2) Change a setting
+  3) Show exact command and workflow file
+  4) Save as a reusable workflow file
+  5) Start over
 
-  Number [2 | b=back | q=quit] > 2
+  Number [4 | b=back | q=quit] > 4
 
 
   Save to (relative paths OK) [getsubtitle-workflow.toml] > {TMP}/saved.toml
-Saved: {TMP}/saved.toml
 
-Your saved.toml runs the same workflow as this command:
-  # getsubtitle --fetch https://www.imdb.com/title/tt28299608/ --season 1 --episode 1 --languages ja,en --no-engine --modify --season 1 --episode 1 --strip-cc-noise --single-line --merge --languages ja,en --season 1 --episode 1 --format srt --font-size regular --output ~/Downloads/GetSubtitle
+Saved workflow:
+  {TMP}/saved.toml
 
-Run it later with:
+Run later:
   getsubtitle --config {TMP}/saved.toml
 
-You can recycle this TOML and override saved settings with extra CLI flags.
-For example, reuse the same language, reading-aid, translation, and merge
-choices on another show or season:
-  getsubtitle --config {TMP}/saved.toml --source 'https://www.imdb.com/title/tt1234567/' --season 3 --episode all --output "$HOME/Downloads/GetSubtitle/TV Show/Season 03"
+    1) Show exact command
+    2) Open containing folder
+    3) Done
 
-CLI flags win over matching TOML settings, so the file can stay as a reusable template.
-
-  Open folder containing saved.toml? [Y/n] > n
+  Number [3] > n
 ```
 
 </details>
@@ -2043,20 +2006,26 @@ Q3. Enter the URL.                                                  Progress [�
   URL [b=back | q=quit] > https://www.crunchyroll.com/watch/GZ7UDVKPD/miraculous-comeback
     Searching for: Crunchyroll watch URL
 
+    Crunchyroll metadata found:
+      Series: MF GHOST
+      Episode: Miraculous Comeback
+      Scope: S3 E25
+    Using Crunchyroll series URL: https://www.crunchyroll.com/series/GEXH3W2W7/mf-ghost
+
 ------------------------------------------------------------------------------------------------
 Q4. What episode scope?                                             Progress [◼◼◼◼◼◼◻◻◻◻◻◻◻] 50%
 
-    1) One TV episode — Season 1 Episode 1
-    2) A specific season + episode (or range)
-    3) Whole season, every episode (-e all)
-    4) Auto — let getsubtitle infer from the URL/title metadata
+    1) Specific season + episode (or range)
+       Defaults to Season 1 Episode 1.
+    2) Whole season, every episode (-e all)
+    3) Auto — let getsubtitle infer from the URL/title metadata
        (anime URLs typically resolve to single episodes; movies to a
         single item; TV without -e usually picks S01E01)
 
     Crunchyroll may display Season 3 as E25-E37, but subtitle
     sources usually search that as Season 3 episodes 1-13.
 
-  Number [2 | b=back | q=quit] > 2
+  Number [1 | b=back | q=quit] > 1
 
   Season or range (e.g. 1, 2-3, all) [1 | b=back | q=quit] > 3
 
@@ -2158,54 +2127,51 @@ Q9. Subtitle text size?                                             Progress [�
 
   Number [1 | b=back | q=quit] >
 
-======================================================================
-Here's the plan:
-======================================================================
-  • Fetch ja, ko for https://www.crunchyroll.com/watch/GZ7UDVKPD/miraculous-comeback  (season 3, episode 1-13)
+------------------------------------------------------------------------------------------------
+Review your workflow                                                Progress [◼◼◼◼◼◼◼◼◼◼◼◼◻] 99%
+
+Plan
+  • Fetch ja, ko for:
+    MF GHOST  (season 3, episode 1-13)
   • Clean up cues (single line, strip broadcast noise)
-  • Stack ja, ko into one SRT file → *.ja-ko.srt
+  • Stack ja, ko into one SRT file: *.ja-ko.srt
   • Use subtitle text size: Regular
-  • Save to ~/Downloads/GetSubtitle
-======================================================================
-Before running:
-======================================================================
-  ⚠ Japanese, Korean subtitles can be harder to find automatically; manual search or translation may be needed.
-======================================================================
-Smart defaults filled in for you (edit via 'Edit a single answer'):
-======================================================================
+  • Save to:
+    ~/Downloads/GetSubtitle
+
+Before you run
+  ⚠ Japanese, Korean subtitles can be harder to find automatically;
+    manual search or translation may be needed.
+
+Smart defaults
   Display order   ja, ko  (top → bottom on screen)
   Timing master   ja  (first language)
   Cleanup preset  on  (single-line cues + strip broadcast noise)
   Output folder   ~/Downloads/GetSubtitle
-======================================================================
 
-    1) Run it now
-    2) Save as a reusable workflow file
-    3) Edit a single answer
-    4) Start over from beginning
-    5) Quit
-    6) Show the exact command & workflow file
+What next?
+  1) Run it now
+  2) Change a setting
+  3) Show exact command and workflow file
+  4) Save as a reusable workflow file
+  5) Start over
 
-  Number [2 | b=back | q=quit] > 2
+  Number [4 | b=back | q=quit] > 4
 
 
   Save to (relative paths OK) [getsubtitle-workflow.toml] > {TMP}/mfghost-s3.toml
-Saved: {TMP}/mfghost-s3.toml
 
-Your mfghost-s3.toml runs the same workflow as this command:
-  # getsubtitle --fetch https://www.crunchyroll.com/watch/GZ7UDVKPD/miraculous-comeback --season 3 --episode 1-13 --episode-filename-start 25 --languages ja,ko --no-engine --modify --season 3 --episode 1-13 --strip-cc-noise --single-line --merge --languages ja,ko --season 3 --episode 1-13 --format srt --font-size regular --output ~/Downloads/GetSubtitle
+Saved workflow:
+  {TMP}/mfghost-s3.toml
 
-Run it later with:
+Run later:
   getsubtitle --config {TMP}/mfghost-s3.toml
 
-You can recycle this TOML and override saved settings with extra CLI flags.
-For example, reuse the same language, reading-aid, translation, and merge
-choices on another show or season:
-  getsubtitle --config {TMP}/mfghost-s3.toml --source 'https://www.imdb.com/title/tt1234567/' --season 3 --episode all --output "$HOME/Downloads/GetSubtitle/TV Show/Season 03"
+    1) Show exact command
+    2) Open containing folder
+    3) Done
 
-CLI flags win over matching TOML settings, so the file can stay as a reusable template.
-
-  Open folder containing mfghost-s3.toml? [Y/n] > n
+  Number [3] > n
 ```
 
 </details>
@@ -2342,31 +2308,32 @@ Q6. Subtitle text size?                                             Progress [�
 
   Number [1 | b=back | q=quit] >
 
-======================================================================
-Here's the plan:
-======================================================================
-  • Use local ja, en files in {TMP}/Show
+------------------------------------------------------------------------------------------------
+Review your workflow                                                Progress [◼◼◼◼◼◼◼◼◼◼◼◼◻] 99%
+
+Plan
+  • Use local ja, en files in:
+    {TMP}/Show
   • Clean up cues (single line, strip broadcast noise)
-  • Stack ja, en into one SRT file → *.ja-en.srt
+  • Stack ja, en into one SRT file: *.ja-en.srt
   • Use subtitle text size: Regular
-  • Save to {TMP}/Show
-======================================================================
-Smart defaults filled in for you (edit via 'Edit a single answer'):
-======================================================================
+  • Save to:
+    {TMP}/Show
+
+Smart defaults
   Display order   ja, en  (top → bottom on screen)
   Timing master   ja  (first language)
   Cleanup preset  on  (single-line cues + strip broadcast noise)
-  Output folder   {TMP}/Show  (beside source)
-======================================================================
+  Output folder   beside source
 
-    1) Run it now
-    2) Save as a reusable workflow file
-    3) Edit a single answer
-    4) Start over from beginning
-    5) Quit
-    6) Show the exact command & workflow file
+What next?
+  1) Run it now
+  2) Change a setting
+  3) Show exact command and workflow file
+  4) Save as a reusable workflow file
+  5) Start over
 
-  Number [1 | b=back | q=quit] > 5
+  Number [1 | b=back | q=quit] > q
 Quit.
 ```
 
@@ -2502,29 +2469,30 @@ Q6. Subtitle text size?                                             Progress [�
 
   Number [1 | b=back | q=quit] >
 
-======================================================================
-Here's the plan:
-======================================================================
-  • Use local ja, en files in {TMP}/Show
+------------------------------------------------------------------------------------------------
+Review your workflow                                                Progress [◼◼◼◼◼◼◼◼◼◼◼◼◻] 99%
+
+Plan
+  • Use local ja, en files in:
+    {TMP}/Show
   • Clean up cues (single line, strip broadcast noise)
-  • Stack ja, en into one SRT file → *.ja-en.srt
+  • Stack ja, en into one SRT file: *.ja-en.srt
   • Use subtitle text size: Regular
-  • Save to {TMP}/Show
-======================================================================
-Smart defaults filled in for you (edit via 'Edit a single answer'):
-======================================================================
+  • Save to:
+    {TMP}/Show
+
+Smart defaults
   Display order   ja, en  (top → bottom on screen)
   Timing master   ja  (first language)
   Cleanup preset  on  (single-line cues + strip broadcast noise)
-  Output folder   {TMP}/Show  (beside source)
-======================================================================
+  Output folder   beside source
 
-    1) Run it now
-    2) Save as a reusable workflow file
-    3) Edit a single answer
-    4) Start over from beginning
-    5) Quit
-    6) Show the exact command & workflow file
+What next?
+  1) Run it now
+  2) Change a setting
+  3) Show exact command and workflow file
+  4) Save as a reusable workflow file
+  5) Start over
 
   Number [1 | b=back | q=quit] > 1
 
@@ -2533,6 +2501,7 @@ Preflight check — 1 item(s) to know about:
       Why: Heads-up — no action needed before running.
       Fix: Fast scan checked 2 subtitle candidate(s).
 
+------------------------------------------------------------------------------------------------
 Running:
   getsubtitle --source {TMP}/Show --modify --strip-cc-noise --single-line --merge --languages ja,en --format srt --font-size regular --output {TMP}/Show
 
@@ -2541,11 +2510,6 @@ Running:
 Workflow summary
 ======================================================================
 Completed successfully
-Source: {TMP}/Show
-Scope: auto / not specified
-Languages requested: ja, en
-Output folder: {TMP}/Show
-Preflight info: 1
 
 Next steps:
   1. Merge later with: getsubtitle merge {TMP}/Show -l ja,en
@@ -2686,50 +2650,47 @@ Q6. Subtitle text size?                                             Progress [�
 
   Number [1 | b=back | q=quit] >
 
-======================================================================
-Here's the plan:
-======================================================================
-  • Use local ja, en files in {TMP}/Shows/Foo Bar
+------------------------------------------------------------------------------------------------
+Review your workflow                                                Progress [◼◼◼◼◼◼◼◼◼◼◼◼◻] 99%
+
+Plan
+  • Use local ja, en files in:
+    {TMP}/Shows/Foo Bar
   • Clean up cues (single line, strip broadcast noise)
-  • Stack ja, en into one SRT file → *.ja-en.srt
+  • Stack ja, en into one SRT file: *.ja-en.srt
   • Use subtitle text size: Regular
-  • Save to {TMP}/Shows/Foo Bar
-======================================================================
-Smart defaults filled in for you (edit via 'Edit a single answer'):
-======================================================================
+  • Save to:
+    {TMP}/Shows/Foo Bar
+
+Smart defaults
   Display order   ja, en  (top → bottom on screen)
   Timing master   ja  (first language)
   Cleanup preset  on  (single-line cues + strip broadcast noise)
-  Output folder   {TMP}/Shows/Foo Bar  (beside source)
-======================================================================
+  Output folder   beside source
 
-    1) Run it now
-    2) Save as a reusable workflow file
-    3) Edit a single answer
-    4) Start over from beginning
-    5) Quit
-    6) Show the exact command & workflow file
+What next?
+  1) Run it now
+  2) Change a setting
+  3) Show exact command and workflow file
+  4) Save as a reusable workflow file
+  5) Start over
 
-  Number [1 | b=back | q=quit] > 2
+  Number [1 | b=back | q=quit] > 4
 
 
   Save to (relative paths OK) [getsubtitle-workflow.toml] > {TMP}/drag.toml
-Saved: {TMP}/drag.toml
 
-Your drag.toml runs the same workflow as this command:
-  # getsubtitle --source '{TMP}/Shows/Foo Bar' --modify --strip-cc-noise --single-line --merge --languages ja,en --format srt --font-size regular --output '{TMP}/Shows/Foo Bar'
+Saved workflow:
+  {TMP}/drag.toml
 
-Run it later with:
+Run later:
   getsubtitle --config {TMP}/drag.toml
 
-You can recycle this TOML and override saved settings with extra CLI flags.
-For example, reuse the same language, reading-aid, translation, and merge
-choices on another show or season:
-  getsubtitle --config {TMP}/drag.toml --source 'https://www.imdb.com/title/tt1234567/' --season 3 --episode all --output "$HOME/Downloads/GetSubtitle/TV Show/Season 03"
+    1) Show exact command
+    2) Open containing folder
+    3) Done
 
-CLI flags win over matching TOML settings, so the file can stay as a reusable template.
-
-  Open folder containing drag.toml? [Y/n] > n
+  Number [3] > n
 ```
 
 </details>
@@ -2864,31 +2825,32 @@ Q6. Subtitle text size?                                             Progress [�
 
   Number [1 | b=back | q=quit] >
 
-======================================================================
-Here's the plan:
-======================================================================
-  • Use local ja, en files in {TMP}/Foo Bar
+------------------------------------------------------------------------------------------------
+Review your workflow                                                Progress [◼◼◼◼◼◼◼◼◼◼◼◼◻] 99%
+
+Plan
+  • Use local ja, en files in:
+    {TMP}/Foo Bar
   • Clean up cues (single line, strip broadcast noise)
-  • Stack ja, en into one SRT file → *.ja-en.srt
+  • Stack ja, en into one SRT file: *.ja-en.srt
   • Use subtitle text size: Regular
-  • Save to {TMP}/Foo Bar
-======================================================================
-Smart defaults filled in for you (edit via 'Edit a single answer'):
-======================================================================
+  • Save to:
+    {TMP}/Foo Bar
+
+Smart defaults
   Display order   ja, en  (top → bottom on screen)
   Timing master   ja  (first language)
   Cleanup preset  on  (single-line cues + strip broadcast noise)
-  Output folder   {TMP}/Foo Bar  (beside source)
-======================================================================
+  Output folder   beside source
 
-    1) Run it now
-    2) Save as a reusable workflow file
-    3) Edit a single answer
-    4) Start over from beginning
-    5) Quit
-    6) Show the exact command & workflow file
+What next?
+  1) Run it now
+  2) Change a setting
+  3) Show exact command and workflow file
+  4) Save as a reusable workflow file
+  5) Start over
 
-  Number [1 | b=back | q=quit] > 5
+  Number [1 | b=back | q=quit] > q
 Quit.
 ```
 
@@ -2953,27 +2915,32 @@ Q2. Where should we get subtitles from?                             Progress [�
 
     Searching for: 'totoro'
 
-    No title-resolver hits. Add a TMDB key for richer matches:
+    No title matches found.
+    I won't build a fetch workflow from an unverified title yet.
+    Check the spelling, paste an IMDb/TMDB/AniList URL, or choose
+    the raw-title escape only if you know the title source works.
+
+    Add a TMDB key for richer movie/TV matches:
       getsubtitle --set-key tmdb
-    Continuing with raw title text — fetch may still work via
-    AniList or other built-in fallbacks.
+
+    1) Re-enter a different title
+    2) Use exactly what I typed (advanced; may fail)
+
+  Number [1 | b=back | q=quit] > 2
   Is this a movie? (No = TV show / anime) [y/N | b=back | q=quit] > n
 
 ------------------------------------------------------------------------------------------------
 Q3. What episode scope?                                             Progress [◼◼◼◼◻◻◻◻◻◻◻◻◻] 31%
 
-    1) One TV episode — Season 1 Episode 1
-    2) A specific season + episode (or range)
-    3) Whole season, every episode (-e all)
-    4) Auto — let getsubtitle infer from the URL/title metadata
+    1) Specific season + episode (or range)
+       Defaults to Season 1 Episode 1.
+    2) Whole season, every episode (-e all)
+    3) Auto — let getsubtitle infer from the URL/title metadata
        (anime URLs typically resolve to single episodes; movies to a
         single item; TV without -e usually picks S01E01)
 
-  Number [4 | b=back | q=quit] > 2
-
-  Season or range (e.g. 1, 2-3, all) [1 | b=back | q=quit] > 1
-
-  Episode or range within each season (e.g. 5, 1-10, all) [1 | b=back | q=quit] > 1
+  Number [3 | b=back | q=quit] > 2
+    (Note: -e all on non-anime TV requires a TMDB key. Run `getsubtitle --set-key tmdb` later if needed.)
 
 ------------------------------------------------------------------------------------------------
 Q4. Which subtitle languages do you want to collect?                Progress [◼◼◼◼◼◼◻◻◻◻◻◻◻] 44%
@@ -2984,6 +2951,14 @@ Q4. Which subtitle languages do you want to collect?                Progress [�
       ja,en : Japanese on top and English below (optional furigana support)
       ko,en,es : Korean on top, then English and Spanish (optional romanization support)
       japanese,korean,english,spanish : 2-letter codes and full language names both work
+
+  Languages (comma-separated) [ja,en | b=back | q=quit] > 1
+    I don't recognize: 1
+    Use 2-letter codes or full names, like ja,en or japanese,korean,english.
+
+  Languages (comma-separated) [ja,en | b=back | q=quit] > 1
+    I don't recognize: 1
+    Use 2-letter codes or full names, like ja,en or japanese,korean,english.
 
   Languages (comma-separated) [ja,en | b=back | q=quit] > ja,en
 
@@ -3060,54 +3035,51 @@ Q8. Subtitle text size?                                             Progress [�
 
   Number [1 | b=back | q=quit] >
 
-======================================================================
-Here's the plan:
-======================================================================
-  • Fetch ja, en for totoro  (season 1, episode 1)
+------------------------------------------------------------------------------------------------
+Review your workflow                                                Progress [◼◼◼◼◼◼◼◼◼◼◼◼◻] 99%
+
+Plan
+  • Fetch ja, en for:
+    totoro  (season 1, episode all)
   • Clean up cues (single line, strip broadcast noise)
-  • Stack ja, en into one SRT file → *.ja-en.srt
+  • Stack ja, en into one SRT file: *.ja-en.srt
   • Use subtitle text size: Regular
-  • Save to ~/Downloads/GetSubtitle
-======================================================================
-Before running:
-======================================================================
-  ⚠ Japanese subtitles can be harder to find automatically; manual search or translation may be needed.
-======================================================================
-Smart defaults filled in for you (edit via 'Edit a single answer'):
-======================================================================
+  • Save to:
+    ~/Downloads/GetSubtitle
+
+Before you run
+  ⚠ Japanese subtitles can be harder to find automatically; manual
+    search or translation may be needed.
+
+Smart defaults
   Display order   ja, en  (top → bottom on screen)
   Timing master   ja  (first language)
   Cleanup preset  on  (single-line cues + strip broadcast noise)
   Output folder   ~/Downloads/GetSubtitle
-======================================================================
 
-    1) Run it now
-    2) Save as a reusable workflow file
-    3) Edit a single answer
-    4) Start over from beginning
-    5) Quit
-    6) Show the exact command & workflow file
+What next?
+  1) Run it now
+  2) Change a setting
+  3) Show exact command and workflow file
+  4) Save as a reusable workflow file
+  5) Start over
 
-  Number [2 | b=back | q=quit] > 2
+  Number [4 | b=back | q=quit] > 4
 
 
   Save to (relative paths OK) [getsubtitle-workflow.toml] > {TMP}/totoro-typo.toml
-Saved: {TMP}/totoro-typo.toml
 
-Your totoro-typo.toml runs the same workflow as this command:
-  # getsubtitle --fetch --title totoro --season 1 --episode 1 --languages ja,en --no-engine --modify --season 1 --episode 1 --strip-cc-noise --single-line --merge --languages ja,en --season 1 --episode 1 --format srt --font-size regular --output ~/Downloads/GetSubtitle
+Saved workflow:
+  {TMP}/totoro-typo.toml
 
-Run it later with:
+Run later:
   getsubtitle --config {TMP}/totoro-typo.toml
 
-You can recycle this TOML and override saved settings with extra CLI flags.
-For example, reuse the same language, reading-aid, translation, and merge
-choices on another show or season:
-  getsubtitle --config {TMP}/totoro-typo.toml --source 'https://www.imdb.com/title/tt1234567/' --season 3 --episode all --output "$HOME/Downloads/GetSubtitle/TV Show/Season 03"
+    1) Show exact command
+    2) Open containing folder
+    3) Done
 
-CLI flags win over matching TOML settings, so the file can stay as a reusable template.
-
-  Open folder containing totoro-typo.toml? [Y/n] > n
+  Number [3] > n
 ```
 
 </details>
@@ -3171,23 +3143,31 @@ Q2. Where should we get subtitles from?                             Progress [�
 
     Searching for: 'totoro'
 
-    No title-resolver hits. Add a TMDB key for richer matches:
+    No title matches found.
+    I won't build a fetch workflow from an unverified title yet.
+    Check the spelling, paste an IMDb/TMDB/AniList URL, or choose
+    the raw-title escape only if you know the title source works.
+
+    Add a TMDB key for richer movie/TV matches:
       getsubtitle --set-key tmdb
-    Continuing with raw title text — fetch may still work via
-    AniList or other built-in fallbacks.
+
+    1) Re-enter a different title
+    2) Use exactly what I typed (advanced; may fail)
+
+  Number [1 | b=back | q=quit] > 2
   Is this a movie? (No = TV show / anime) [y/N | b=back | q=quit] > n
 
 ------------------------------------------------------------------------------------------------
 Q3. What episode scope?                                             Progress [◼◼◼◼◻◻◻◻◻◻◻◻◻] 31%
 
-    1) One TV episode — Season 1 Episode 1
-    2) A specific season + episode (or range)
-    3) Whole season, every episode (-e all)
-    4) Auto — let getsubtitle infer from the URL/title metadata
+    1) Specific season + episode (or range)
+       Defaults to Season 1 Episode 1.
+    2) Whole season, every episode (-e all)
+    3) Auto — let getsubtitle infer from the URL/title metadata
        (anime URLs typically resolve to single episodes; movies to a
         single item; TV without -e usually picks S01E01)
 
-  Number [4 | b=back | q=quit] >
+  Number [3 | b=back | q=quit] >
 
 ------------------------------------------------------------------------------------------------
 Q4. Which subtitle languages do you want to collect?                Progress [◼◼◼◼◼◼◻◻◻◻◻◻◻] 44%
@@ -3274,35 +3254,36 @@ Q8. Subtitle text size?                                             Progress [�
 
   Number [1 | b=back | q=quit] >
 
-======================================================================
-Here's the plan:
-======================================================================
-  • Fetch ja, en for totoro
+------------------------------------------------------------------------------------------------
+Review your workflow                                                Progress [◼◼◼◼◼◼◼◼◼◼◼◼◻] 99%
+
+Plan
+  • Fetch ja, en for:
+    totoro
   • Clean up cues (single line, strip broadcast noise)
-  • Stack ja, en into one SRT file → *.ja-en.srt
+  • Stack ja, en into one SRT file: *.ja-en.srt
   • Use subtitle text size: Regular
-  • Save to ~/Downloads/GetSubtitle
-======================================================================
-Before running:
-======================================================================
-  ⚠ Japanese subtitles can be harder to find automatically; manual search or translation may be needed.
-======================================================================
-Smart defaults filled in for you (edit via 'Edit a single answer'):
-======================================================================
+  • Save to:
+    ~/Downloads/GetSubtitle
+
+Before you run
+  ⚠ Japanese subtitles can be harder to find automatically; manual
+    search or translation may be needed.
+
+Smart defaults
   Display order   ja, en  (top → bottom on screen)
   Timing master   ja  (first language)
   Cleanup preset  on  (single-line cues + strip broadcast noise)
   Output folder   ~/Downloads/GetSubtitle
-======================================================================
 
-    1) Run it now
-    2) Save as a reusable workflow file
-    3) Edit a single answer
-    4) Start over from beginning
-    5) Quit
-    6) Show the exact command & workflow file
+What next?
+  1) Run it now
+  2) Change a setting
+  3) Show exact command and workflow file
+  4) Save as a reusable workflow file
+  5) Start over
 
-  Number [2 | b=back | q=quit] > 5
+  Number [4 | b=back | q=quit] > q
 Quit.
 ```
 
@@ -3460,50 +3441,47 @@ Q6. Subtitle text size?                                             Progress [�
 
   Number [1 | b=back | q=quit] >
 
-======================================================================
-Here's the plan:
-======================================================================
-  • Use local ja, en files in {TMP}/Right
+------------------------------------------------------------------------------------------------
+Review your workflow                                                Progress [◼◼◼◼◼◼◼◼◼◼◼◼◻] 99%
+
+Plan
+  • Use local ja, en files in:
+    {TMP}/Right
   • Clean up cues (single line, strip broadcast noise)
-  • Stack ja, en into one SRT file → *.ja-en.srt
+  • Stack ja, en into one SRT file: *.ja-en.srt
   • Use subtitle text size: Regular
-  • Save to {TMP}/Right
-======================================================================
-Smart defaults filled in for you (edit via 'Edit a single answer'):
-======================================================================
+  • Save to:
+    {TMP}/Right
+
+Smart defaults
   Display order   ja, en  (top → bottom on screen)
   Timing master   ja  (first language)
   Cleanup preset  on  (single-line cues + strip broadcast noise)
-  Output folder   {TMP}/Right  (beside source)
-======================================================================
+  Output folder   beside source
 
-    1) Run it now
-    2) Save as a reusable workflow file
-    3) Edit a single answer
-    4) Start over from beginning
-    5) Quit
-    6) Show the exact command & workflow file
+What next?
+  1) Run it now
+  2) Change a setting
+  3) Show exact command and workflow file
+  4) Save as a reusable workflow file
+  5) Start over
 
-  Number [1 | b=back | q=quit] > 2
+  Number [1 | b=back | q=quit] > 4
 
 
   Save to (relative paths OK) [getsubtitle-workflow.toml] > {TMP}/back.toml
-Saved: {TMP}/back.toml
 
-Your back.toml runs the same workflow as this command:
-  # getsubtitle --source {TMP}/Right --modify --strip-cc-noise --single-line --merge --languages ja,en --format srt --font-size regular --output {TMP}/Right
+Saved workflow:
+  {TMP}/back.toml
 
-Run it later with:
+Run later:
   getsubtitle --config {TMP}/back.toml
 
-You can recycle this TOML and override saved settings with extra CLI flags.
-For example, reuse the same language, reading-aid, translation, and merge
-choices on another show or season:
-  getsubtitle --config {TMP}/back.toml --source 'https://www.imdb.com/title/tt1234567/' --season 3 --episode all --output "$HOME/Downloads/GetSubtitle/TV Show/Season 03"
+    1) Show exact command
+    2) Open containing folder
+    3) Done
 
-CLI flags win over matching TOML settings, so the file can stay as a reusable template.
-
-  Open folder containing back.toml? [Y/n] > n
+  Number [3] > n
 ```
 
 </details>
@@ -3638,64 +3616,66 @@ Q6. Subtitle text size?                                             Progress [�
 
   Number [1 | b=back | q=quit] >
 
-======================================================================
-Here's the plan:
-======================================================================
-  • Use local ja, en files in {TMP}/Show
+------------------------------------------------------------------------------------------------
+Review your workflow                                                Progress [◼◼◼◼◼◼◼◼◼◼◼◼◻] 99%
+
+Plan
+  • Use local ja, en files in:
+    {TMP}/Show
   • Clean up cues (single line, strip broadcast noise)
-  • Stack ja, en into one SRT file → *.ja-en.srt
+  • Stack ja, en into one SRT file: *.ja-en.srt
   • Use subtitle text size: Regular
-  • Save to {TMP}/Show
-======================================================================
-Smart defaults filled in for you (edit via 'Edit a single answer'):
-======================================================================
+  • Save to:
+    {TMP}/Show
+
+Smart defaults
   Display order   ja, en  (top → bottom on screen)
   Timing master   ja  (first language)
   Cleanup preset  on  (single-line cues + strip broadcast noise)
-  Output folder   {TMP}/Show  (beside source)
-======================================================================
+  Output folder   beside source
 
-    1) Run it now
-    2) Save as a reusable workflow file
-    3) Edit a single answer
-    4) Start over from beginning
-    5) Quit
-    6) Show the exact command & workflow file
-
-  Number [1 | b=back | q=quit] > 4
-  Discard all answers and start over? [y/N | b=back | q=quit] > n
-
-======================================================================
-Here's the plan:
-======================================================================
-  • Use local ja, en files in {TMP}/Show
-  • Clean up cues (single line, strip broadcast noise)
-  • Stack ja, en into one SRT file → *.ja-en.srt
-  • Use subtitle text size: Regular
-  • Save to {TMP}/Show
-======================================================================
-Smart defaults filled in for you (edit via 'Edit a single answer'):
-======================================================================
-  Display order   ja, en  (top → bottom on screen)
-  Timing master   ja  (first language)
-  Cleanup preset  on  (single-line cues + strip broadcast noise)
-  Output folder   {TMP}/Show  (beside source)
-======================================================================
-
-    1) Run it now
-    2) Save as a reusable workflow file
-    3) Edit a single answer
-    4) Start over from beginning
-    5) Quit
-    6) Show the exact command & workflow file
+What next?
+  1) Run it now
+  2) Change a setting
+  3) Show exact command and workflow file
+  4) Save as a reusable workflow file
+  5) Start over
 
   Number [1 | b=back | q=quit] > 5
+  Discard all answers and start over? [y/N | b=back | q=quit] > n
+
+------------------------------------------------------------------------------------------------
+Review your workflow                                                Progress [◼◼◼◼◼◼◼◼◼◼◼◼◻] 99%
+
+Plan
+  • Use local ja, en files in:
+    {TMP}/Show
+  • Clean up cues (single line, strip broadcast noise)
+  • Stack ja, en into one SRT file: *.ja-en.srt
+  • Use subtitle text size: Regular
+  • Save to:
+    {TMP}/Show
+
+Smart defaults
+  Display order   ja, en  (top → bottom on screen)
+  Timing master   ja  (first language)
+  Cleanup preset  on  (single-line cues + strip broadcast noise)
+  Output folder   beside source
+
+What next?
+  1) Run it now
+  2) Change a setting
+  3) Show exact command and workflow file
+  4) Save as a reusable workflow file
+  5) Start over
+
+  Number [1 | b=back | q=quit] > q
 Quit.
 ```
 
 </details>
 
-### path-21. Edit a single answer from final screen
+### path-21. Change a setting from final screen
 
 - Category: `edge`
 - Workflow: `modify`
@@ -3825,33 +3805,34 @@ Q6. Subtitle text size?                                             Progress [�
 
   Number [1 | b=back | q=quit] >
 
-======================================================================
-Here's the plan:
-======================================================================
-  • Use local ja, en files in {TMP}/Show
+------------------------------------------------------------------------------------------------
+Review your workflow                                                Progress [◼◼◼◼◼◼◼◼◼◼◼◼◻] 99%
+
+Plan
+  • Use local ja, en files in:
+    {TMP}/Show
   • Clean up cues (single line, strip broadcast noise)
-  • Stack ja, en into one SRT file → *.ja-en.srt
+  • Stack ja, en into one SRT file: *.ja-en.srt
   • Use subtitle text size: Regular
-  • Save to {TMP}/Show
-======================================================================
-Smart defaults filled in for you (edit via 'Edit a single answer'):
-======================================================================
+  • Save to:
+    {TMP}/Show
+
+Smart defaults
   Display order   ja, en  (top → bottom on screen)
   Timing master   ja  (first language)
   Cleanup preset  on  (single-line cues + strip broadcast noise)
-  Output folder   {TMP}/Show  (beside source)
-======================================================================
+  Output folder   beside source
 
-    1) Run it now
-    2) Save as a reusable workflow file
-    3) Edit a single answer
-    4) Start over from beginning
-    5) Quit
-    6) Show the exact command & workflow file
+What next?
+  1) Run it now
+  2) Change a setting
+  3) Show exact command and workflow file
+  4) Save as a reusable workflow file
+  5) Start over
 
-  Number [1 | b=back | q=quit] > 3
+  Number [1 | b=back | q=quit] > 2
 
-Your answers so far:
+Current settings
   1) steps: modify + merge
   2) source: path — {TMP}/Show
   3) languages: ja, en
@@ -3881,7 +3862,7 @@ Q1. What would you like to do?
   Numbers or ranges, or Enter for default [1-4 | q=quit] > 3
     Selected: modify.
 
-Your answers so far:
+Current settings
   1) steps: modify
   2) source: path — {TMP}/Show
   3) languages: ja, en
@@ -3891,41 +3872,39 @@ Your answers so far:
 
   Number to change (1-6), or 'done' [done | b=back | q=quit] > done
 
-======================================================================
-Here's the plan:
-======================================================================
-  • Use local ja, en files in {TMP}/Show
+------------------------------------------------------------------------------------------------
+Review your workflow                                                Progress [◼◼◼◼◼◼◼◼◼◼◼◼◻] 99%
+
+Plan
+  • Use local ja, en files in:
+    {TMP}/Show
   • Clean up cues (single line, strip broadcast noise)
-  • Save to {TMP}/Show
-======================================================================
+  • Save to:
+    {TMP}/Show
 
-    1) Run it now
-    2) Save as a reusable workflow file
-    3) Edit a single answer
-    4) Start over from beginning
-    5) Quit
-    6) Show the exact command & workflow file
+What next?
+  1) Run it now
+  2) Change a setting
+  3) Show exact command and workflow file
+  4) Save as a reusable workflow file
+  5) Start over
 
-  Number [1 | b=back | q=quit] > 2
+  Number [1 | b=back | q=quit] > 4
 
 
   Save to (relative paths OK) [getsubtitle-workflow.toml] > {TMP}/edited.toml
-Saved: {TMP}/edited.toml
 
-Your edited.toml runs the same workflow as this command:
-  # getsubtitle modify {TMP}/Show --strip-cc-noise --single-line
+Saved workflow:
+  {TMP}/edited.toml
 
-Run it later with:
+Run later:
   getsubtitle --config {TMP}/edited.toml
 
-You can recycle this TOML and override saved settings with extra CLI flags.
-For example, reuse the same language, reading-aid, translation, and merge
-choices on another show or season:
-  getsubtitle --config {TMP}/edited.toml --source 'https://www.imdb.com/title/tt1234567/' --season 3 --episode all --output "$HOME/Downloads/GetSubtitle/TV Show/Season 03"
+    1) Show exact command
+    2) Open containing folder
+    3) Done
 
-CLI flags win over matching TOML settings, so the file can stay as a reusable template.
-
-  Open folder containing edited.toml? [Y/n] > n
+  Number [3] > n
 ```
 
 </details>
@@ -3994,18 +3973,15 @@ Q3. Enter the URL.                                                  Progress [�
 ------------------------------------------------------------------------------------------------
 Q4. What episode scope?                                             Progress [◼◼◼◼◼◼◻◻◻◻◻◻◻] 50%
 
-    1) One TV episode — Season 1 Episode 1
-    2) A specific season + episode (or range)
-    3) Whole season, every episode (-e all)
-    4) Auto — let getsubtitle infer from the URL/title metadata
+    1) Specific season + episode (or range)
+       Defaults to Season 1 Episode 1.
+    2) Whole season, every episode (-e all)
+    3) Auto — let getsubtitle infer from the URL/title metadata
        (anime URLs typically resolve to single episodes; movies to a
         single item; TV without -e usually picks S01E01)
 
-  Number [4 | b=back | q=quit] > 2
-
-  Season or range (e.g. 1, 2-3, all) [1 | b=back | q=quit] > 1
-
-  Episode or range within each season (e.g. 5, 1-10, all) [1 | b=back | q=quit] > 1
+  Number [3 | b=back | q=quit] > 2
+    (Note: -e all on non-anime TV requires a TMDB key. Run `getsubtitle --set-key tmdb` later if needed.)
 
 ------------------------------------------------------------------------------------------------
 Q5. Which subtitle languages do you want to collect?                Progress [◼◼◼◼◼◼◼◼◻◻◻◻◻] 64%
@@ -4016,6 +3992,14 @@ Q5. Which subtitle languages do you want to collect?                Progress [�
       ja,en : Japanese on top and English below (optional furigana support)
       ko,en,es : Korean on top, then English and Spanish (optional romanization support)
       japanese,korean,english,spanish : 2-letter codes and full language names both work
+
+  Languages (comma-separated) [ja,en | b=back | q=quit] > 1
+    I don't recognize: 1
+    Use 2-letter codes or full names, like ja,en or japanese,korean,english.
+
+  Languages (comma-separated) [ja,en | b=back | q=quit] > 1
+    I don't recognize: 1
+    Use 2-letter codes or full names, like ja,en or japanese,korean,english.
 
   Languages (comma-separated) [ja,en | b=back | q=quit] > ja,en
 
@@ -4082,54 +4066,51 @@ Q8. Subtitle text size?                                             Progress [�
 
   Number [1 | b=back | q=quit] >
 
-======================================================================
-Here's the plan:
-======================================================================
-  • Fetch ja, en for https://www.imdb.com/title/tt28299608/  (season 1, episode 1)
+------------------------------------------------------------------------------------------------
+Review your workflow                                                Progress [◼◼◼◼◼◼◼◼◼◼◼◼◻] 99%
+
+Plan
+  • Fetch ja, en for:
+    https://www.imdb.com/title/tt28299608/  (season 1, episode all)
   • Clean up cues (single line, strip broadcast noise)
-  • Stack ja, en into one SRT file → *.ja-en.srt
+  • Stack ja, en into one SRT file: *.ja-en.srt
   • Use subtitle text size: Regular
-  • Save to ~/Downloads/GetSubtitle
-======================================================================
-Before running:
-======================================================================
-  ⚠ Japanese subtitles can be harder to find automatically; manual search or translation may be needed.
-======================================================================
-Smart defaults filled in for you (edit via 'Edit a single answer'):
-======================================================================
+  • Save to:
+    ~/Downloads/GetSubtitle
+
+Before you run
+  ⚠ Japanese subtitles can be harder to find automatically; manual
+    search or translation may be needed.
+
+Smart defaults
   Display order   ja, en  (top → bottom on screen)
   Timing master   ja  (first language)
   Cleanup preset  on  (single-line cues + strip broadcast noise)
   Output folder   ~/Downloads/GetSubtitle
-======================================================================
 
-    1) Run it now
-    2) Save as a reusable workflow file
-    3) Edit a single answer
-    4) Start over from beginning
-    5) Quit
-    6) Show the exact command & workflow file
+What next?
+  1) Run it now
+  2) Change a setting
+  3) Show exact command and workflow file
+  4) Save as a reusable workflow file
+  5) Start over
 
-  Number [2 | b=back | q=quit] > 2
+  Number [4 | b=back | q=quit] > 4
 
 
   Save to (relative paths OK) [getsubtitle-workflow.toml] > {TMP}/saved.toml
-Saved: {TMP}/saved.toml
 
-Your saved.toml runs the same workflow as this command:
-  # getsubtitle --fetch https://www.imdb.com/title/tt28299608/ --season 1 --episode 1 --languages ja,en --no-engine --modify --season 1 --episode 1 --strip-cc-noise --single-line --merge --languages ja,en --season 1 --episode 1 --format srt --font-size regular --output ~/Downloads/GetSubtitle
+Saved workflow:
+  {TMP}/saved.toml
 
-Run it later with:
+Run later:
   getsubtitle --config {TMP}/saved.toml
 
-You can recycle this TOML and override saved settings with extra CLI flags.
-For example, reuse the same language, reading-aid, translation, and merge
-choices on another show or season:
-  getsubtitle --config {TMP}/saved.toml --source 'https://www.imdb.com/title/tt1234567/' --season 3 --episode all --output "$HOME/Downloads/GetSubtitle/TV Show/Season 03"
+    1) Show exact command
+    2) Open containing folder
+    3) Done
 
-CLI flags win over matching TOML settings, so the file can stay as a reusable template.
-
-  Open folder containing saved.toml? [Y/n] > n
+  Number [3] > n
 ```
 
 </details>
@@ -4264,41 +4245,50 @@ Q6. Subtitle text size?                                             Progress [�
 
   Number [1 | b=back | q=quit] >
 
-======================================================================
-Here's the plan:
-======================================================================
-  • Use local ja, en files in {TMP}/Show
+------------------------------------------------------------------------------------------------
+Review your workflow                                                Progress [◼◼◼◼◼◼◼◼◼◼◼◼◻] 99%
+
+Plan
+  • Use local ja, en files in:
+    {TMP}/Show
   • Clean up cues (single line, strip broadcast noise)
-  • Stack ja, en into one SRT file → *.ja-en.srt
+  • Stack ja, en into one SRT file: *.ja-en.srt
   • Use subtitle text size: Regular
-  • Save to {TMP}/Show
-======================================================================
-Smart defaults filled in for you (edit via 'Edit a single answer'):
-======================================================================
+  • Save to:
+    {TMP}/Show
+
+Smart defaults
   Display order   ja, en  (top → bottom on screen)
   Timing master   ja  (first language)
   Cleanup preset  on  (single-line cues + strip broadcast noise)
-  Output folder   {TMP}/Show  (beside source)
-======================================================================
+  Output folder   beside source
 
-    1) Run it now
-    2) Save as a reusable workflow file
-    3) Edit a single answer
-    4) Start over from beginning
-    5) Quit
-    6) Show the exact command & workflow file
+What next?
+  1) Run it now
+  2) Change a setting
+  3) Show exact command and workflow file
+  4) Save as a reusable workflow file
+  5) Start over
 
-  Number [1 | b=back | q=quit] > 2
+  Number [1 | b=back | q=quit] > 4
 
 
   Save to (relative paths OK) [getsubtitle-workflow.toml] > {TMP}/Reusable.toml
-Saved: {TMP}/Reusable.toml
 
-Your Reusable.toml runs the same workflow as this command:
-  # getsubtitle --source {TMP}/Show --modify --strip-cc-noise --single-line --merge --languages ja,en --format srt --font-size regular --output {TMP}/Show
+Saved workflow:
+  {TMP}/Reusable.toml
 
-Run it later with:
+Run later:
   getsubtitle --config {TMP}/Reusable.toml
+
+    1) Show exact command
+    2) Open containing folder
+    3) Done
+
+  Number [3] > 1
+
+Exact command:
+  # getsubtitle --source {TMP}/Show --modify --strip-cc-noise --single-line --merge --languages ja,en --format srt --font-size regular --output {TMP}/Show
 
 You can recycle this TOML and override saved settings with extra CLI flags.
 For example, reuse the same language, reading-aid, translation, and merge
@@ -4307,7 +4297,17 @@ choices on another show or season:
 
 CLI flags win over matching TOML settings, so the file can stay as a reusable template.
 
-  Open folder containing Reusable.toml? [Y/n] > n
+    1) Show exact command
+    2) Open containing folder
+    3) Done
+
+  Number [3] > 2
+
+    1) Show exact command
+    2) Open containing folder
+    3) Done
+
+  Number [3] > 3
 ```
 
 </details>
@@ -4376,18 +4376,15 @@ Q3. Enter the URL.                                                  Progress [�
 ------------------------------------------------------------------------------------------------
 Q4. What episode scope?                                             Progress [◼◼◼◼◼◼◻◻◻◻◻◻◻] 50%
 
-    1) One TV episode — Season 1 Episode 1
-    2) A specific season + episode (or range)
-    3) Whole season, every episode (-e all)
-    4) Auto — let getsubtitle infer from the URL/title metadata
+    1) Specific season + episode (or range)
+       Defaults to Season 1 Episode 1.
+    2) Whole season, every episode (-e all)
+    3) Auto — let getsubtitle infer from the URL/title metadata
        (anime URLs typically resolve to single episodes; movies to a
         single item; TV without -e usually picks S01E01)
 
-  Number [4 | b=back | q=quit] > 2
-
-  Season or range (e.g. 1, 2-3, all) [1 | b=back | q=quit] > 1
-
-  Episode or range within each season (e.g. 5, 1-10, all) [1 | b=back | q=quit] > 1
+  Number [3 | b=back | q=quit] > 2
+    (Note: -e all on non-anime TV requires a TMDB key. Run `getsubtitle --set-key tmdb` later if needed.)
 
 ------------------------------------------------------------------------------------------------
 Q5. Which subtitle languages do you want to collect?                Progress [◼◼◼◼◼◼◼◼◻◻◻◻◻] 64%
@@ -4398,6 +4395,14 @@ Q5. Which subtitle languages do you want to collect?                Progress [�
       ja,en : Japanese on top and English below (optional furigana support)
       ko,en,es : Korean on top, then English and Spanish (optional romanization support)
       japanese,korean,english,spanish : 2-letter codes and full language names both work
+
+  Languages (comma-separated) [ja,en | b=back | q=quit] > 1
+    I don't recognize: 1
+    Use 2-letter codes or full names, like ja,en or japanese,korean,english.
+
+  Languages (comma-separated) [ja,en | b=back | q=quit] > 1
+    I don't recognize: 1
+    Use 2-letter codes or full names, like ja,en or japanese,korean,english.
 
   Languages (comma-separated) [ja,en | b=back | q=quit] > ja,en
 
@@ -4452,60 +4457,54 @@ Q7. Final output format.                                            Progress [�
 
     Suggested default: VTT — VTT supports true Japanese ruby in browsers/asbplayer; local players vary.
 
-    Reading-aid notes:
-      VTT can show true ruby above Japanese text in browsers/asbplayer.
-      SRT/SMI/ASS use fallback reading-aid layouts instead.
-
   Final format [3 | b=back | q=quit] >
 
-======================================================================
-Here's the plan:
-======================================================================
-  • Fetch ja, en for https://www.imdb.com/title/tt28299608/  (season 1, episode 1)
+------------------------------------------------------------------------------------------------
+Review your workflow                                                Progress [◼◼◼◼◼◼◼◼◼◼◼◼◻] 99%
+
+Plan
+  • Fetch ja, en for:
+    https://www.imdb.com/title/tt28299608/  (season 1, episode all)
   • Add reading aids: ja:hiragana
-  • Stack ja, en into one VTT file → *.ja-en.vtt
-  • Save to ~/Downloads/GetSubtitle
-======================================================================
-Before running:
-======================================================================
-  ⚠ Japanese subtitles can be harder to find automatically; manual search or translation may be needed.
-  ⚠ VTT reading aids work best in browsers/asbplayer; local player support varies.
-======================================================================
-Smart defaults filled in for you (edit via 'Edit a single answer'):
-======================================================================
+  • Stack ja, en into one VTT file: *.ja-en.vtt
+  • Save to:
+    ~/Downloads/GetSubtitle
+
+Before you run
+  ⚠ Japanese subtitles can be harder to find automatically; manual
+    search or translation may be needed.
+  ⚠ VTT reading aids work best in browsers/asbplayer; local player
+    support varies.
+
+Smart defaults
   Display order   ja, en  (top → bottom on screen)
   Timing master   ja  (first language)
   Cleanup preset  on  (single-line cues + strip broadcast noise)
   Output folder   ~/Downloads/GetSubtitle
-======================================================================
 
-    1) Run it now
-    2) Save as a reusable workflow file
-    3) Edit a single answer
-    4) Start over from beginning
-    5) Quit
-    6) Show the exact command & workflow file
+What next?
+  1) Run it now
+  2) Change a setting
+  3) Show exact command and workflow file
+  4) Save as a reusable workflow file
+  5) Start over
 
-  Number [2 | b=back | q=quit] >
+  Number [4 | b=back | q=quit] >
 
 
   Save to (relative paths OK) [getsubtitle-workflow.toml] > {TMP}/url-first.toml
-Saved: {TMP}/url-first.toml
 
-Your url-first.toml runs the same workflow as this command:
-  # getsubtitle --fetch https://www.imdb.com/title/tt28299608/ --season 1 --episode 1 --languages ja,en --no-engine --modify --season 1 --episode 1 --strip-cc-noise --single-line --reading ja:hiragana --reading-format vtt --merge --languages ja,en --season 1 --episode 1 --reading ja:hiragana --format vtt --output ~/Downloads/GetSubtitle
+Saved workflow:
+  {TMP}/url-first.toml
 
-Run it later with:
+Run later:
   getsubtitle --config {TMP}/url-first.toml
 
-You can recycle this TOML and override saved settings with extra CLI flags.
-For example, reuse the same language, reading-aid, translation, and merge
-choices on another show or season:
-  getsubtitle --config {TMP}/url-first.toml --source 'https://www.imdb.com/title/tt1234567/' --season 3 --episode all --output "$HOME/Downloads/GetSubtitle/TV Show/Season 03"
+    1) Show exact command
+    2) Open containing folder
+    3) Done
 
-CLI flags win over matching TOML settings, so the file can stay as a reusable template.
-
-  Open folder containing url-first.toml? [Y/n] > n
+  Number [3] > n
 ```
 
 </details>
@@ -4574,17 +4573,14 @@ Q3. Enter the URL.                                                  Progress [�
 ------------------------------------------------------------------------------------------------
 Q4. What episode scope?                                             Progress [◼◼◼◼◼◼◻◻◻◻◻◻◻] 44%
 
-    1) One TV episode — Season 1 Episode 1
-    2) A specific season + episode (or range)
-    3) Whole season, every episode (-e all)
-    4) Auto — let getsubtitle infer from the URL/title metadata
+    1) Specific season + episode (or range)
+       Defaults to Season 1 Episode 1.
+    2) Whole season, every episode (-e all)
+    3) Auto — let getsubtitle infer from the URL/title metadata
        (anime URLs typically resolve to single episodes; movies to a
         single item; TV without -e usually picks S01E01)
 
-  Number [4 | b=back | q=quit] > 1
-    This selected source looks like a TV/show result, not a movie.
-    If you meant a movie, type 'b' and choose the movie result from title search.
-    For this TV/show source, I will use Season 1 Episode 1.
+  Number [3 | b=back | q=quit] > 3
 
 ------------------------------------------------------------------------------------------------
 Q5. Which subtitle languages do you want to collect?                Progress [◼◼◼◼◼◼◼◻◻◻◻◻◻] 56%
@@ -4671,55 +4667,52 @@ Q9. Subtitle text size?                                             Progress [�
 
   Number [1 | b=back | q=quit] >
 
-======================================================================
-Here's the plan:
-======================================================================
-  • Fetch ja, en for https://www.imdb.com/title/tt28299608/  (season 1, episode 1)
+------------------------------------------------------------------------------------------------
+Review your workflow                                                Progress [◼◼◼◼◼◼◼◼◼◼◼◼◻] 99%
+
+Plan
+  • Fetch ja, en for:
+    https://www.imdb.com/title/tt28299608/
   • Fill gaps with Deepl AI translation
   • Clean up cues (single line, strip broadcast noise)
-  • Stack ja, en into one SRT file → *.ja-en.srt
+  • Stack ja, en into one SRT file: *.ja-en.srt
   • Use subtitle text size: Regular
-  • Save to ~/Downloads/GetSubtitle
-======================================================================
-Before running:
-======================================================================
-  ⚠ Japanese subtitles can be harder to find automatically; manual search or translation may be needed.
-======================================================================
-Smart defaults filled in for you (edit via 'Edit a single answer'):
-======================================================================
+  • Save to:
+    ~/Downloads/GetSubtitle
+
+Before you run
+  ⚠ Japanese subtitles can be harder to find automatically; manual
+    search or translation may be needed.
+
+Smart defaults
   Display order   ja, en  (top → bottom on screen)
   Timing master   ja  (first language)
   Cleanup preset  on  (single-line cues + strip broadcast noise)
   Output folder   ~/Downloads/GetSubtitle
-======================================================================
 
-    1) Run it now
-    2) Save as a reusable workflow file
-    3) Edit a single answer
-    4) Start over from beginning
-    5) Quit
-    6) Show the exact command & workflow file
+What next?
+  1) Run it now
+  2) Change a setting
+  3) Show exact command and workflow file
+  4) Save as a reusable workflow file
+  5) Start over
 
-  Number [2 | b=back | q=quit] > 2
+  Number [4 | b=back | q=quit] > 4
 
 
   Save to (relative paths OK) [getsubtitle-workflow.toml] > {TMP}/deepl-flow.toml
-Saved: {TMP}/deepl-flow.toml
 
-Your deepl-flow.toml runs the same workflow as this command:
-  # getsubtitle --fetch https://www.imdb.com/title/tt28299608/ --season 1 --episode 1 --languages ja,en --translate deepl --season 1 --episode 1 --modify --season 1 --episode 1 --strip-cc-noise --single-line --merge --languages ja,en --season 1 --episode 1 --format srt --font-size regular --output ~/Downloads/GetSubtitle
+Saved workflow:
+  {TMP}/deepl-flow.toml
 
-Run it later with:
+Run later:
   getsubtitle --config {TMP}/deepl-flow.toml
 
-You can recycle this TOML and override saved settings with extra CLI flags.
-For example, reuse the same language, reading-aid, translation, and merge
-choices on another show or season:
-  getsubtitle --config {TMP}/deepl-flow.toml --source 'https://www.imdb.com/title/tt1234567/' --season 3 --episode all --output "$HOME/Downloads/GetSubtitle/TV Show/Season 03"
+    1) Show exact command
+    2) Open containing folder
+    3) Done
 
-CLI flags win over matching TOML settings, so the file can stay as a reusable template.
-
-  Open folder containing deepl-flow.toml? [Y/n] > n
+  Number [3] > n
 ```
 
 </details>
@@ -4870,29 +4863,30 @@ Q8. Subtitle text size?                                             Progress [�
 
   Number [1 | b=back | q=quit] >
 
-======================================================================
-Here's the plan:
-======================================================================
-  • Fetch ja, en for {TMP}/Foo
+------------------------------------------------------------------------------------------------
+Review your workflow                                                Progress [◼◼◼◼◼◼◼◼◼◼◼◼◻] 99%
+
+Plan
+  • Fetch ja, en for:
+    {TMP}/Foo
   • Clean up cues (single line, strip broadcast noise)
-  • Stack ja, en into one SRT file → *.ja-en.srt
+  • Stack ja, en into one SRT file: *.ja-en.srt
   • Use subtitle text size: Regular
-  • Save to {TMP}/Foo
-======================================================================
-Smart defaults filled in for you (edit via 'Edit a single answer'):
-======================================================================
+  • Save to:
+    {TMP}/Foo
+
+Smart defaults
   Display order   ja, en  (top → bottom on screen)
   Timing master   ja  (first language)
   Cleanup preset  on  (single-line cues + strip broadcast noise)
-  Output folder   {TMP}/Foo  (beside source)
-======================================================================
+  Output folder   beside source
 
-    1) Run it now
-    2) Save as a reusable workflow file
-    3) Edit a single answer
-    4) Start over from beginning
-    5) Quit
-    6) Show the exact command & workflow file
+What next?
+  1) Run it now
+  2) Change a setting
+  3) Show exact command and workflow file
+  4) Save as a reusable workflow file
+  5) Start over
 
   Number [1 | b=back | q=quit] >
 
@@ -4901,24 +4895,20 @@ Preflight check — 1 item(s) to know about:
       Why: Heads-up — no action needed before running.
       Fix: Fast scan checked 2 subtitle candidate(s).
 
+------------------------------------------------------------------------------------------------
 Running:
-  getsubtitle --fetch {TMP}/Foo --languages ja,en --modify --strip-cc-noise --single-line --merge --languages ja,en --format srt --font-size regular --output {TMP}/Foo
+  getsubtitle --fetch {TMP}/Foo --languages ja,en --modify --strip-cc-noise --single-line --merge --format srt --font-size regular --output {TMP}/Foo
 
 
 ======================================================================
 Workflow summary
 ======================================================================
 Completed successfully
-Source: {TMP}/Foo
-Scope: auto / not specified
-Languages requested: ja, en
-Output folder: {TMP}/Foo
-Preflight info: 1
 
 Next steps:
   1. Merge later with: getsubtitle merge {TMP}/Foo -l ja,en
   2. Re-run this workflow command after any setup fixes:
-     getsubtitle --fetch {TMP}/Foo --languages ja,en --modify --strip-cc-noise --single-line --merge --languages ja,en --format srt --font-size regular --output {TMP}/Foo
+     getsubtitle --fetch {TMP}/Foo --languages ja,en --modify --strip-cc-noise --single-line --merge --format srt --font-size regular --output {TMP}/Foo
   Open folder? [Y/n] >
 ```
 
@@ -5042,59 +5032,52 @@ Q5. Final output format.                                            Progress [�
 
     Suggested default: VTT — VTT supports true Japanese ruby in browsers/asbplayer; local players vary.
 
-    Reading-aid notes:
-      VTT can show true ruby above Japanese text in browsers/asbplayer.
-      SRT/SMI/ASS use fallback reading-aid layouts instead.
-
   Final format [3 | b=back | q=quit] >
 
-======================================================================
-Here's the plan:
-======================================================================
-  • Use local ja, en files in {TMP}/Show
+------------------------------------------------------------------------------------------------
+Review your workflow                                                Progress [◼◼◼◼◼◼◼◼◼◼◼◼◻] 99%
+
+Plan
+  • Use local ja, en files in:
+    {TMP}/Show
   • Add reading aids: ja:hiragana
-  • Stack ja, en into one VTT file → *.ja-en.vtt
-  • Save to {TMP}/Show
-======================================================================
-Before running:
-======================================================================
-  ⚠ VTT reading aids work best in browsers/asbplayer; local player support varies.
-======================================================================
-Smart defaults filled in for you (edit via 'Edit a single answer'):
-======================================================================
+  • Stack ja, en into one VTT file: *.ja-en.vtt
+  • Save to:
+    {TMP}/Show
+
+Before you run
+  ⚠ VTT reading aids work best in browsers/asbplayer; local player
+    support varies.
+
+Smart defaults
   Display order   ja, en  (top → bottom on screen)
   Timing master   ja  (first language)
   Cleanup preset  on  (single-line cues + strip broadcast noise)
-  Output folder   {TMP}/Show  (beside source)
-======================================================================
+  Output folder   beside source
 
-    1) Run it now
-    2) Save as a reusable workflow file
-    3) Edit a single answer
-    4) Start over from beginning
-    5) Quit
-    6) Show the exact command & workflow file
+What next?
+  1) Run it now
+  2) Change a setting
+  3) Show exact command and workflow file
+  4) Save as a reusable workflow file
+  5) Start over
 
-  Number [1 | b=back | q=quit] > 2
+  Number [1 | b=back | q=quit] > 4
 
 
   Save to (relative paths OK) [getsubtitle-workflow.toml] > {TMP}/vtt-ja.toml
-Saved: {TMP}/vtt-ja.toml
 
-Your vtt-ja.toml runs the same workflow as this command:
-  # getsubtitle --source {TMP}/Show --modify --strip-cc-noise --single-line --reading ja:hiragana --reading-format vtt --merge --languages ja,en --reading ja:hiragana --format vtt --output {TMP}/Show
+Saved workflow:
+  {TMP}/vtt-ja.toml
 
-Run it later with:
+Run later:
   getsubtitle --config {TMP}/vtt-ja.toml
 
-You can recycle this TOML and override saved settings with extra CLI flags.
-For example, reuse the same language, reading-aid, translation, and merge
-choices on another show or season:
-  getsubtitle --config {TMP}/vtt-ja.toml --source 'https://www.imdb.com/title/tt1234567/' --season 3 --episode all --output "$HOME/Downloads/GetSubtitle/TV Show/Season 03"
+    1) Show exact command
+    2) Open containing folder
+    3) Done
 
-CLI flags win over matching TOML settings, so the file can stay as a reusable template.
-
-  Open folder containing vtt-ja.toml? [Y/n] > n
+  Number [3] > n
 ```
 
 </details>
@@ -5229,31 +5212,32 @@ Q6. Subtitle text size?                                             Progress [�
 
   Number [1 | b=back | q=quit] >
 
-======================================================================
-Here's the plan:
-======================================================================
-  • Use local ja, en files in {TMP}/Show
+------------------------------------------------------------------------------------------------
+Review your workflow                                                Progress [◼◼◼◼◼◼◼◼◼◼◼◼◻] 99%
+
+Plan
+  • Use local ja, en files in:
+    {TMP}/Show
   • Clean up cues (single line, strip broadcast noise)
-  • Stack ja, en into one SRT file → *.ja-en.srt
+  • Stack ja, en into one SRT file: *.ja-en.srt
   • Use subtitle text size: Regular
-  • Save to {TMP}/Show
-======================================================================
-Smart defaults filled in for you (edit via 'Edit a single answer'):
-======================================================================
+  • Save to:
+    {TMP}/Show
+
+Smart defaults
   Display order   ja, en  (top → bottom on screen)
   Timing master   ja  (first language)
   Cleanup preset  on  (single-line cues + strip broadcast noise)
-  Output folder   {TMP}/Show  (beside source)
-======================================================================
+  Output folder   beside source
 
-    1) Run it now
-    2) Save as a reusable workflow file
-    3) Edit a single answer
-    4) Start over from beginning
-    5) Quit
-    6) Show the exact command & workflow file
+What next?
+  1) Run it now
+  2) Change a setting
+  3) Show exact command and workflow file
+  4) Save as a reusable workflow file
+  5) Start over
 
-  Number [1 | b=back | q=quit] > 5
+  Number [1 | b=back | q=quit] > q
 Quit.
 ```
 
@@ -5378,49 +5362,46 @@ Q5. Subtitle text size?                                             Progress [�
 
   Number [1 | b=back | q=quit] >
 
-======================================================================
-Here's the plan:
-======================================================================
-  • Use local ja, en files in {TMP}/Totoro
-  • Stack ja, en into one SRT file → *.ja-en.srt
+------------------------------------------------------------------------------------------------
+Review your workflow                                                Progress [◼◼◼◼◼◼◼◼◼◼◼◼◻] 99%
+
+Plan
+  • Use local ja, en files in:
+    {TMP}/Totoro
+  • Stack ja, en into one SRT file: *.ja-en.srt
   • Use subtitle text size: Regular
-  • Save to {TMP}/Totoro
-======================================================================
-Smart defaults filled in for you (edit via 'Edit a single answer'):
-======================================================================
+  • Save to:
+    {TMP}/Totoro
+
+Smart defaults
   Display order   ja, en  (top → bottom on screen)
   Timing master   ja  (first language)
   Cleanup preset  on  (single-line cues + strip broadcast noise)
-  Output folder   {TMP}/Totoro  (beside source)
-======================================================================
+  Output folder   beside source
 
-    1) Run it now
-    2) Save as a reusable workflow file
-    3) Edit a single answer
-    4) Start over from beginning
-    5) Quit
-    6) Show the exact command & workflow file
+What next?
+  1) Run it now
+  2) Change a setting
+  3) Show exact command and workflow file
+  4) Save as a reusable workflow file
+  5) Start over
 
-  Number [1 | b=back | q=quit] > 2
+  Number [1 | b=back | q=quit] > 4
 
 
   Save to (relative paths OK) [getsubtitle-workflow.toml] > {TMP}/totoro.toml
-Saved: {TMP}/totoro.toml
 
-Your totoro.toml runs the same workflow as this command:
-  # getsubtitle merge {TMP}/Totoro --languages ja,en --format srt --font-size regular --output {TMP}/Totoro
+Saved workflow:
+  {TMP}/totoro.toml
 
-Run it later with:
+Run later:
   getsubtitle --config {TMP}/totoro.toml
 
-You can recycle this TOML and override saved settings with extra CLI flags.
-For example, reuse the same language, reading-aid, translation, and merge
-choices on another show or season:
-  getsubtitle --config {TMP}/totoro.toml --source 'https://www.imdb.com/title/tt1234567/' --season 3 --episode all --output "$HOME/Downloads/GetSubtitle/TV Show/Season 03"
+    1) Show exact command
+    2) Open containing folder
+    3) Done
 
-CLI flags win over matching TOML settings, so the file can stay as a reusable template.
-
-  Open folder containing totoro.toml? [Y/n] > n
+  Number [3] > n
 ```
 
 </details>
@@ -5555,29 +5536,30 @@ Q6. Subtitle text size?                                             Progress [�
 
   Number [1 | b=back | q=quit] >
 
-======================================================================
-Here's the plan:
-======================================================================
-  • Use local ja, en files in {TMP}/Show
+------------------------------------------------------------------------------------------------
+Review your workflow                                                Progress [◼◼◼◼◼◼◼◼◼◼◼◼◻] 99%
+
+Plan
+  • Use local ja, en files in:
+    {TMP}/Show
   • Clean up cues (single line, strip broadcast noise)
-  • Stack ja, en into one SRT file → *.ja-en.srt
+  • Stack ja, en into one SRT file: *.ja-en.srt
   • Use subtitle text size: Regular
-  • Save to {TMP}/Show
-======================================================================
-Smart defaults filled in for you (edit via 'Edit a single answer'):
-======================================================================
+  • Save to:
+    {TMP}/Show
+
+Smart defaults
   Display order   ja, en  (top → bottom on screen)
   Timing master   ja  (first language)
   Cleanup preset  on  (single-line cues + strip broadcast noise)
-  Output folder   {TMP}/Show  (beside source)
-======================================================================
+  Output folder   beside source
 
-    1) Run it now
-    2) Save as a reusable workflow file
-    3) Edit a single answer
-    4) Start over from beginning
-    5) Quit
-    6) Show the exact command & workflow file
+What next?
+  1) Run it now
+  2) Change a setting
+  3) Show exact command and workflow file
+  4) Save as a reusable workflow file
+  5) Start over
 
   Number [1 | b=back | q=quit] > 1
 
@@ -5589,6 +5571,7 @@ Preflight check — 2 item(s) to know about:
       Why: Optional — the run works, but may fail or look worse without it.
       Fix: S01E01 -> Show - S01E01.ja-en.srt. Choose a different output folder, remove old files, or run from CLI with --force.
 
+------------------------------------------------------------------------------------------------
 Running:
   getsubtitle --source {TMP}/Show --modify --strip-cc-noise --single-line --merge --languages ja,en --format srt --font-size regular --output {TMP}/Show
 
@@ -5597,12 +5580,6 @@ Running:
 Workflow summary
 ======================================================================
 Completed successfully
-Source: {TMP}/Show
-Scope: auto / not specified
-Languages requested: ja, en
-Output folder: {TMP}/Show
-Preflight warnings: 1
-Preflight info: 1
 
 Next steps:
   1. Merge later with: getsubtitle merge {TMP}/Show -l ja,en
@@ -5743,29 +5720,30 @@ Q6. Subtitle text size?                                             Progress [�
 
   Number [1 | b=back | q=quit] >
 
-======================================================================
-Here's the plan:
-======================================================================
-  • Use local ja, en files in {TMP}/Show
+------------------------------------------------------------------------------------------------
+Review your workflow                                                Progress [◼◼◼◼◼◼◼◼◼◼◼◼◻] 99%
+
+Plan
+  • Use local ja, en files in:
+    {TMP}/Show
   • Clean up cues (single line, strip broadcast noise)
-  • Stack ja, en into one SRT file → *.ja-en.srt
+  • Stack ja, en into one SRT file: *.ja-en.srt
   • Use subtitle text size: Regular
-  • Save to {TMP}/Show
-======================================================================
-Smart defaults filled in for you (edit via 'Edit a single answer'):
-======================================================================
+  • Save to:
+    {TMP}/Show
+
+Smart defaults
   Display order   ja, en  (top → bottom on screen)
   Timing master   ja  (first language)
   Cleanup preset  on  (single-line cues + strip broadcast noise)
-  Output folder   {TMP}/Show  (beside source)
-======================================================================
+  Output folder   beside source
 
-    1) Run it now
-    2) Save as a reusable workflow file
-    3) Edit a single answer
-    4) Start over from beginning
-    5) Quit
-    6) Show the exact command & workflow file
+What next?
+  1) Run it now
+  2) Change a setting
+  3) Show exact command and workflow file
+  4) Save as a reusable workflow file
+  5) Start over
 
   Number [1 | b=back | q=quit] > 1
 
@@ -5774,6 +5752,7 @@ Preflight check — 1 item(s) to know about:
       Why: Optional — the run works, but may fail or look worse without it.
       Fix: S01E02 missing en
 
+------------------------------------------------------------------------------------------------
 Running:
   getsubtitle --source {TMP}/Show --modify --strip-cc-noise --single-line --merge --languages ja,en --format srt --font-size regular --output {TMP}/Show
 
@@ -5782,11 +5761,6 @@ Running:
 Workflow summary
 ======================================================================
 Completed successfully
-Source: {TMP}/Show
-Scope: auto / not specified
-Languages requested: ja, en
-Output folder: {TMP}/Show
-Preflight warnings: 1
 
 Next steps:
   1. Merge later with: getsubtitle merge {TMP}/Show -l ja,en
@@ -5916,28 +5890,29 @@ Q5. Subtitle text size?                                             Progress [�
 
   Number [1 | b=back | q=quit] >
 
-======================================================================
-Here's the plan:
-======================================================================
-  • Use local ja, en files in {TMP}/Show
-  • Stack ja, en into one SRT file → *.ja-en.srt
+------------------------------------------------------------------------------------------------
+Review your workflow                                                Progress [◼◼◼◼◼◼◼◼◼◼◼◼◻] 99%
+
+Plan
+  • Use local ja, en files in:
+    {TMP}/Show
+  • Stack ja, en into one SRT file: *.ja-en.srt
   • Use subtitle text size: Regular
-  • Save to {TMP}/Show
-======================================================================
-Smart defaults filled in for you (edit via 'Edit a single answer'):
-======================================================================
+  • Save to:
+    {TMP}/Show
+
+Smart defaults
   Display order   ja, en  (top → bottom on screen)
   Timing master   ja  (first language)
   Cleanup preset  on  (single-line cues + strip broadcast noise)
-  Output folder   {TMP}/Show  (beside source)
-======================================================================
+  Output folder   beside source
 
-    1) Run it now
-    2) Save as a reusable workflow file
-    3) Edit a single answer
-    4) Start over from beginning
-    5) Quit
-    6) Show the exact command & workflow file
+What next?
+  1) Run it now
+  2) Change a setting
+  3) Show exact command and workflow file
+  4) Save as a reusable workflow file
+  5) Start over
 
   Number [1 | b=back | q=quit] > 1
 
@@ -5946,6 +5921,7 @@ Preflight check — 1 item(s) to know about:
       Why: Optional — the run works, but may fail or look worse without it.
       Fix: Check the folder path, extract MKV subtitles, or fetch/download subtitles first.
 
+------------------------------------------------------------------------------------------------
 Running:
   getsubtitle merge {TMP}/Show --languages ja,en --format srt --font-size regular --output {TMP}/Show
 
@@ -5954,11 +5930,6 @@ Running:
 Workflow summary
 ======================================================================
 Completed successfully
-Source: {TMP}/Show
-Scope: auto / not specified
-Languages requested: ja, en
-Output folder: {TMP}/Show
-Preflight warnings: 1
 
 Next steps:
   1. Merge later with: getsubtitle merge {TMP}/Show -l ja,en

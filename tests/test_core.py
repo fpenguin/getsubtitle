@@ -459,7 +459,7 @@ def test_no_subtitle_recovery_timeout_recommends_retry_first(monkeypatch, capsys
     assert "Could not search for subtitles" in out
     assert "Possible cause:\n  A subtitle provider did not respond." in out
     assert "Open subtitle search pages now? [y/N]" in out
-    assert "Try again later" in out
+    assert "What you can do" in out
     assert "Retry the search in a few minutes." in out
     assert "Show technical details? [y/N]" in out
     assert "Download subtitles manually." not in out
@@ -5974,6 +5974,44 @@ def test_pipeline_translate_inherits_fetch_languages_and_owns_mt_for_url_fetch()
     assert "--mt-source" not in tr_args
 
 
+def test_pipeline_merge_inherits_fetch_languages_when_omitted():
+    import io, contextlib, tempfile
+    captured: dict[str, list[str]] = {}
+    scope = MODULE["pipeline_main"].__globals__
+    saved_fetch = scope["fetch_main"]
+    saved_combine = scope["combine_main"]
+
+    def fake_fetch(argv):
+        captured["fetch"] = list(argv)
+        return 0
+
+    def fake_combine(argv):
+        captured["merge"] = list(argv)
+        return 0
+
+    scope["fetch_main"] = fake_fetch
+    scope["combine_main"] = fake_combine
+    try:
+        with tempfile.TemporaryDirectory() as tmp, _isolated_config(None), contextlib.redirect_stdout(io.StringIO()):
+            rc = MODULE["main"]([
+                "--fetch", "https://www.imdb.com/title/tt0245429/",
+                "--languages", "ja,ko",
+                "--merge", "--format", "vtt",
+                "--output", f"{tmp}/GetSubtitle",
+            ])
+        assert rc == 0
+    finally:
+        scope["fetch_main"] = saved_fetch
+        scope["combine_main"] = saved_combine
+
+    assert "--languages" in captured["fetch"]
+    merge_args = captured["merge"]
+    assert "--languages" in merge_args
+    assert merge_args[merge_args.index("--languages") + 1] == "ja,ko"
+    assert "--format" in merge_args
+    assert merge_args[merge_args.index("--format") + 1] == "vtt"
+
+
 def test_pipeline_translate_inherits_merge_languages_for_local_workflow():
     # Local wizard workflows can be translate + modify + merge with no fetch.
     # In that case the requested stack is already present on the merge block.
@@ -8680,8 +8718,26 @@ def test_wizard_emit_cli_uses_canonical_flags():
     # Translate engine is positional after --translate, not --mt-engine.
     assert "--translate" in cli
     assert cli[cli.index("--translate") + 1] == "ollama"
-    # --reading-format only emitted when VTT + ruby ja:* aids.
+    # Single Japanese reading aids are applied by merge in this full workflow,
+    # so the wizard does not emit a redundant modify --reading-format sidecar.
+    assert "--reading-format" not in cli
+
+
+def test_wizard_emit_cli_modify_only_keeps_reading_format_for_side_files():
+    state = _wizard_state(
+        source="/tmp/Show",
+        source_kind="path",
+        steps={"modify"},
+        reading_aids=["ja:hiragana"],
+        format="vtt",
+        asbplayer=False,
+    )
+    cli = MODULE["_wizard_emit_cli"](state)
+    assert cli[:3] == ["getsubtitle", "modify", "/tmp/Show"]
+    assert "--reading" in cli
+    assert cli[cli.index("--reading") + 1] == "ja:hiragana"
     assert "--reading-format" in cli
+    assert cli[cli.index("--reading-format") + 1] == "vtt"
 
 
 def test_wizard_emit_toml_uses_canonical_keys():
@@ -8793,6 +8849,36 @@ def test_wizard_single_japanese_reading_reaches_merge_output():
     toml = MODULE["_wizard_emit_toml"](state)
     merge_block_text = toml.split("[merge]", 1)[1]
     assert 'reading = "ja:hiragana"' in merge_block_text
+
+
+def test_wizard_minimizes_cli_for_single_japanese_vtt_merge():
+    state = _wizard_state(
+        source="https://anilist.co/anime/196187/Super-no-Ura-de-Yani-Suu-Futari/",
+        source_kind="url",
+        languages=["ja", "ko"],
+        order=["ja", "ko"],
+        season="1",
+        episode="3-5",
+        mt_engine="",
+        reading_aids=["ja:hiragana"],
+        asbplayer=True,
+        format="vtt",
+        output="~/Downloads/GetSubtitle",
+        steps={"fetch", "modify", "merge"},
+    )
+    cli = MODULE["_wizard_emit_cli"](state)
+    assert cli.count("--languages") == 1
+    assert cli[cli.index("--languages") + 1] == "ja,ko"
+    assert "--reading-format" not in cli
+    modify_idx = cli.index("--modify")
+    merge_idx = cli.index("--merge")
+    assert "--reading" not in cli[modify_idx:merge_idx]
+    merge_block = cli[merge_idx:]
+    assert "--languages" not in merge_block
+    assert "--reading" in merge_block
+    assert merge_block[merge_block.index("--reading") + 1] == "ja:hiragana"
+    assert "--format" in merge_block
+    assert merge_block[merge_block.index("--format") + 1] == "vtt"
 
 
 def test_wizard_multiple_japanese_readings_expand_merge_variants():
@@ -10246,7 +10332,7 @@ def test_wizard_q11_banner_uses_fixed_70_char_rule():
     fn_g = MODULE["_wizard_q11_action"].__globals__
     saved_input = fn_g.get("input")
     try:
-        _seq = iter(["6", "1"])  # 6 = show exact command/workflow, then run
+        _seq = iter(["3", "1"])  # 3 = show exact command/workflow, then run
         fn_g["input"] = lambda *a, **k: next(_seq, "1")
         with contextlib.redirect_stdout(buf):
             MODULE["_wizard_q11_action"](s)
@@ -11527,6 +11613,60 @@ def test_wizard_back_history_ignores_silent_steps(monkeypatch):
     assert calls == ["a", "silent", "b", "a", "silent", "b"]
 
 
+def test_wizard_back_target_preserves_fetch_source_entry():
+    state = MODULE["_WizardState"](
+        steps={"fetch", "translate", "modify", "merge"},
+        source="https://anilist.co/anime/196187/Super-no-Ura-de-Yani-Suu-Futari/",
+        source_kind="url",
+        season="3-5",
+        episode="1",
+    )
+    idx = MODULE["_wizard_restore_back_target"](state, "source", "scope")
+    labels = [label for label, _fn in MODULE["_WIZARD_STEPS"]]
+
+    assert labels[idx] == "source"
+    assert state.source == ""
+    assert state.source_kind == "url"
+    assert getattr(state, "_source_entry_only") is True
+    assert state._qcount == MODULE["_wizard_qcount_before"](state, "source") + 1
+
+
+def test_wizard_source_entry_back_returns_to_source_type(monkeypatch):
+    """Once the wizard re-asks URL/title/path, another back returns to Q2."""
+    import contextlib
+    import io
+
+    state = MODULE["_WizardState"](
+        steps={"fetch", "translate", "modify", "merge"},
+        source_kind="url",
+    )
+    state._source_entry_only = True
+    state._qcount = MODULE["_wizard_qcount_before"](state, "source") + 1
+    calls: list[str] = []
+
+    def fake_prompt(label, default=None, **_kwargs):
+        calls.append(label)
+        if label == "URL":
+            raise MODULE["_WizardBack"]()
+        raise MODULE["_WizardAbort"]()
+
+    g = MODULE["_wizard_q1_source"].__globals__
+    monkeypatch.setitem(g, "_wizard_prompt", fake_prompt)
+    with contextlib.redirect_stdout(io.StringIO()) as buf:
+        try:
+            MODULE["_wizard_q1_source"](state)
+        except MODULE["_WizardAbort"]:
+            pass
+    out = buf.getvalue()
+
+    assert calls == ["URL", "Number"]
+    assert "Q3. Enter the URL." in out
+    assert "Going back to source type." in out
+    assert out.split("Going back to source type.")[-1].count(
+        "Q2. Where should we get subtitles from?"
+    ) == 1
+
+
 def test_wizard_smart_defaults_local_path_output_lands_beside_source():
     """Local-path sources output beside the source folder/file
     instead of the default ~/Downloads/GetSubtitle destination."""
@@ -11609,10 +11749,13 @@ def test_wizard_q11_banner_surfaces_smart_defaults():
     fn_g = MODULE["_wizard_q11_action"].__globals__
     saved = fn_g.get("input")
     try:
-        fn_g["input"] = lambda *a, **k: "5"  # pick quit
+        fn_g["input"] = lambda *a, **k: "q"  # quit
         buf = io.StringIO()
         with contextlib.redirect_stdout(buf):
-            MODULE["_wizard_q11_action"](s)
+            try:
+                MODULE["_wizard_q11_action"](s)
+            except MODULE["_WizardAbort"]:
+                pass
     finally:
         if saved is not None:
             fn_g["input"] = saved

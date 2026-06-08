@@ -47,7 +47,7 @@ SCENARIO = Scenario(
         "1",                                    # reading aids — skip
         "",                                     # format — accept recommended SRT
         "",                                     # font size — regular
-        "2",                                    # save (URL/title default)
+        "4",                                    # save (URL/title default)
         "{TMP}/mashle.toml",                    # save filename
         "n",                                    # decline open folder
     ],

@@ -46,3 +46,14 @@ getsubtitle -i
 Choose a URL, title, folder, or file; choose your languages; then let the wizard
 build the command. At the end you can run, save, edit, restart, quit, or show the
 exact command.
+
+## Browser Streaming
+
+For Netflix, Crunchyroll, and other browser-streaming study sessions,
+GetSubtitle should treat the page as a metadata source and workflow starter.
+It can use page/catalog IDs to improve subtitle search and create VTT files for
+asbplayer, but it does not bypass login, DRM, region locks, or service access
+controls.
+
+See [Netflix Helper](../NetflixHelper.md) for the planned Chrome-extension /
+standalone-helper design.

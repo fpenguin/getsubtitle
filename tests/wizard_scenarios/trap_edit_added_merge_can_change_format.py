@@ -24,12 +24,12 @@ SCENARIO = Scenario(
         "1",            # no reading aids
         "",             # format — accept recommended SRT first
         "",             # font size — regular
-        "3",            # action: edit a single answer
+        "2",            # action: change something
         "8",            # format / extension
         "2",            # ASS
         "",             # font size — regular for ASS
         "done",         # leave edit review
-        "5",            # quit; no run/save needed
+        "q",            # quit; no run/save needed
     ],
     expect_state={
         "steps": {"fetch", "modify", "merge"},

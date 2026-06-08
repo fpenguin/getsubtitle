@@ -15,7 +15,7 @@ SCENARIO = Scenario(
         "{TMP}/Foo.ja.srt",  # single .srt file
         "ja",           # languages
         "2",            # reading aids: pick #2 = ja:hiragana
-        "2",            # save
+        "4",            # save
         "{TMP}/single-file.toml",
         "n",            # decline open folder
     ],

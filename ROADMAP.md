@@ -98,6 +98,22 @@ final multi-language subtitle is readable enough to use for study.
 - v1.0 should not require users to understand provider internals, subtitle
   formats, or TOML before getting one useful multi-language subtitle file.
 
+## v0.9.6.2 — what's new
+
+- **Netflix Helper design spec.** Added `NetflixHelper.md`, a standalone
+  companion design for Netflix/asbplayer language-learning workflows. It
+  covers safe page metadata extraction, Chrome-extension and standalone-helper
+  options, multi-language and multi-episode batch planning, manifest/TOML
+  handoff to GetSubtitle, local bridge options, failure UX, and privacy
+  boundaries.
+- **Streaming-helper documentation.** README and docs now describe streaming
+  pages as metadata/workflow starters: useful for title IDs, episode ranges,
+  aliases, external subtitle search, and GetSubtitle workflow generation, not
+  direct logged-in subtitle scraping.
+- **Interactive wizard copy polish.** The final review now says "Change a
+  setting", "Before you run", and "What you can do" in recovery flows, with
+  transcripts and UX audit artifacts regenerated from the harness.
+
 ## v0.9.6.1 — what's new
 
 - **Crunchyroll watch URL metadata.** Crunchyroll watch/series URLs now use
@@ -148,7 +164,7 @@ final multi-language subtitle is readable enough to use for study.
 - **Wizard save-path guardrails.** Saved workflow filenames now reject
   accidental menu answers such as `b`, `y`, or `0`, require `.toml`, and
   auto-append `.toml` for friendly names like `fena`.
-- **Editable smart defaults.** The final "Edit a single answer" menu now
+- **Editable smart defaults.** The final "Change a setting" menu now
   exposes display order, timing master, cleanup preset, output format, text
   size, and output folder directly.
 - **Recoverable subtitle download failures.** Download timeouts now become
@@ -553,7 +569,7 @@ timings, or streaming sources.
 
 ## Intentionally out of scope
 
-- Bypassing DRM, account login, region locks, or any other access control of streaming services. The Netflix-browser-capture work in this roadmap is explicitly for tracks the user can already view in their logged-in browser.
+- Bypassing DRM, account login, region locks, or any other access control of streaming services. Netflix Helper work is scoped to safe page metadata, workflow generation, external subtitle search, and user-provided subtitle files.
 - Redistribution of downloaded subtitles in violation of their original license.
 - Subtitle conversion to/from proprietary container formats beyond what asbplayer and mpv consume.
 

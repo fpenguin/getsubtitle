@@ -22,7 +22,7 @@ SCENARIO = Scenario(
         "1",                            # reading aids — skip
         "",                             # format — accept recommended SRT
         "",                             # font size — regular
-        "2",                            # save
+        "4",                            # save
         "{TMP}/drag.toml",
         "n",
     ],

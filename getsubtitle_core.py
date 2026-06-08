@@ -10561,6 +10561,10 @@ def pipeline_main(argv: list[str]) -> int:
             raise CliError("--merge needs --output PATH or a PATH --fetch target.")
         _heading(f"merge {downstream_target}")
         merge_args = _pipeline_apply_inherited_scope(blocks["merge"], inherited_scope)
+        if not _pipeline_has_language_option(merge_args):
+            inherited_langs = _pipeline_language_value(fetch_options)
+            if inherited_langs:
+                merge_args += ["--languages", inherited_langs]
         sub_argv = [downstream_target] + merge_args
         if shared_source is not None and shared_output is not None and "--output" not in sub_argv:
             sub_argv += ["--output", shared_output]
@@ -12466,14 +12470,14 @@ def print_manual_subtitle_recovery(
 ) -> None:
     print()
     if issue_kind == "rate_limited":
-        print("Try again later")
+        print("What you can do")
         print("The subtitle provider asked us to slow down.")
         print("1. Wait a few minutes, then retry the search.")
         print("2. Open subtitle sources manually if retrying still fails.")
         print("3. Download subtitles if you find them.")
         next_number = 4
     elif issue_kind == "provider_error":
-        print("Try again later")
+        print("What you can do")
         print("The subtitle provider did not respond.")
         print("1. Retry the search in a few minutes.")
         print("2. Open subtitle sources manually if retrying still fails.")
@@ -15500,22 +15504,23 @@ revisable via Edit — these are NOT asked as questions):
 
 Final action menu (answer by number):
   1) Run it now      — dispatches immediately. Default for local sources;
-                       URL/title sources default to 2 since fetches can
+                       URL/title sources default to 4 since fetches can
                        be slow. Offers to open the output folder when
                        finished.
-  2) Save as a workflow file
+  2) Change a setting
+                     — list current answers, jump to one question.
+  3) Show exact command & workflow file
+                     — prints the full CLI command and equivalent TOML.
+  4) Save as a workflow file
                      — writes a self-contained .toml. Re-prompts on
                        overwrite collisions. Run later via
                        `getsubtitle --config FILE.toml`.
-  3) Edit an answer  — list current answers, jump to one question.
-  4) Start over      — confirms 'discard all answers?' before clearing.
-  5) Quit
-  6) Show exact command & workflow file
-                     — prints the full CLI command and equivalent TOML.
+  5) Start over      — confirms 'discard all answers?' before clearing.
+  q) Quit
 
 Before the action menu the wizard prints a plain-language plan and smart
 defaults so you can sanity-check the intent without reading flags. Use
-option 6 when you want the exact terminal command and equivalent workflow
+option 3 when you want the exact terminal command and equivalent workflow
 file (in TOML, saveable as .toml). If a reading aid wants VTT ruby but
 the format is set to something else, a one-line warning surfaces here.
 Rename mode finishes immediately after the confirmed rename preview;
@@ -17127,45 +17132,59 @@ def _wizard_q1_source(state: _WizardState) -> None:
             state.source = str(path)
             print(f"    Searching for: {description}")
             return
-    print(_wizard_next_q(state, "Where should we get subtitles from?"))
-    print("    1) A movie/show title (The Simpsons, Totoro, The Matrix, …)")
-    print("    2) A streaming/catalog URL (IMDb, AniList, Netflix, Crunchyroll, …)")
-    print("    3) A folder or file on disk (your Plex/Movies, ~/Downloads, …)")
-    # Default to title search only when a title-resolver key is available;
-    # otherwise default to the path branch, which is the most reliable first-
-    # time experience.
-    default_q1 = "1" if get_provider_api_key("tmdb") else "3"
+    entry_only = bool(getattr(state, "_source_entry_only", False))
+    if hasattr(state, "_source_entry_only"):
+        delattr(state, "_source_entry_only")
     direct_source_value = ""
-    while True:
-        pick = _wizard_prompt("Number", default_q1).strip()
-        if pick in ("1", "2", "3"):
-            break
-        cleaned = _wizard_strip_wrapping_quotes(pick)
-        if _looks_like_url(cleaned):
-            state.source_kind = "url"
-            direct_source_value = cleaned
-            print(f"    Detected URL: {cleaned}")
-            break
-        if cleaned:
-            maybe_path = Path(cleaned).expanduser()
-            if maybe_path.exists():
-                state.source_kind = "path"
-                direct_source_value = cleaned
-                print(f"    Detected local path: {cleaned}")
+
+    def restart_source_picker_after_entry_back() -> None:
+        state.source = ""
+        state.source_title = ""
+        state.source_kind = ""
+        state.is_movie = False
+        state._qcount = _wizard_qcount_before(state, "source")
+        print("    Going back to source type.")
+        _wizard_q1_source(state)
+
+    if not (entry_only and state.source_kind in {"url", "title", "path"}):
+        print(_wizard_next_q(state, "Where should we get subtitles from?"))
+        print("    1) A movie/show title (The Simpsons, Totoro, The Matrix, …)")
+        print("    2) A streaming/catalog URL (IMDb, AniList, Netflix, Crunchyroll, …)")
+        print("    3) A folder or file on disk (your Plex/Movies, ~/Downloads, …)")
+        # Default to title search only when a title-resolver key is available;
+        # otherwise default to the path branch, which is the most reliable first-
+        # time experience.
+        default_q1 = "1" if get_provider_api_key("tmdb") else "3"
+        while True:
+            pick = _wizard_prompt("Number", default_q1).strip()
+            if pick in ("1", "2", "3"):
                 break
-        if re.search(r"[A-Za-z0-9가-힣ぁ-んァ-ン一-龯]", cleaned or ""):
+            cleaned = _wizard_strip_wrapping_quotes(pick)
+            if _looks_like_url(cleaned):
+                state.source_kind = "url"
+                direct_source_value = cleaned
+                print(f"    Detected URL: {cleaned}")
+                break
+            if cleaned:
+                maybe_path = Path(cleaned).expanduser()
+                if maybe_path.exists():
+                    state.source_kind = "path"
+                    direct_source_value = cleaned
+                    print(f"    Detected local path: {cleaned}")
+                    break
+            if re.search(r"[A-Za-z0-9가-힣ぁ-んァ-ン一-龯]", cleaned or ""):
+                state.source_kind = "title"
+                direct_source_value = cleaned
+                print("    Detected title search:")
+                print(f"      {cleaned}")
+                break
+            print("    Invalid selection. Type 1, 2, or 3 — or paste a title, URL, or path.")
+        if pick == "3":
+            state.source_kind = "path"
+        elif pick == "1":
             state.source_kind = "title"
-            direct_source_value = cleaned
-            print("    Detected title search:")
-            print(f"      {cleaned}")
-            break
-        print("    Invalid selection. Type 1, 2, or 3 — or paste a title, URL, or path.")
-    if pick == "3":
-        state.source_kind = "path"
-    elif pick == "1":
-        state.source_kind = "title"
-    elif pick == "2":
-        state.source_kind = "url"
+        elif pick == "2":
+            state.source_kind = "url"
     print()
     if state.source_kind == "url":
         if direct_source_value:
@@ -17177,7 +17196,13 @@ def _wizard_q1_source(state: _WizardState) -> None:
             return
         print(_wizard_next_q(state, "Enter the URL.", spacer=False))
         while True:
-            src = _wizard_prompt("URL")
+            try:
+                src = _wizard_prompt("URL")
+            except _WizardBack:
+                if entry_only:
+                    restart_source_picker_after_entry_back()
+                    return
+                raise
             if _looks_like_url(src):
                 state.source = src
                 state.is_movie = _wizard_url_is_movie(src)
@@ -17190,7 +17215,13 @@ def _wizard_q1_source(state: _WizardState) -> None:
         if not direct_source_value:
             print(_wizard_next_q(state, "Enter the movie or show title.", spacer=False))
         while True:
-            title = direct_source_value or _wizard_prompt("Title")
+            try:
+                title = direct_source_value or _wizard_prompt("Title")
+            except _WizardBack:
+                if entry_only:
+                    restart_source_picker_after_entry_back()
+                    return
+                raise
             direct_source_value = ""
             if _looks_like_url(title):
                 print("    That looks like a URL. Choose the URL option if you want to use a URL.")
@@ -17231,7 +17262,13 @@ def _wizard_q1_source(state: _WizardState) -> None:
             return
     print(_wizard_next_q(state, "Enter the folder or file path.", spacer=False))
     while True:
-        src = direct_source_value or _wizard_prompt("Folder or file path")
+        try:
+            src = direct_source_value or _wizard_prompt("Folder or file path")
+        except _WizardBack:
+            if entry_only:
+                restart_source_picker_after_entry_back()
+                return
+            raise
         direct_source_value = ""
         try:
             path, description = _wizard_describe_path_source(src)
@@ -17953,7 +17990,7 @@ def _wizard_q7_reading_aids(state: _WizardState) -> None:
     state.reading_aids = picks
     if deferred_seen:
         print()
-        print("    Heads up: backend not implemented yet for: " + ", ".join(deferred_seen))
+        print("    Before you run: backend not implemented yet for: " + ", ".join(deferred_seen))
         print("    These are accepted in the generated TOML so you can re-run once")
         print("    the backend ships. Saving / printing the workflow is safe.")
 
@@ -18231,7 +18268,7 @@ def _wizard_q11_action(state: _WizardState) -> str:
     risks = _wizard_review_risks(state)
     if risks:
         print()
-        print("Heads up")
+        print("Before you run")
         for risk in risks:
             wrapped = textwrap.wrap(risk, width=68)
             if wrapped:
@@ -18260,21 +18297,25 @@ def _wizard_q11_action(state: _WizardState) -> str:
         print("        SRT/SMI/ASS will fall back to parenthetical 漢字（かんじ） form.")
     # Default-action heuristic: save-first is safer when "run" would start a
     # long network job (URL/title sources). For local paths, run-first is fine.
-    default_pick = "2" if state.source_kind in ("url", "title") else "1"
-    mapping = {"1": "run", "2": "save", "3": "edit", "4": "restart", "5": "quit"}
-    # The exact CLI command and TOML are kept behind option 6 so the default
+    default_pick = "4" if state.source_kind in ("url", "title") else "1"
+    mapping = {"1": "run", "2": "edit", "4": "save", "5": "restart"}
+    # The exact CLI command and TOML are kept behind option 3 so the default
     # view stays a short plain-language plan instead of a wall of flag soup.
     while True:
         print()
         print("What next?")
         print("  1) Run it now")
-        print("  2) Save as a reusable workflow file")
-        print("  3) Change something")
-        print("  4) Start over")
-        print("  5) Quit")
-        print("  6) Show exact command and workflow file")
-        pick = _wizard_read_choice("Number", ["1", "2", "3", "4", "5", "6"], default_pick)
-        if pick == "6":
+        print("  2) Change a setting")
+        print("  3) Show exact command and workflow file")
+        print("  4) Save as a reusable workflow file")
+        print("  5) Start over")
+        try:
+            pick = _wizard_read_choice("Number", ["1", "2", "3", "4", "5"], default_pick)
+        except _WizardAbort as exc:
+            if str(exc) == "user quit":
+                return "quit"
+            raise
+        if pick == "3":
             print()
             print(rule)
             print("Exact command:")
@@ -18353,7 +18394,7 @@ def _wizard_edit_targets(state: _WizardState) -> list[tuple[str, str, object]]:
     """Editable answers shown from the final action menu.
 
     Include the smart-defaulted answers explicitly so the final action
-    menu's "Change something" promise is true.
+    menu's "Change a setting" promise is true.
     """
     targets: list[tuple[str, str, object]] = [
         ("steps", " + ".join(s for s in _VALID_STEPS if s in state.steps), _wizard_q0_steps),
@@ -18471,6 +18512,37 @@ def _wizard_pop_previous_visible_label(visible_history: list[str], current_label
     return visible_history.pop()
 
 
+def _wizard_restore_back_target(state: _WizardState, previous_label: str, current_label: str | None = None) -> int:
+    """Clear the target step and prime question numbering before re-asking it.
+
+    The source step contains two visible screens when fetch is enabled: source
+    type, then the actual title/URL/path. If the user backs out of a later
+    question, re-ask the actual source value first; another `b` from there
+    returns to the source-type picker.
+    """
+    source_entry_only = (
+        previous_label == "source"
+        and "fetch" in state.steps
+        and state.source_kind in {"url", "title", "path"}
+    )
+    preserved_source_kind = ""
+    if source_entry_only:
+        # Title search candidates are stored as provider URLs after selection,
+        # but going back should still feel like editing the title answer.
+        preserved_source_kind = "title" if state.source_title else state.source_kind
+    _wizard_clear_step_answer(state, previous_label)
+    if source_entry_only:
+        state.source_kind = preserved_source_kind
+        state._source_entry_only = True
+    step_index = next(
+        (i for i, (candidate, _fn) in enumerate(_WIZARD_STEPS)
+         if candidate == previous_label),
+        0,
+    )
+    state._qcount = _wizard_qcount_before(state, previous_label) + (1 if source_entry_only else 0)
+    return step_index
+
+
 def _run_wizard(state: _WizardState | None = None) -> tuple[_WizardState, str]:
     """Run Q1-Q11, then loop on Q12 until a final action is chosen.
     Returns (state, final_action). Caller owns dispatching the action.
@@ -18514,13 +18586,7 @@ def _run_wizard_with_back_nav(state: _WizardState) -> tuple[_WizardState, str]:
                 print("    Already at the first step.")
                 state._qcount = _wizard_qcount_before(state, label)
                 continue
-            _wizard_clear_step_answer(state, previous_label)
-            step_index = next(
-                (i for i, (candidate, _fn) in enumerate(_WIZARD_STEPS)
-                 if candidate == previous_label),
-                0,
-            )
-            state._qcount = _wizard_qcount_before(state, previous_label)
+            step_index = _wizard_restore_back_target(state, previous_label, label)
             print("    Going back to the previous step.")
             continue
         _wizard_save_draft(state)
@@ -18543,13 +18609,7 @@ def _run_wizard_with_back_nav(state: _WizardState) -> tuple[_WizardState, str]:
             if previous_label is None:
                 print("    Already at the first step.")
                 continue
-            _wizard_clear_step_answer(state, previous_label)
-            step_index = next(
-                (i for i, (candidate, _fn) in enumerate(_WIZARD_STEPS)
-                 if candidate == previous_label),
-                0,
-            )
-            state._qcount = _wizard_qcount_before(state, previous_label)
+            step_index = _wizard_restore_back_target(state, previous_label)
             print("    Going back to the previous step.")
             while step_index < len(_WIZARD_STEPS):
                 label, fn = _WIZARD_STEPS[step_index]
@@ -18565,13 +18625,7 @@ def _run_wizard_with_back_nav(state: _WizardState) -> tuple[_WizardState, str]:
                         print("    Already at the first step.")
                         state._qcount = _wizard_qcount_before(state, label)
                         continue
-                    _wizard_clear_step_answer(state, previous_label)
-                    step_index = next(
-                        (i for i, (candidate, _fn) in enumerate(_WIZARD_STEPS)
-                         if candidate == previous_label),
-                        0,
-                    )
-                    state._qcount = _wizard_qcount_before(state, previous_label)
+                    step_index = _wizard_restore_back_target(state, previous_label, label)
                     print("    Going back to the previous step.")
                     continue
                 _wizard_save_draft(state)
@@ -18595,7 +18649,7 @@ def _run_wizard_with_back_nav(state: _WizardState) -> tuple[_WizardState, str]:
             return state, action
         # Edit flow: each entry maps a shown answer DIRECTLY to the function
         # that re-asks it. Smart defaults are included explicitly, so the
-        # final action menu's "Change something" line is literal.
+        # final action menu's "Change a setting" line is literal.
         # Stay in this review loop after a change; editing languages/steps can
         # add Merge, which then creates newly editable format/extension rows.
         while True:
@@ -18670,6 +18724,23 @@ def _wizard_emit_cli(state: _WizardState) -> list[str]:
                 idx = order.index(lang)
                 order[idx:idx] = variants
         return order
+
+    def modify_reading_needed_for_cli() -> bool:
+        if not state.reading_aids:
+            return False
+        # If modify is the terminal verb, the reading-aid side files are the
+        # user's requested output. Keep the explicit modify reading flags.
+        if "merge" not in steps or len(state.order) < 2:
+            return True
+        # A single Japanese reading can be applied directly by merge, so
+        # emitting modify reading flags just creates an unused sidecar.
+        inline_merge_reading = _wizard_merge_inline_reading_spec(state)
+        if inline_merge_reading:
+            pairs = _parse_reading_spec(state.reading_aids)
+            return pairs != [tuple(inline_merge_reading.split(":", 1))]
+        # Non-Japanese and multi-reading cases still need the existing
+        # side-file/pseudo-language path.
+        return True
 
     # Local-only, single-verb workflows should use the ordinary subcommands
     # instead of the pipeline flags. `getsubtitle PATH --merge` is parsed as
@@ -18748,19 +18819,27 @@ def _wizard_emit_cli(state: _WizardState) -> list[str]:
         argv.append("--no-engine")
     # Modify block.
     if "modify" in steps and (state.reading_aids or state.asbplayer or state.convert_smi):
-        argv.append("--modify")
-        add_downstream_episode_filter(argv)
-        if state.convert_smi:
-            argv += ["--convert", "smi-to-srt"]
-        if state.asbplayer:
-            argv += ["--strip-cc-noise", "--single-line"]
-        if state.reading_aids:
-            argv += ["--reading", ",".join(state.reading_aids)]
-            if state.format == "vtt":
-                argv += ["--reading-format", "vtt"]
+        modify_reading = modify_reading_needed_for_cli()
+        if modify_reading or state.asbplayer or state.convert_smi:
+            argv.append("--modify")
+            add_downstream_episode_filter(argv)
+            if state.convert_smi:
+                argv += ["--convert", "smi-to-srt"]
+            if state.asbplayer:
+                argv += ["--strip-cc-noise", "--single-line"]
+            if modify_reading:
+                argv += ["--reading", ",".join(state.reading_aids)]
+                if state.format == "vtt":
+                    argv += ["--reading-format", "vtt"]
     # Merge block — only when 2+ languages.
     if "merge" in steps and len(state.order) >= 2:
-        argv += ["--merge", "--languages", ",".join(merge_order())]
+        order = merge_order()
+        argv.append("--merge")
+        # Fetch languages are inherited by merge when the display order is
+        # identical. Keep --languages when the user changed order or added
+        # pseudo-language reading rows; those are semantically distinct.
+        if not ("fetch" in steps and order == list(state.languages)):
+            argv += ["--languages", ",".join(order)]
         add_downstream_episode_filter(argv)
         merge_reading = _wizard_merge_inline_reading_spec(state)
         if merge_reading:

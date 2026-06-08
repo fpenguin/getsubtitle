@@ -22,7 +22,7 @@ SCENARIO = Scenario(
         "1",            # reading aids — skip
         "",             # format — accept recommended SRT
         "",             # font size — regular
-        "5",            # quit
+        "q",            # quit
     ],
     expect_state={
         "steps": {"modify", "merge"},

@@ -31,7 +31,7 @@ SCENARIO = Scenario(
         "1",      # reading aids — skip
         "",       # format — accept recommended SRT
         "",       # font size — regular
-        "5",      # quit at action menu
+        "q",      # quit at action menu
     ],
     expect_stdout_contains=[
         "Detected title search:",

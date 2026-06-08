@@ -18,6 +18,7 @@ romaji as a normal subtitle line, and English support in one synced cue.*
 - **Fill missing language tracks** — search subtitle sources, open manual search tabs, or translate with DeepL, Ollama, or Argos.
 - **Clean messy captions** — remove broadcast noise, flatten cues, convert legacy `.smi`, and make subtitles easier to sentence mine.
 - **Prepare a media library** — scan Plex/Jellyfin folders, download or translate missing tracks, and merge per episode.
+- **Plan browser-streaming study workflows** — use Netflix/Crunchyroll metadata to build safer subtitle searches and asbplayer-ready outputs.
 - **Learn the CLI naturally** — the wizard builds the command for you, then shows exactly what it generated.
 
 ## Study Examples
@@ -115,6 +116,7 @@ More examples: [docs/examples.md](docs/examples.md).
 
 - Fetch subtitles from movie, TV, anime, and streaming/catalog URLs.
 - Work from local folders, video files, or subtitle files.
+- Use streaming page metadata to identify titles, episodes, and better search aliases.
 - Add reading aids for Japanese, Korean, Mandarin, and Cantonese.
 - Merge 2-4 subtitle tracks into one synced file.
 - Translate missing subtitles with local or online engines.
@@ -130,6 +132,7 @@ More examples: [docs/examples.md](docs/examples.md).
 - [Saved workflows and pipeline form](docs/workflows.md)
 - [API keys and providers](docs/api-keys.md)
 - [Supported sources](docs/sources.md)
+- [Netflix Helper design](NetflixHelper.md)
 - [Install options](docs/install.md)
 - [Troubleshooting](docs/troubleshooting.md)
 

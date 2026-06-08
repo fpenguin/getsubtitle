@@ -20,7 +20,7 @@ SCENARIO = Scenario(
         "1",            # reading aids — skip
         "",             # format — accept recommended SRT
         "",             # font size — regular
-        "2",            # action: save (URL default)
+        "4",            # action: save (URL default)
         "{TMP}/saved.toml",
         "n",            # decline open folder
     ],

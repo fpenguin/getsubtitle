@@ -19,7 +19,7 @@ SCENARIO = Scenario(
         "n",            # decline 'Add Modify step for reading aids?'
         "",             # format — accept recommended SRT
         "",             # font size — regular
-        "2",            # save
+        "4",            # save
         "{TMP}/merge-only.toml",
         "n",
     ],

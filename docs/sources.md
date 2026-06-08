@@ -31,6 +31,21 @@ GetSubtitle works with common movie, TV, anime, and streaming/catalog URLs.
 - Anime-IDs + Wikidata
 - Netflix work ID to IMDb / TMDB through Wikidata P1874
 
+## Streaming helpers
+
+Streaming URLs are used for identification and safer search, not for bypassing
+streaming-service access controls.
+
+- Crunchyroll watch/series URLs can be resolved through Crunchyroll metadata
+  so GetSubtitle can identify the show, episode, and better subtitle-search
+  aliases.
+- Netflix URLs can expose a Netflix work ID. GetSubtitle can bridge that ID to
+  Wikidata / IMDb / TMDB metadata when available.
+- [Netflix Helper](../NetflixHelper.md) is the planned companion workflow for
+  browser/asbplayer learners: identify Netflix titles and episode ranges, then
+  generate GetSubtitle commands or workflow files for external subtitle search,
+  translation, reading aids, and merging.
+
 For non-anime TV, `-e all` expansion needs a TMDB key:
 
 ```sh

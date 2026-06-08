@@ -25,7 +25,7 @@ SCENARIO = Scenario(
         "1",          # Q7 reading aids — skip
         "",           # format — accept recommended SRT
         "",           # font size — regular
-        "5",          # Q12 — quit
+        "q",          # Q12 — quit
     ],
     expect_state={"steps": {"modify", "merge"}},
     # `--source PATH` carries the folder; the first positional in argv
