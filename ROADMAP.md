@@ -110,6 +110,13 @@ final multi-language subtitle is readable enough to use for study.
 - **Chinese-friendly filenames.** Pinyin/Jyutping generators now handle
   script-labelled Chinese sidecars and produce merge-discoverable reading-aid
   outputs.
+- **Setup UX polish.** `getsubtitle setup` now uses a more personal final
+  summary, clearer recommended/advanced setup grouping, "time needed" wording,
+  and a stronger quick subtitle search using *Spirited Away* for broad
+  multilingual coverage.
+- **Contributor and agent docs.** Added durable project guidance for agents,
+  contributors, UX philosophy, and architecture navigation without stale line
+  numbers.
 
 ## v0.9.6.4 — what's new
 
@@ -127,9 +134,9 @@ final multi-language subtitle is readable enough to use for study.
   fetch ordinary Chinese subtitle files (`zh`) and derive `yue:numbers`
   reading-aid tracks from them, because providers rarely expose Cantonese as a
   separate downloadable language.
-- **Streaming helper guardrails.** `NetflixHelper.md` now frames Netflix and
-  Crunchyroll pages as safe metadata/workflow starters while preserving clear
-  privacy, security, and no-bypass boundaries.
+- **Streaming subtitle tool resources.** Docs now point users to existing
+  streaming subtitle downloaders, then route those files back into GetSubtitle
+  for cleanup, reading aids, translation, and merging.
 
 ## v0.9.6.3 — what's new
 
@@ -149,16 +156,10 @@ final multi-language subtitle is readable enough to use for study.
 
 ## v0.9.6.2 — what's new
 
-- **Netflix Helper design spec.** Added `NetflixHelper.md`, a standalone
-  companion design for Netflix/asbplayer language-learning workflows. It
-  covers safe page metadata extraction, Chrome-extension and standalone-helper
-  options, multi-language and multi-episode batch planning, manifest/TOML
-  handoff to GetSubtitle, local bridge options, failure UX, and privacy
-  boundaries.
-- **Streaming-helper documentation.** README and docs now describe streaming
-  pages as metadata/workflow starters: useful for title IDs, episode ranges,
-  aliases, external subtitle search, and GetSubtitle workflow generation, not
-  direct logged-in subtitle scraping.
+- **Streaming-resource documentation.** README and docs describe streaming
+  pages as metadata/workflow starters and point users to existing downloader
+  projects for subtitles they can already access, then back to GetSubtitle for
+  local cleanup/merge workflows.
 - **Interactive wizard copy polish.** The final review now says "Change a
   setting", "Before you run", and "What you can do" in recovery flows, with
   transcripts and UX audit artifacts regenerated from the harness.
@@ -594,7 +595,7 @@ vs original-file rename.
 
 ### Tests
 
-- 707 automated tests covering URL parsing, provider response shapes, TMDB / AniList resolution, low-confidence subtitle match gating, subtitle download sanity checks, SAMI parsing, VTT/ASS input parsing, MT helpers + auto_load/auto_unload, Argos direct/pivot package preflight, wizard run summaries, output/provider/coverage preflight, in-wizard pip dependency setup, recoverable download timeouts, workflow save-path guardrails, editable smart defaults, explicit format selection, merge with format hints and font-size styling, Crunchyroll watch-URL metadata resolution, shared pipeline episode-scope inheritance, the wizard scenario harness, rename mode, the named pipeline registry, pipeline orchestration, `--config` CLI overrides, config validation, source smoke diagnostics, help system, and dispatch routing.
+- 749 automated tests covering URL parsing, provider response shapes, TMDB / AniList resolution, low-confidence subtitle match gating, subtitle download sanity checks, SAMI parsing, VTT/ASS input parsing, MT helpers + auto_load/auto_unload, Argos direct/pivot package preflight, wizard run summaries, output/provider/coverage preflight, in-wizard pip dependency setup, setup onboarding UX, recoverable download timeouts, workflow save-path guardrails, editable smart defaults, explicit format selection, merge with format hints and font-size styling, Crunchyroll watch-URL metadata resolution, shared pipeline episode-scope inheritance, the wizard scenario harness, rename mode, the named pipeline registry, pipeline orchestration, `--config` CLI overrides, config validation, source smoke diagnostics, help system, and dispatch routing.
 
 ## v2.0 target: AI-assisted subtitle sync engine
 
@@ -618,7 +619,7 @@ timings, or streaming sources.
 
 ## Intentionally out of scope
 
-- Bypassing DRM, account login, region locks, or any other access control of streaming services. Netflix Helper work is scoped to safe page metadata, workflow generation, external subtitle search, and user-provided subtitle files.
+- Bypassing DRM, account login, region locks, or any other access control of streaming services.
 - Redistribution of downloaded subtitles in violation of their original license.
 - Subtitle conversion to/from proprietary container formats beyond what asbplayer and mpv consume.
 

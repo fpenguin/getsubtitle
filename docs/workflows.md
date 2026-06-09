@@ -31,20 +31,17 @@ getsubtitle run anime --source /Plex/NewShow
 getsubtitle run --list
 ```
 
-## Helper-generated workflows
+## External subtitle downloads
 
-Helpers can generate the same TOML shape that the interactive wizard saves.
-The planned [Netflix Helper](../NetflixHelper.md) uses this idea: read safe
-page metadata, choose episodes/languages, then create a GetSubtitle workflow
-for external subtitle search and learner-friendly output.
+If you use an external streaming subtitle downloader, bring the downloaded
+files back into GetSubtitle as local inputs. GetSubtitle can then convert,
+clean, add reading aids, translate missing tracks, and merge them.
 
-Example helper output:
+Example workflow for downloaded Netflix or Crunchyroll subtitles:
 
 ```toml
 [fetch]
-source = "https://www.netflix.com/watch/81234567"
-season = "1"
-episode = "1-12"
+source = "~/Downloads/StreamingSubtitles/Show/Season 01"
 languages = "ja,en,ko"
 
 [modify]
@@ -62,8 +59,11 @@ target = "~/Downloads/GetSubtitle"
 Run it later:
 
 ```sh
-getsubtitle --config netflix-study.toml
+getsubtitle --config streaming-study.toml
 ```
+
+Suggested external tools are listed in
+[Streaming subtitle tools](streaming-subtitle-tools.md).
 
 ## User Defaults
 

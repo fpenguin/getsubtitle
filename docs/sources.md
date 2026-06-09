@@ -41,10 +41,11 @@ streaming-service access controls.
   aliases.
 - Netflix URLs can expose a Netflix work ID. GetSubtitle can bridge that ID to
   Wikidata / IMDb / TMDB metadata when available.
-- [Netflix Helper](../NetflixHelper.md) is the planned companion workflow for
-  browser/asbplayer learners: identify Netflix titles and episode ranges, then
-  generate GetSubtitle commands or workflow files for external subtitle search,
-  translation, reading aids, and merging.
+- If you manually download subtitles from a streaming service you can already
+  access, GetSubtitle can convert, clean, add reading aids, translate, and merge
+  those local files.
+- See [Streaming subtitle tools](streaming-subtitle-tools.md) for external
+  downloader projects users may try before returning to GetSubtitle.
 
 For non-anime TV, `-e all` expansion needs a TMDB key:
 

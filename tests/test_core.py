@@ -3723,7 +3723,7 @@ def test_setup_help_subcommand_works_without_tty():
     rc, out, _ = _capture_main(["setup", "--help"])
     assert rc == 0
     assert "getsubtitle setup" in out
-    assert "Machine translation preference" in out
+    assert "AI translation preference" in out
 
 
 # ─── Setup script fixes (review feedback) ────────────────────────────
@@ -3910,6 +3910,166 @@ def test_setup_viewing_guidance_tablet_warns_about_streaming_apps():
     text = buf.getvalue()
     assert "cannot import custom subtitle files" in text
     assert "asbplayer" in text or "Plex" in text
+
+
+def test_setup_intro_matches_wizard_style():
+    intro = MODULE["_SETUP_INTRO"]
+    assert "GetSubtitle — Setup" in intro
+    assert "Commands:" in intro
+    assert "b      Back" in intro
+    assert "Ctrl-C Cancel" in intro
+    assert "Workflow Builder" not in intro
+
+
+def test_setup_collect_choice_accepts_short_language_codes_and_examples():
+    import io, contextlib
+    fn = MODULE["_setup_collect_choice"]
+    g = fn.__globals__
+    saved_prompt = g["_wizard_prompt"]
+    answers = iter(["en,ko", "jp,es", "3", "1", "3"])
+    try:
+        g["_wizard_prompt"] = lambda q, default=None, **kw: next(answers)
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            choice = fn()
+        out = buf.getvalue()
+        assert "Examples: en,ko" in out
+        assert "Examples: ko,ja,es" in out
+        assert choice.native == ["en", "ko"]
+        assert choice.learning == ["ja", "es"]
+        assert choice.content == "anime"
+        assert choice.venue == "browser"
+        assert choice.mt == "ollama"
+    finally:
+        g["_wizard_prompt"] = saved_prompt
+
+
+def test_setup_recommendations_print_outcome_groups_and_why():
+    import io, contextlib
+    choice = MODULE["_SetupChoice"](
+        native=["en"], learning=["ja"], content="anime",
+        venue="browser", mt="online",
+    )
+    recs = MODULE["_setup_recommendations"](choice)
+    buf = io.StringIO()
+    with contextlib.redirect_stdout(buf):
+        MODULE["_setup_print_recommendations"](recs)
+    text = buf.getvalue()
+    assert "Getting subtitles" in text
+    assert "Language learning" in text
+    assert "Translation fallback" in text
+    assert "Convenience" in text
+    assert "Why:" in text
+    assert "You selected anime" in text
+    assert "Save your preferences" in text
+    assert "user_settings.toml (recommended)" not in text
+
+
+def test_setup_write_config_shows_summary_before_optional_raw_config():
+    import tempfile, io, contextlib
+    from pathlib import Path
+    fn = MODULE["_setup_write_config"]
+    g = fn.__globals__
+    saved_cfg_path = g["config_path"]
+    saved_yesno = g["_wizard_yesno"]
+    with tempfile.TemporaryDirectory() as td:
+        cfg = Path(td) / "user_settings.toml"
+        try:
+            g["config_path"] = lambda: cfg
+            g["_wizard_yesno"] = lambda q, default=True: False
+            choice = MODULE["_SetupChoice"](
+                native=["en"], learning=["ja"], content="anime",
+                venue="browser", mt="none",
+            )
+            buf = io.StringIO()
+            with contextlib.redirect_stdout(buf):
+                ok = fn(choice)
+            assert ok is True
+            text = buf.getvalue()
+            assert "Preferences to save:" in text
+            assert "Languages: Japanese, English" in text
+            assert "│ [fetch]" not in text
+        finally:
+            g["config_path"] = saved_cfg_path
+            g["_wizard_yesno"] = saved_yesno
+
+
+def test_setup_recommendation_loop_bulk_runs_recommended_without_per_item_prompts():
+    import io, contextlib
+    fn = MODULE["_setup_run_recommendation_loop"]
+    g = fn.__globals__
+    saved_run = g["_setup_run_recommendation"]
+    saved_yesno = g["_wizard_yesno"]
+    saved_prompt = g["_wizard_prompt"]
+    saved_read_choice = g["_wizard_read_choice"]
+    saved_profile = g["_setup_save_profile"]
+    saved_examples = g["_setup_try_examples"]
+    calls = []
+    questions = []
+    yesnos = iter([False, True, False])  # no optional, set up selected, no quick search
+    recs = [
+        MODULE["_SetupRecommendation"]("jimaku", "Jimaku", "why", "free", "now", selected_by_default=True),
+        MODULE["_SetupRecommendation"]("subdl", "SubDL", "why", "free", "now", selected_by_default=False),
+    ]
+    try:
+        g["_setup_run_recommendation"] = lambda rec, choice, ask=True: calls.append((rec.title, ask)) or True
+        g["_wizard_yesno"] = lambda q, default=True: questions.append(q) or next(yesnos)
+        g["_wizard_prompt"] = lambda q, default=None, **kw: "done"
+        g["_wizard_read_choice"] = lambda prompt, valid, default, **kw: "3"
+        g["_setup_save_profile"] = lambda choice: None
+        g["_setup_try_examples"] = lambda: None
+        choice = MODULE["_SetupChoice"](["en"], ["ja"], "anime", "browser", "none")
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            assert fn(recs, choice) == 0
+        text = buf.getvalue()
+        assert calls == [("Jimaku", False)]
+        assert "Setup complete" in text
+        assert "Jimaku" in text
+        assert "Profile:" in text
+        assert "Known languages:" in text
+        assert "Learning:" in text
+        assert "Show example workflows" in text
+        assert "Show example commands" not in text
+        assert any("Run a quick subtitle search now?" in q for q in questions)
+    finally:
+        g["_setup_run_recommendation"] = saved_run
+        g["_wizard_yesno"] = saved_yesno
+        g["_wizard_prompt"] = saved_prompt
+        g["_wizard_read_choice"] = saved_read_choice
+        g["_setup_save_profile"] = saved_profile
+        g["_setup_try_examples"] = saved_examples
+
+
+def test_setup_profile_summary_and_wizard_setup_labels():
+    choice = MODULE["_SetupChoice"](
+        native=["ko"], learning=["ja"], content="anime",
+        venue="browser", mt="deepl",
+    )
+    summary = MODULE["_setup_profile_summary"](choice)
+    assert ("Languages", "ja, ko") in summary
+    assert ("AI translation", "deepl") in summary
+    assert ("Reading aids", "ja:hiragana") in summary
+    assert any(label == "Format" and "VTT" in value for label, value in summary)
+
+    state = MODULE["_WizardState"]()
+    state.steps = {"fetch", "translate", "modify", "merge"}
+    state.languages = ["ja", "ko"]
+    state.mt_engine = "deepl"
+    state.reading_aids = ["ja:hiragana"]
+    state.format = "vtt"
+    state._setup_prefilled = {"languages", "translate", "reading_aids", "format"}
+    state._setup_format_reason = "browser/asbplayer"
+    notes = MODULE["_wizard_setup_review_notes"](state)
+    assert notes["Languages"].endswith("(from setup)")
+    assert notes["AI translation"] == "deepl  (from setup)"
+    assert "browser/asbplayer" in notes["Format"]
+    targets = MODULE["_wizard_edit_targets"](state)
+    values = {label: value for label, value, _fn in targets}
+    assert values["languages"].endswith("(from setup)")
+    assert values["AI translation"].endswith("(from setup)")
+    MODULE["_wizard_forget_setup_source"](state, "AI translation")
+    assert "translate" not in state._setup_prefilled
 
 
 def test_setup_select_reprompts_on_unrecognised_input():

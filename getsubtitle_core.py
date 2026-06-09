@@ -4,6 +4,8 @@
 from __future__ import annotations
 
 import argparse
+import contextlib
+import io
 import json
 import os
 import getpass
@@ -13311,6 +13313,15 @@ def print_manual_subtitle_recovery(
     print(f"{next_number + 1}. Run:")
     target = shlex.quote(str(expected_output_dir)) if expected_output_dir is not None else "FOLDER"
     print(f"   getsubtitle merge {target} -l {','.join(requested_langs)}")
+    print()
+    print("Streaming subtitle tools you can try:")
+    print("  • NetflixSubtitleDownloader (confirmed working)")
+    print("    https://github.com/plateaukao/NetflixSubtitleDownloader")
+    print("  • Subtitle-Downloader (untested; older project)")
+    print("    https://github.com/wayneclub/Subtitle-Downloader")
+    print("  • multi-downloader-nx (untested; active anime downloader)")
+    print("    https://github.com/anidl/multi-downloader-nx")
+    print("  After downloading, come back here and run merge from the folder above.")
 
 
 def yes_no_prompt(prompt: str, *, default: bool) -> bool:
@@ -14279,12 +14290,15 @@ def _setup_select(question: str, options: list[tuple[str, str]], default: str) -
 
 
 def _setup_system_summary() -> list[str]:
+    os_label = platform.system() or sys.platform
+    if sys.platform == "darwin":
+        os_label = "macOS"
     rows = [
-        f"OS: {platform.system() or sys.platform}",
+        f"{os_label}",
         f"CPU: {platform.machine() or 'unknown'}",
     ]
     if sys.platform == "darwin" and platform.machine().lower() in {"arm64", "aarch64"}:
-        rows.append("Apple Silicon detected: good fit for small/medium Ollama models.")
+        rows.append("Apple Silicon Mac: good fit for small/medium Ollama models.")
     elif platform.machine():
         rows.append("Hardware note: offline LLM speed depends heavily on RAM/GPU.")
     ollama_state = "installed" if shutil.which("ollama") else "not installed"
@@ -14295,7 +14309,7 @@ def _setup_system_summary() -> list[str]:
     elif shutil.which("ollama"):
         ollama_state += " (daemon not running — start with `ollama serve`)"
     rows.append("Ollama: " + ollama_state)
-    rows.append("Japanese reading-aid dependency: " + ("installed" if _setup_module_exists("sudachipy") and _setup_module_exists("sudachidict_core") else "not installed"))
+    rows.append("Japanese reading aids: " + ("ready" if _setup_module_exists("sudachipy") and _setup_module_exists("sudachidict_core") else "not installed"))
     return rows
 
 
@@ -14471,7 +14485,7 @@ def _setup_recommendations(choice: _SetupChoice) -> list[_SetupRecommendation]:
         recs.append(_SetupRecommendation(
             key="jimaku",
             title="Jimaku",
-            reason="Recommended for Japanese anime subtitles.",
+            reason="You selected anime and/or Japanese learning. Jimaku usually has the best Japanese anime subtitle coverage.",
             cost="Free.",
             setup_time="About 2 minutes.",
             url=KEY_PROVIDERS["jimaku"]["url"],
@@ -14483,7 +14497,7 @@ def _setup_recommendations(choice: _SetupChoice) -> list[_SetupRecommendation]:
         recs.append(_SetupRecommendation(
             key="wyzie",
             title="Wyzie",
-            reason="Broad movie/TV subtitle search by IMDb/TMDB ID.",
+            reason="You want movie/TV or broad-language coverage. Wyzie searches many public subtitle sources by IMDb/TMDB ID.",
             cost="Free tier available; paid tier widens source coverage.",
             setup_time="About 2 minutes.",
             url=KEY_PROVIDERS["wyzie"]["url"],
@@ -14492,7 +14506,7 @@ def _setup_recommendations(choice: _SetupChoice) -> list[_SetupRecommendation]:
         recs.append(_SetupRecommendation(
             key="subdl",
             title="SubDL",
-            reason="Fallback source when Wyzie misses, often useful for Korean, Spanish, Chinese, and European subtitles.",
+            reason="Optional fallback when the normal broad search misses, often useful for Korean, Spanish, Chinese, and European subtitles.",
             cost="API key required; SubDL has free and paid tiers.",
             setup_time="About 2 minutes.",
             url=KEY_PROVIDERS["subdl"]["url"],
@@ -14503,7 +14517,7 @@ def _setup_recommendations(choice: _SetupChoice) -> list[_SetupRecommendation]:
         recs.append(_SetupRecommendation(
             key="tmdb",
             title="TMDB",
-            reason="Improves title matching and enables full-season detection for non-anime TV.",
+            reason="You selected movies/TV. TMDB improves title matching and helps detect seasons/episodes before searching.",
             cost="Free API key.",
             setup_time="About 3 minutes.",
             url=KEY_PROVIDERS["tmdb"]["url"],
@@ -14566,11 +14580,29 @@ def _setup_recommendations(choice: _SetupChoice) -> list[_SetupRecommendation]:
                 setup_time="0-5 minutes depending on language packages.",
                 selected_by_default=True,
             ))
-    if mt == "online":
+    if mt == "argos":
+        recs.append(_SetupRecommendation(
+            key="argos",
+            title="Argos Translate",
+            reason="You asked for local basic-quality machine translation when subtitles are missing.",
+            cost="Free.",
+            setup_time="0-5 minutes depending on language packages.",
+            selected_by_default=True,
+        ))
+    if mt == "ollama":
+        recs.append(_SetupRecommendation(
+            key="ollama",
+            title="Ollama (offline LLM MT)",
+            reason="You asked for local good-quality machine translation when subtitles are missing.",
+            cost="Free, but RAM/VRAM hungry — see the system summary above.",
+            setup_time=f"Default model is {DEFAULT_OLLAMA_MODEL}; auto-pulled on first use.",
+            selected_by_default=True,
+        ))
+    if mt in {"online", "deepl"}:
         recs.append(_SetupRecommendation(
             key="deepl",
             title="DeepL",
-            reason="Best-quality online machine translation fallback.",
+            reason="You asked for online machine translation when subtitles are missing.",
             cost="Free API tier includes 500,000 characters/month; paid tiers available. Roughly 50-80 anime episodes depending on subtitle length.",
             setup_time="About 2 minutes.",
             url=KEY_PROVIDERS["deepl"]["url"],
@@ -14580,10 +14612,10 @@ def _setup_recommendations(choice: _SetupChoice) -> list[_SetupRecommendation]:
     # ── Config file — last so it can bundle everything answered above.
     recs.append(_SetupRecommendation(
         key="config",
-        title="user_settings.toml",
+        title="Save your preferences",
         reason="Saves your defaults so future commands are shorter.",
         cost="Free.",
-        setup_time="Instant.",
+        setup_time="A few seconds.",
         selected_by_default=True,
     ))
     return recs
@@ -14591,43 +14623,110 @@ def _setup_recommendations(choice: _SetupChoice) -> list[_SetupRecommendation]:
 
 def _setup_print_viewing_guidance(choice: _SetupChoice) -> None:
     print()
-    print("Viewing guidance:")
+    print("Based on how you watch:")
+    print("  • TV / tablet / Plex / Jellyfin")
+    print("    → SRT")
+    print("  • Netflix, Disney+, YouTube, or other streaming in a desktop browser")
+    print("    → VTT with asbplayer")
+    print("  • Local desktop video files")
+    print("    → ASS")
+    print()
     if choice.venue == "tablet":
-        print("  Tablet/TV streaming apps usually cannot import custom subtitle files.")
-        print("  Recommended alternatives: web browser + asbplayer, Plex, or a local video player.")
+        print("Note: Tablet/TV streaming apps usually cannot import custom subtitle files.")
+        print("Try browser + asbplayer, Plex/Jellyfin, or a local player when you need custom subtitles.")
     elif choice.venue == "browser":
-        print("  Browser streaming works best with asbplayer.")
-        print("  For Japanese pronunciation guides: asbplayer Settings > Misc > Subtitles > Subtitle HTML = Render.")
+        print("Browser note: asbplayer is the best fit for multiple subtitles and Japanese reading aids.")
+        print("For Japanese readings above kanji: asbplayer Settings > Misc > Subtitles > Subtitle HTML = Render.")
     elif choice.venue == "plex":
-        print("  Plex works best with SRT for normal playback, or merged study files for separate study sessions.")
+        print("Plex note: SRT is safest for normal playback. Use ASS for desktop study sessions.")
     elif choice.venue == "local":
-        print("  VLC/IINA/mpv work well with SRT. Use VTT when your player supports HTML/ruby subtitles.")
+        print("Local player note: ASS gives the most control over subtitle position and size.")
     else:
-        print("  Mixed viewing is fine. Use SRT for compatibility; VTT for asbplayer ruby reading aids.")
+        print("Mixed viewing note: SRT is safest; use ASS for local study and VTT for browser/asbplayer.")
+
+
+def _setup_recommendation_group(rec: _SetupRecommendation) -> tuple[str, str]:
+    if rec.key in {"jimaku", "wyzie", "subdl", "tmdb"}:
+        return ("Getting subtitles", "Find subtitle files and identify the right movie/show.")
+    if rec.key.startswith("reading:"):
+        return ("Language learning", "Add pronunciation guides for the languages you study.")
+    if rec.key in {"argos", "ollama", "deepl"}:
+        return ("Translation fallback", "Fill gaps when a requested language is missing.")
+    if rec.key == "config":
+        return ("Convenience", "Save your normal defaults for shorter future commands.")
+    return ("Other", "Optional helper.")
 
 
 def _setup_print_recommendations(recs: list[_SetupRecommendation]) -> None:
     print()
     print("Recommended setup:")
-    for idx, rec in enumerate(recs, start=1):
-        mark = "recommended" if rec.selected_by_default else "optional"
-        print(f"\n  {idx}. {rec.title} ({mark})")
-        print(f"     {rec.reason}")
-        print(f"     Cost: {rec.cost}")
-        print(f"     Setup time: {rec.setup_time}")
-        if rec.key == "argos":
-            print("     Quality: lower, but private and free.")
-        if rec.key == "ja-reading":
-            print("     Output tip: VTT looks best in asbplayer.")
-        if rec.url:
-            print(f"     URL: {rec.url}")
+    grouped: dict[str, list[_SetupRecommendation]] = {}
+    group_notes: dict[str, str] = {}
+    for rec in recs:
+        group, note = _setup_recommendation_group(rec)
+        grouped.setdefault(group, []).append(rec)
+        group_notes[group] = note
+
+    order = ["Getting subtitles", "Language learning", "Translation fallback", "Convenience", "Other"]
+    idx = 1
+    for group in order:
+        rows = grouped.get(group)
+        if not rows:
+            continue
+        print()
+        print(group)
+        print(f"  {group_notes[group]}")
+        for rec in rows:
+            mark = "recommended" if rec.selected_by_default else "optional"
+            print(f"\n  {idx}. {rec.title} ({mark})")
+            print(f"     Why: {rec.reason}")
+            print(f"     Cost: {rec.cost}")
+            print(f"     Time needed: {rec.setup_time}")
+            if rec.key == "argos":
+                print("     Quality: lower, but private and free.")
+            if rec.url:
+                print(f"     URL: {rec.url}")
+            idx += 1
+
+
+def _setup_config_summary(choice: _SetupChoice) -> list[str]:
+    fetch_langs = [
+        *choice.learning,
+        *[lang for lang in choice.native if lang not in choice.learning],
+    ] or ["ja", "en"]
+    reading_specs = [
+        _SETUP_READING_AID_BY_LANG[lang][0]
+        for lang in choice.learning
+        if lang in _SETUP_READING_AID_BY_LANG
+    ]
+    wants_ja_ruby = any(spec.startswith("ja:") for spec in reading_specs)
+    fmt = "VTT" if wants_ja_ruby and choice.venue == "browser" else "SRT"
+    if choice.mt in {"online", "deepl"}:
+        mt = "DeepL translation fallback"
+    elif choice.mt == "ollama":
+        mt = "Ollama translation fallback"
+    elif choice.mt == "argos":
+        mt = "Argos translation fallback"
+    elif choice.mt == "offline":
+        mt = "offline translation fallback"
+    else:
+        mt = "no machine translation fallback"
+
+    rows = [
+        "Languages: " + ", ".join(_display_lang(lang) for lang in fetch_langs),
+        "Reading aids: " + (", ".join(reading_specs) if reading_specs else "none"),
+        "Translation: " + mt,
+        f"Output format: {fmt}",
+        "Download folder: ~/Downloads/GetSubtitle",
+    ]
+    return rows
 
 
 def _setup_config_text(choice: _SetupChoice) -> str:
     """Emit a user_settings.toml using canonical key names.
     Reading aids land under `[modify].reading` (NOT the legacy
     `[modify].furigana = "hiragana"` form). Engine picks Ollama when
-    the daemon is reachable and the user wanted offline MT."""
+    the daemon is reachable and the user wanted generic offline MT."""
     fetch_langs = ",".join(
         [*choice.learning, *[lang for lang in choice.native if lang not in choice.learning]]
     ) or "ja,en"
@@ -14646,10 +14745,15 @@ def _setup_config_text(choice: _SetupChoice) -> str:
     wants_ja_ruby = any(s.startswith("ja:") for s in rom_specs)
     fmt = "vtt" if wants_ja_ruby and choice.venue == "browser" else "srt"
 
-    # MT engine selection mirrors _setup_recommendations: prefer Ollama
-    # when available, otherwise Argos for offline; DeepL for online.
-    if choice.mt == "online":
+    # MT engine selection mirrors _setup_recommendations. New setup
+    # profiles store explicit engines; older profiles may still say
+    # "offline" / "online".
+    if choice.mt in {"online", "deepl"}:
         mt_engine = "deepl"
+    elif choice.mt == "ollama":
+        mt_engine = "ollama"
+    elif choice.mt == "argos":
+        mt_engine = "argos"
     elif choice.mt == "offline":
         mt_engine = "ollama" if (shutil.which("ollama") and _wizard_ollama_reachable()) else "argos"
     else:
@@ -14720,43 +14824,57 @@ def _setup_config_text(choice: _SetupChoice) -> str:
     return "\n".join(lines)
 
 
-def _setup_write_config(choice: _SetupChoice) -> bool:
-    """Write user_settings.toml with the wizard's choices. Shows a full
-    preview before any write, and backs up an existing file to
-    `user_settings.toml.bak` before overwriting so destructive writes
-    are reversible."""
+def _setup_write_config_status(choice: _SetupChoice) -> str:
+    """Write user_settings.toml and return an outcome label.
+
+    Outcomes:
+      configured   wrote a new/updated config
+      already      existing config already matched
+      not_changed  user kept an existing config
+      skipped      write could not be completed
+    """
     path = config_path()
     new_text = _setup_config_text(choice)
 
     print()
-    print("  Will write the following to user_settings.toml:")
-    print("  " + "─" * 60)
-    for line in new_text.splitlines():
-        print("  │ " + line)
-    print("  " + "─" * 60)
+    print("  Preferences to save:")
+    for row in _setup_config_summary(choice):
+        print("    ✓ " + row)
+    print()
+    print(f"  This creates or updates: {path}")
+    if _wizard_yesno("  Show raw config?", default=False):
+        print("  " + "─" * 60)
+        for line in new_text.splitlines():
+            print("  │ " + line)
+        print("  " + "─" * 60)
 
     if path.exists():
         existing = path.read_text(encoding="utf-8")
         if existing.strip() == new_text.strip():
             print(f"  No change — {path} already matches.")
-            return True
+            return "already"
         print(f"  Existing file: {path}")
         print("  A backup will be saved to user_settings.toml.bak before overwriting.")
         if not _wizard_yesno(f"  Overwrite (backing up to .bak)?", default=False):
             print(f"  Kept existing config: {path}")
-            return False
+            return "not_changed"
         try:
             backup = path.with_suffix(path.suffix + ".bak")
             backup.write_text(existing, encoding="utf-8")
             print(f"  Backup: {backup}")
         except OSError as e:
             print(f"  Backup failed ({e}); aborting write.")
-            return False
+            return "skipped"
 
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(new_text, encoding="utf-8")
     print(f"  Created {path}")
-    return True
+    return "configured"
+
+
+def _setup_write_config(choice: _SetupChoice) -> bool:
+    """Compatibility wrapper for callers/tests that only need success."""
+    return _setup_write_config_status(choice) in {"already", "configured"}
 
 
 # Approximate install size and duration for each known extra. Lets us
@@ -14891,32 +15009,72 @@ def _setup_pip_fix_target(fix: str) -> tuple[str, str | None] | None:
     return package, None
 
 
-_SETUP_SMOKE_URL = "https://www.imdb.com/title/tt0096283/"   # Totoro — small, ja+en widely available
+_SETUP_SMOKE_URL = "https://www.themoviedb.org/movie/129-spirited-away"  # broad multilingual coverage
 
 
 def _setup_smoke_test(choice: _SetupChoice) -> None:
-    """Run one tiny dry-run against a known-good public URL to prove the
+    """Run one small dry-run against a known-good public URL to prove the
     stack works end-to-end. Best-effort; failures here aren't fatal."""
     print()
-    print("Smoke test — dry-running one fetch to prove the stack works…")
+    print("Quick subtitle search")
     langs = ",".join(choice.learning + [lang for lang in choice.native if lang not in choice.learning]) or "ja,en"
     argv = [_SETUP_SMOKE_URL, "-l", langs, "--dry-run"]
-    print(f"  $ getsubtitle {' '.join(argv)}")
+    print("  Checking Spirited Away without downloading files.")
+    output = io.StringIO()
     try:
-        rc = main(argv)
+        with contextlib.redirect_stdout(output):
+            rc = main(argv)
     except CliError as e:
-        print(f"  Smoke test surfaced an error: {e}")
+        print("  ✗ Subtitle search surfaced an error.")
+        print(f"    {e}")
         return
     except Exception as e:                                # pragma: no cover
-        print(f"  Smoke test crashed unexpectedly: {e}")
+        print("  ✗ Quick search crashed unexpectedly.")
+        print(f"    {e}")
         return
+    text = output.getvalue()
+    result_lines = [
+        line.strip()
+        for line in text.splitlines()
+        if re.match(r"\w[\w-]*: Found \d+/\d+", line.strip())
+    ]
     if rc == 0:
-        print("  ✓ Stack works. You're ready for a real run.")
+        print("  ✓ Subtitle providers reachable.")
+        if result_lines:
+            print("  Results:")
+            for line in result_lines[:6]:
+                print(f"    {line}")
+        print("  Setup looks good.")
     else:
-        print(f"  Smoke test exited with code {rc}. Inspect the output above.")
+        print(f"  ⚠ Quick search exited with code {rc}.")
+    if _wizard_yesno("  Show full fetch output?", default=False):
+        print()
+        print(f"  $ getsubtitle {' '.join(argv)}")
+        for line in text.rstrip().splitlines():
+            print("  " + line)
 
 
 _SETUP_PROFILE_FILENAME = "setup-profile.toml"
+
+
+_SETUP_INTRO = """\
+  ____      _   ____        _     _   _ _   _
+ / ___| ___| |_/ ___| _   _| |__ | |_| |_| |_| ___
+| |  _ / _ \\ __\\___ \\| | | | '_ \\| __| | __| |/ _ \\
+| |_| |  __/ |_ ___) | |_| | |_) | |_| | |_| |  __/
+ \\____|\\___|\\__|____/ \\__,_|_.__/ \\__|_|\\__|_|\\___|
+
+GetSubtitle — Setup
+
+Let's tune this for what you watch and what you're learning.
+
+------------------------------------------------------------------------------------------------
+Commands:
+    Enter  Accept default
+    b      Back
+    q      Quit
+    Ctrl-C Cancel
+------------------------------------------------------------------------------------------------"""
 
 
 def _setup_profile_path() -> Path:
@@ -14978,11 +15136,149 @@ def _setup_load_profile() -> _SetupChoice | None:
         return None
 
 
+def _setup_profile_mt_engine(choice: _SetupChoice) -> str:
+    """Return the concrete MT engine implied by a setup profile.
+
+    New setup profiles store explicit engine names. Older profiles used
+    broad values ("offline" / "online"), so keep those readable for
+    existing users.
+    """
+    return {
+        "deepl": "deepl",
+        "ollama": "ollama",
+        "argos": "argos",
+        "online": "deepl",
+        "offline": "argos",
+        "none": "",
+    }.get(choice.mt, "")
+
+
+def _setup_profile_reading_aids(choice: _SetupChoice) -> list[str]:
+    return [
+        _SETUP_READING_AID_BY_LANG[lang][0]
+        for lang in choice.learning
+        if lang in _SETUP_READING_AID_BY_LANG
+    ]
+
+
+def _setup_profile_preferred_format(choice: _SetupChoice, reading_aids: list[str]) -> tuple[str, str]:
+    """Infer a beginner-friendly format default from setup intent."""
+    has_ja_reading = any(spec.startswith("ja:") for spec in reading_aids)
+    if choice.venue == "browser" and has_ja_reading:
+        return "vtt", "browser/asbplayer"
+    if choice.venue == "local":
+        return "ass", "local desktop player"
+    if choice.venue in {"tablet", "plex"}:
+        return "srt", "TV/tablet/Plex compatibility"
+    return "", ""
+
+
+def _setup_profile_summary(choice: _SetupChoice) -> list[tuple[str, str]]:
+    languages = list(choice.learning + [lang for lang in choice.native if lang not in choice.learning])
+    reading_aids = _setup_profile_reading_aids(choice)
+    fmt, reason = _setup_profile_preferred_format(choice, reading_aids)
+    rows = [
+        ("Languages", ", ".join(languages) or "(none)"),
+        ("AI translation", _setup_profile_mt_engine(choice) or "skip"),
+        ("Reading aids", ", ".join(reading_aids) or "none"),
+    ]
+    if fmt:
+        rows.append(("Format", f"{fmt.upper()} ({reason})"))
+    return rows
+
+
+def _setup_display_langs(langs: list[str]) -> str:
+    return ", ".join(_display_lang(lang) for lang in langs) if langs else "none"
+
+
+def _setup_profile_defaults(choice: _SetupChoice) -> list[str]:
+    rows: list[str] = []
+    reading_aids = _setup_profile_reading_aids(choice)
+    if reading_aids:
+        labels = []
+        for spec in reading_aids:
+            if spec == "ja:hiragana":
+                labels.append("Japanese hiragana reading aids")
+            elif spec == "ko:revised":
+                labels.append("Korean romanization")
+            elif spec == "zh:marks":
+                labels.append("Mandarin pinyin")
+            elif spec == "yue:numbers":
+                labels.append("Cantonese jyutping")
+            else:
+                labels.append(spec)
+        rows.extend(labels)
+    mt = _setup_profile_mt_engine(choice)
+    if mt == "ollama":
+        rows.append("Ollama translation fallback")
+    elif mt == "deepl":
+        rows.append("DeepL translation fallback")
+    elif mt == "argos":
+        rows.append("Argos translation fallback")
+    else:
+        rows.append("No AI translation fallback")
+    fmt, reason = _setup_profile_preferred_format(choice, reading_aids)
+    if fmt:
+        rows.append(f"{fmt.upper()} output format ({reason})")
+    else:
+        rows.append("SRT output format")
+    return rows
+
+
+def _setup_ready_label(rec: _SetupRecommendation) -> str:
+    if rec.provider:
+        return KEY_PROVIDERS[rec.provider]["label"]
+    if rec.key.startswith("reading:"):
+        spec = rec.key.split(":", 1)[1]
+        if spec == "ja:hiragana":
+            return "Japanese reading aids"
+        if spec == "ko:revised":
+            return "Korean romanization"
+        if spec == "zh:marks":
+            return "Mandarin pinyin"
+        if spec == "yue:numbers":
+            return "Cantonese jyutping"
+        return rec.title
+    if rec.key == "ollama":
+        return "Ollama translation"
+    if rec.key == "argos":
+        return "Argos translation"
+    if rec.key == "deepl":
+        return "DeepL translation"
+    if rec.key == "config":
+        return "Saved preferences"
+    return rec.title
+
+
+def _setup_recommendation_preconfigured(rec: _SetupRecommendation) -> bool:
+    if rec.provider:
+        return provider_has_api_key(rec.provider)
+    if rec.key.startswith("reading:"):
+        spec = rec.key.split(":", 1)[1]
+        lang = spec.split(":", 1)[0]
+        mode = spec.split(":", 1)[1] if ":" in spec else ""
+        if lang == "ja":
+            return _setup_module_exists("sudachipy") and _setup_module_exists("sudachidict_core")
+        if lang == "ko" and mode == "yale":
+            return True
+        if lang == "ko":
+            return _setup_module_exists("korean_romanizer") and _setup_module_exists("g2pk")
+        if lang == "zh":
+            return _setup_module_exists("pypinyin")
+        if lang == "yue":
+            return _setup_module_exists("pycantonese")
+    if rec.key == "ollama":
+        return bool(shutil.which("ollama") and _wizard_ollama_reachable())
+    if rec.key == "argos":
+        return _setup_module_exists("argostranslate")
+    return False
+
+
 def _setup_configure_provider(provider: str) -> bool:
     info = KEY_PROVIDERS[provider]
     if provider_has_api_key(provider):
         print(f"  {info['label']}: already configured.")
-        return False
+        return True
     print(f"\n{info['label']} setup")
     print(f"  Use: {info['use']}")
     print(f"  URL: {info['url']}")
@@ -15025,6 +15321,77 @@ def _setup_try_examples() -> None:
     print('  getsubtitle "https://www.themoviedb.org/tv/1668-friends" -s 5 -e all --config ./friends.toml')
 
 
+def _setup_prompt_langs(question: str, default: str, examples: str) -> list[str]:
+    print()
+    print(f"  Examples: {examples}")
+    return _setup_parse_langs(_wizard_prompt(question, default))
+
+
+def _setup_collect_choice() -> _SetupChoice:
+    values: dict[str, object] = {}
+    step = 0
+    while step < 5:
+        try:
+            if step == 0:
+                values["native"] = _setup_prompt_langs(
+                    "What languages do you already understand? (comma-separated)",
+                    "english",
+                    "en,ko   english,korean",
+                )
+            elif step == 1:
+                values["learning"] = _setup_prompt_langs(
+                    "What languages are you trying to learn? (comma-separated)",
+                    "japanese",
+                    "ko,ja,es   korean,japanese,spanish",
+                )
+            elif step == 2:
+                content = _setup_select(
+                    "What do you watch most?",
+                    [("a", "Movies"), ("b", "TV shows"), ("c", "Anime"), ("d", "Mixed")],
+                    "d",
+                )
+                values["content"] = {"a": "movie", "b": "tv", "c": "anime", "d": "mixed"}[content]
+            elif step == 3:
+                venue = _setup_select(
+                    "Where do you watch it?",
+                    [
+                        ("a", "Streaming service via web browser"),
+                        ("b", "Streaming service on tablet/TV app"),
+                        ("c", "Plex"),
+                        ("d", "Third-party/local video player with subtitle support"),
+                        ("e", "Mixed"),
+                    ],
+                    "a",
+                )
+                values["venue"] = {"a": "browser", "b": "tablet", "c": "plex", "d": "local", "e": "mixed"}[venue]
+            elif step == 4:
+                mt = _setup_select(
+                    "Do you want AI translation when subtitles are missing?",
+                    [
+                        ("a", "Skip (use only what's downloaded)"),
+                        ("b", "Translate with Argos (local, basic quality)"),
+                        ("c", "Translate with Ollama (local, good quality; slower)"),
+                        ("d", "Translate with DeepL (online, better quality; needs API key)"),
+                    ],
+                    "a",
+                )
+                values["mt"] = {"a": "none", "b": "argos", "c": "ollama", "d": "deepl"}[mt]
+            step += 1
+        except _WizardBack:
+            if step == 0:
+                print("    Already at the first setup question.")
+            else:
+                step -= 1
+                print("    Going back to the previous setup question.")
+    return _SetupChoice(
+        native=list(values.get("native") or ["en"]),
+        learning=list(values.get("learning") or ["ja"]),
+        content=str(values.get("content") or "mixed"),
+        venue=str(values.get("venue") or "browser"),
+        mt=str(values.get("mt") or "none"),
+    )
+
+
 def setup_main(argv: list[str]) -> int:
     if argv and argv[0] in ("-h", "--help"):
         sys.stdout.write(HELP_TOPICS["setup"])
@@ -15032,8 +15399,7 @@ def setup_main(argv: list[str]) -> int:
     if not _wizard_is_interactive():
         raise CliError("setup needs an attached terminal. See: getsubtitle --help setup")
 
-    print("getsubtitle setup")
-    print("Let's tune this for what you watch and what you're learning.")
+    print(_SETUP_INTRO)
 
     # If a previous setup left a profile on disk, offer to reuse it so
     # the user only has to confirm rather than re-answer everything.
@@ -15048,7 +15414,7 @@ def setup_main(argv: list[str]) -> int:
             f"content={choice.content}, venue={choice.venue}, mt={choice.mt}"
         )
         print()
-        print("System check:")
+        print("Your system:")
         for row in _setup_system_summary():
             print("  - " + row)
         _setup_print_viewing_guidance(choice)
@@ -15056,36 +15422,15 @@ def setup_main(argv: list[str]) -> int:
         _setup_print_recommendations(recs)
         return _setup_run_recommendation_loop(recs, choice)
 
-    native = _setup_parse_langs(_wizard_prompt("What languages do you already understand? (comma-separated)", "english"))
-    learning = _setup_parse_langs(_wizard_prompt("What languages are you trying to learn? (comma-separated)", "japanese"))
-    content = _setup_select(
-        "What do you watch most?",
-        [("a", "Movies"), ("b", "TV shows"), ("c", "Anime"), ("d", "Mixed")],
-        "d",
-    )
-    content_value = {"a": "movie", "b": "tv", "c": "anime", "d": "mixed"}[content]
-    venue = _setup_select(
-        "Where do you watch it?",
-        [
-            ("a", "Streaming service via web browser"),
-            ("b", "Streaming service on tablet/TV app"),
-            ("c", "Plex"),
-            ("d", "Third-party/local video player with subtitle support"),
-            ("e", "Mixed"),
-        ],
-        "a",
-    )
-    venue_value = {"a": "browser", "b": "tablet", "c": "plex", "d": "local", "e": "mixed"}[venue]
-    mt = _setup_select(
-        "Do you want machine translation when subtitles are missing?",
-        [("a", "No"), ("b", "Free offline"), ("c", "Best quality online")],
-        "a",
-    )
-    mt_value = {"a": "none", "b": "offline", "c": "online"}[mt]
-    choice = _SetupChoice(native=native, learning=learning, content=content_value, venue=venue_value, mt=mt_value)
+    previous_back_nav = _wizard_back_nav_active()
+    globals()["_WIZARD_BACK_NAV_ACTIVE"] = True
+    try:
+        choice = _setup_collect_choice()
+    finally:
+        globals()["_WIZARD_BACK_NAV_ACTIVE"] = previous_back_nav
 
     print()
-    print("System check:")
+    print("Your system:")
     for row in _setup_system_summary():
         print("  - " + row)
     _setup_print_viewing_guidance(choice)
@@ -15099,24 +15444,59 @@ def _setup_run_recommendation_loop(
     recs: list[_SetupRecommendation], choice: _SetupChoice
 ) -> int:
     """First-pass through each recommendation, then a "revisit skipped"
-    edit-answers loop, then profile save + summary + smoke test + cross-link.
+    edit-answers loop, then profile save + summary + quick subtitle search + cross-link.
     Extracted so both the fresh-answers and resume-from-profile paths use
     the same finishing flow."""
-    completed: list[str] = []
+    already_configured: list[str] = []
+    configured_now: list[str] = []
+    not_changed: list[str] = []
     skipped: list[str] = []
+    optional_not_set_up: list[str] = []
     print()
-    print("Choose what to set up now. You can skip anything and come back later.")
-    for rec in recs:
-        if _setup_run_recommendation(rec, choice):
-            completed.append(rec.title)
-        else:
-            skipped.append(rec.title)
+    print("Recommended items")
+    recommended = [rec for rec in recs if rec.selected_by_default]
+    optional = [rec for rec in recs if not rec.selected_by_default]
+    for rec in recommended:
+        print(f"  ✓ {rec.title}")
+
+    include_optional = False
+    if optional:
+        print()
+        print("Advanced options")
+        for rec in optional:
+            print(f"  □ {rec.title}")
+        include_optional = _wizard_yesno("Include advanced options too?", default=False)
+        if not include_optional:
+            optional_not_set_up.extend(_setup_ready_label(rec) for rec in optional)
+
+    selected_recs = [*recommended, *(optional if include_optional else [])]
+    if _wizard_yesno("Set up selected items now?", default=True):
+        for rec in selected_recs:
+            _setup_record_recommendation_outcome(
+                rec,
+                _setup_run_recommendation_status(rec, choice, ask=False),
+                already_configured,
+                configured_now,
+                not_changed,
+                skipped,
+            )
+    else:
+        print("No problem. You can choose items one by one.")
+        for rec in selected_recs:
+            _setup_record_recommendation_outcome(
+                rec,
+                _setup_run_recommendation_status(rec, choice),
+                already_configured,
+                configured_now,
+                not_changed,
+                skipped,
+            )
 
     # Edit-answers loop: let the user revisit skipped items without
     # restarting the wizard. Loops until the user says they're done.
     while skipped:
         print()
-        print("Skipped so far:")
+        print("Skipped items")
         for i, title in enumerate(skipped, start=1):
             print(f"  {i}. {title}")
         pick = _wizard_prompt(
@@ -15131,37 +15511,55 @@ def _setup_run_recommendation_loop(
         chosen = next((r for r in recs if r.title == skipped[idx]), None)
         if chosen is None:
             break
-        if _setup_run_recommendation(chosen, choice):
-            completed.append(chosen.title)
+        status = _setup_run_recommendation_status(chosen, choice)
+        if status in {"already", "configured", "not_changed"}:
+            _setup_record_recommendation_outcome(
+                chosen, status, already_configured, configured_now, not_changed, skipped
+            )
             del skipped[idx]
 
     # Persist the answers so the interactive wizard can pre-fill from them.
     _setup_save_profile(choice)
 
     print()
-    print("Setup summary:")
-    print("  Configured: " + (", ".join(completed) if completed else "none yet"))
-    print("  Skipped: " + (", ".join(skipped) if skipped else "none"))
+    _setup_print_final_summary(
+        choice,
+        already_configured=already_configured,
+        configured_now=configured_now,
+        not_changed=not_changed,
+        optional_not_set_up=optional_not_set_up,
+        skipped=skipped,
+    )
 
-    # Optional final smoke test — proves the stack works end-to-end.
-    if _wizard_yesno("\nRun a quick smoke test now?", default=True):
+    # Optional final quick search — proves the stack works end-to-end.
+    if _wizard_yesno("\nRun a quick subtitle search now?", default=True):
         _setup_smoke_test(choice)
 
     print()
-    print("Next steps:")
-    print("  • Run `getsubtitle -i` for a guided workflow builder")
-    print("    (it will pre-fill from your setup answers).")
-    _setup_try_examples()
+    print("Next:")
+    print("  1) Start a guided workflow")
+    print("  2) Show example workflows")
+    print("  3) Exit")
+    try:
+        pick = _wizard_read_choice("Number", ["1", "2", "3"], "1", allow_back=False)
+    except _WizardAbort:
+        return 0
+    if pick == "1":
+        return interactive_main([])
+    if pick == "2":
+        _setup_try_examples()
     return 0
 
 
-def _setup_run_recommendation(rec: _SetupRecommendation, choice: _SetupChoice) -> bool:
+def _setup_run_recommendation(rec: _SetupRecommendation, choice: _SetupChoice, *, ask: bool = True) -> bool:
     """Apply a single recommendation. Returns True iff it was actually
     configured (False = skipped/declined/install-deferred). Encapsulates
     the per-key dispatch so both the first pass and the edit-answers
     loop go through the same path."""
-    if not _wizard_yesno(f"Set up {rec.title} now?", default=rec.selected_by_default):
+    if ask and not _wizard_yesno(f"Set up {rec.title} now?", default=rec.selected_by_default):
         return False
+    print()
+    print(rec.title)
     if rec.provider:
         return _setup_configure_provider(rec.provider)
     if rec.key == "config":
@@ -15217,6 +15615,95 @@ def _setup_run_recommendation(rec: _SetupRecommendation, choice: _SetupChoice) -
             return True
         return _setup_offer_pip_install("argostranslate")
     return False
+
+
+def _setup_run_recommendation_status(
+    rec: _SetupRecommendation, choice: _SetupChoice, *, ask: bool = True
+) -> str:
+    """Apply a recommendation and return a user-facing outcome bucket."""
+    if ask and not _wizard_yesno(f"Set up {rec.title} now?", default=rec.selected_by_default):
+        return "skipped"
+    if rec.key == "config":
+        print()
+        print(rec.title)
+        return _setup_write_config_status(choice)
+    preconfigured = _setup_recommendation_preconfigured(rec)
+    ok = _setup_run_recommendation(rec, choice, ask=False)
+    if ok:
+        return "already" if preconfigured else "configured"
+    return "skipped"
+
+
+def _setup_record_recommendation_outcome(
+    rec: _SetupRecommendation,
+    status: str,
+    already_configured: list[str],
+    configured_now: list[str],
+    not_changed: list[str],
+    skipped: list[str],
+) -> None:
+    label = _setup_ready_label(rec)
+    if status == "already":
+        if label not in already_configured:
+            already_configured.append(label)
+    elif status == "configured":
+        if label not in configured_now:
+            configured_now.append(label)
+    elif status == "not_changed":
+        message = "Existing preferences file kept" if rec.key == "config" else label
+        if message not in not_changed:
+            not_changed.append(message)
+    else:
+        if rec.title not in skipped:
+            skipped.append(rec.title)
+
+
+def _setup_print_final_summary(
+    choice: _SetupChoice,
+    *,
+    already_configured: list[str],
+    configured_now: list[str],
+    not_changed: list[str],
+    optional_not_set_up: list[str],
+    skipped: list[str],
+) -> None:
+    print("══════════════════════════════════════")
+    print("Setup complete")
+    print("══════════════════════════════════════")
+    if already_configured:
+        print("Already configured:")
+        for item in already_configured:
+            print(f"  ✓ {item}")
+    if configured_now:
+        print()
+        print("Configured during this setup:")
+        for item in configured_now:
+            print(f"  ✓ {item}")
+    print()
+    print("Profile:")
+    print("  Known languages:")
+    print(f"    {_setup_display_langs(choice.native)}")
+    print("  Learning:")
+    print(f"    {_setup_display_langs(choice.learning)}")
+    print("Defaults:")
+    for row in _setup_profile_defaults(choice):
+        print(f"  • {row}")
+    if not_changed:
+        print()
+        print("Not changed:")
+        for item in not_changed:
+            print(f"  • {item}")
+    if optional_not_set_up:
+        print()
+        print("Optional:")
+        for item in optional_not_set_up:
+            print(f"  • {item}")
+    if skipped:
+        print()
+        print("Still needs setup:")
+        for item in skipped:
+            print(f"  • {item}")
+    print()
 
 
 def _apply_download_config_defaults(parser: argparse.ArgumentParser) -> None:
@@ -15412,13 +15899,19 @@ Setup asks a few plain-language questions:
   2. Languages you are learning
   3. What you watch most: movie / TV shows / anime / mixed
   4. Where you watch: web browser / tablet-TV app / Plex / local player
-  5. Machine translation preference: none / free offline / best online
+  5. AI translation preference: skip / Argos / Ollama / DeepL
 
-Then it shows recommendations with rough cost and setup time, lets you
-choose which ones to opt into, opens the provider pages in your browser,
-saves API keys with the same secure key flow as `--set-key`, optionally
-creates user_settings.toml, and finishes with Easy / Medium / Hard
-commands to try.
+Then it groups recommendations by outcome:
+  - Getting subtitles
+  - Language learning
+  - Translation fallback
+  - Convenience
+
+Setup explains why each item helps, shows rough cost and time needed,
+offers to set up all recommended items together, opens the provider pages in
+your browser, saves API keys with the same secure key flow as `--set-key`,
+optionally saves your preferences in user_settings.toml, and finishes
+with Easy / Medium / Hard commands to try.
 
 Notes:
   - API keys are never written to TOML.
@@ -19373,7 +19866,10 @@ def _wizard_q11_action(state: _WizardState) -> str:
                     print(f"    {line}")
     # Smart-defaults block: questions the wizard no longer
     # asks. Surfaced so users see (and can revise) what was auto-picked.
-    notes = getattr(state, "_smart_defaults_notes", None) or {}
+    notes = {
+        **_wizard_setup_review_notes(state),
+        **(getattr(state, "_smart_defaults_notes", None) or {}),
+    }
     if notes:
         print()
         print("Smart defaults")
@@ -19486,6 +19982,43 @@ def _wizard_apply_smart_defaults(state: _WizardState) -> dict[str, str]:
     return notes
 
 
+def _wizard_setup_suffix(state: _WizardState, key: str) -> str:
+    sources = getattr(state, "_setup_prefilled", set()) or set()
+    return "  (from setup)" if key in sources else ""
+
+
+def _wizard_setup_review_notes(state: _WizardState) -> dict[str, str]:
+    sources = getattr(state, "_setup_prefilled", set()) or set()
+    if not sources:
+        return {}
+    notes: dict[str, str] = {}
+    if "languages" in sources and state.languages:
+        notes["Languages"] = ", ".join(state.languages) + "  (from setup)"
+    if "translate" in sources:
+        notes["AI translation"] = (state.mt_engine or "skip") + "  (from setup)"
+    if "reading_aids" in sources:
+        notes["Reading aids"] = (", ".join(state.reading_aids) or "none") + "  (from setup)"
+    if "format" in sources and state.format:
+        reason = getattr(state, "_setup_format_reason", "")
+        suffix = f"  (from setup: {reason})" if reason else "  (from setup)"
+        notes["Format"] = state.format.upper() + suffix
+    return notes
+
+
+def _wizard_forget_setup_source(state: _WizardState, label: str) -> None:
+    source_keys = {
+        "languages": {"languages"},
+        "AI translation": {"translate"},
+        "translate": {"translate"},
+        "reading aids": {"reading_aids", "format"},
+        "reading_aids": {"reading_aids", "format"},
+        "format / extension": {"format"},
+        "format": {"format"},
+    }.get(label, set())
+    if source_keys and hasattr(state, "_setup_prefilled"):
+        state._setup_prefilled = set(getattr(state, "_setup_prefilled", set())) - source_keys
+
+
 def _wizard_edit_targets(state: _WizardState) -> list[tuple[str, str, object]]:
     """Editable answers shown from the final action menu.
 
@@ -19495,7 +20028,7 @@ def _wizard_edit_targets(state: _WizardState) -> list[tuple[str, str, object]]:
     targets: list[tuple[str, str, object]] = [
         ("steps", " + ".join(s for s in _VALID_STEPS if s in state.steps), _wizard_q0_steps),
         ("source", f"{state.source_kind or 'path'} — {state.source}", _wizard_q1_source),
-        ("languages", ", ".join(state.languages) or "(none)", _wizard_q2_languages),
+        ("languages", (", ".join(state.languages) or "(none)") + _wizard_setup_suffix(state, "languages"), _wizard_q2_languages),
     ]
     if state.source_kind in ("url", "title"):
         scope_val = (f"S{state.season} E{state.episode}"
@@ -19509,11 +20042,11 @@ def _wizard_edit_targets(state: _WizardState) -> list[tuple[str, str, object]]:
     if state.steps & {"modify", "merge"}:
         targets.append(("cleanup preset", "on" if state.asbplayer else "off", _wizard_edit_cleanup_preset))
     if "translate" in state.steps:
-        targets.append(("AI translation", state.mt_engine or "skip", _wizard_q6_translate))
+        targets.append(("AI translation", (state.mt_engine or "skip") + _wizard_setup_suffix(state, "translate"), _wizard_q6_translate))
     if "modify" in state.steps:
-        targets.append(("reading aids", ", ".join(state.reading_aids) or "none", _wizard_q7_reading_aids))
+        targets.append(("reading aids", (", ".join(state.reading_aids) or "none") + _wizard_setup_suffix(state, "reading_aids"), _wizard_q7_reading_aids))
     if "merge" in state.steps:
-        targets.append(("format / extension", (state.format or "").upper() or "(auto)", _wizard_q9_format))
+        targets.append(("format / extension", ((state.format or "").upper() or "(auto)") + _wizard_setup_suffix(state, "format"), _wizard_q9_format))
         targets.append(("text size", state.font_size or "regular", _wizard_q_font_size))
     targets.append(("output folder", state.output or "(default)", _wizard_q10_output))
     return targets
@@ -19535,11 +20068,12 @@ def _wizard_step_skip(label: str, state: _WizardState) -> bool:
 
 
 def _wizard_step_prefilled(label: str, state: _WizardState) -> bool:
+    setup_sources = getattr(state, "_setup_prefilled", set()) or set()
     prefilled = {
         "languages": bool(state.languages),
         "filename_numbering": bool(state.episode_filename_start),
-        "translate": state.mt_engine != "",
-        "reading_aids": bool(state.reading_aids),
+        "translate": state.mt_engine != "" or "translate" in setup_sources,
+        "reading_aids": bool(state.reading_aids) or "reading_aids" in setup_sources,
         "format": bool(state.format),
         "font_size": bool(state.font_size),
     }
@@ -19548,6 +20082,7 @@ def _wizard_step_prefilled(label: str, state: _WizardState) -> bool:
 
 def _wizard_clear_step_answer(state: _WizardState, label: str) -> None:
     """Clear the answer owned by one wizard step before re-asking it."""
+    _wizard_forget_setup_source(state, label)
     if label == "steps":
         state.steps = {"fetch", "modify", "merge"}
         state.convert_smi = False
@@ -19765,6 +20300,7 @@ def _run_wizard_with_back_nav(state: _WizardState) -> tuple[_WizardState, str]:
                 print(f"    Please enter 1-{len(edit_targets)}, or 'done'.")
                 continue
             label, _value, fn = edit_targets[int(pick) - 1]
+            _wizard_forget_setup_source(state, label)
             if label == "scope":
                 state.season = ""
                 state.episode = ""
@@ -20830,11 +21366,15 @@ def interactive_main(argv: list[str] | None = None) -> int:
     setup_profile = _setup_load_profile()
     use_setup_profile = False
     if setup_profile is not None:
-        use_setup_profile = _wizard_yesno(
-            "Found your setup profile. Pre-fill Q2 (languages) / Q6 (MT engine) / "
-            "Q7 (reading aids) / format from it?",
-            default=True,
-        )
+        print("Setup profile found")
+        print()
+        print("From setup:")
+        rows = _setup_profile_summary(setup_profile)
+        key_width = max(len(label) for label, _value in rows)
+        for label, value in rows:
+            print(f"  {label:{key_width}}  {value}")
+        print()
+        use_setup_profile = _wizard_yesno("Use these defaults?", default=True)
 
     while True:
         state = _WizardState()
@@ -20844,25 +21384,22 @@ def interactive_main(argv: list[str] | None = None) -> int:
                 if lang not in setup_profile.learning
             ])
             state.order = list(state.languages)
-            state.mt_engine = {"online": "deepl", "offline": "argos", "none": ""}.get(
-                setup_profile.mt, ""
-            )
-            state.reading_aids = [
-                _SETUP_READING_AID_BY_LANG[lang][0]
-                for lang in setup_profile.learning
-                if lang in _SETUP_READING_AID_BY_LANG
-            ]
-            if setup_profile.venue == "browser" and any(
-                s.startswith("ja:") for s in state.reading_aids
-            ):
-                state.format = "vtt"
-                state.viewing_env = "browser"
-                state.asbplayer = True
-            print(
-                f"  Loaded: languages={','.join(state.languages)}, "
-                f"mt={state.mt_engine or '(none)'}, "
-                f"reading_aids={','.join(state.reading_aids) or '(none)'}."
-            )
+            state.mt_engine = _setup_profile_mt_engine(setup_profile)
+            state.reading_aids = _setup_profile_reading_aids(setup_profile)
+            fmt, fmt_reason = _setup_profile_preferred_format(setup_profile, state.reading_aids)
+            if fmt:
+                state.format = fmt
+                state.viewing_env = {
+                    "srt": "tv",
+                    "ass": "desktop",
+                    "vtt": "browser",
+                }.get(fmt, "")
+                if fmt == "vtt":
+                    state.asbplayer = True
+            state._setup_prefilled = {"languages", "translate", "reading_aids"}
+            if fmt:
+                state._setup_prefilled.add("format")
+                state._setup_format_reason = fmt_reason
 
         try:
             state, action = _run_wizard(state)

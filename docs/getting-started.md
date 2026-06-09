@@ -55,5 +55,8 @@ It can use page/catalog IDs to improve subtitle search and create VTT files for
 asbplayer, but it does not bypass login, DRM, region locks, or service access
 controls.
 
-See [Netflix Helper](../NetflixHelper.md) for the planned Chrome-extension /
-standalone-helper design.
+If automatic fetch cannot find what you need, use an external subtitle
+downloader for services you can already access, then return to GetSubtitle to
+clean, translate, add reading aids, and merge the downloaded files.
+
+See [Streaming subtitle tools](streaming-subtitle-tools.md).
