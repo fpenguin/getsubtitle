@@ -24,7 +24,7 @@ SCENARIO = Scenario(
         "n",          # don't open folder
     ],
     expect_stdout_contains=[
-        "Coverage estimate: 1/2 episode(s) already have all requested languages",
+        "Some requested subtitles are not in this folder yet",
         "S01E02 missing en",
     ],
     expect_main_call_count=1,

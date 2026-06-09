@@ -1,12 +1,12 @@
 # Netflix Helper design spec
 
 Netflix Helper is a companion idea for GetSubtitle. Its job is to make
-Netflix pages useful as metadata and workflow starters for language
-learners, without turning GetSubtitle into a Netflix subtitle scraper.
+Netflix and Crunchyroll pages useful as metadata and workflow starters for language
+learners, without turning GetSubtitle into a subtitle scraper.
 
 ## Goal
 
-Help a learner go from a Netflix movie/show page to a useful GetSubtitle
+Help a learner go from a Netflix and Crunchyroll movie/show page to a useful GetSubtitle
 workflow:
 
 1. Identify the title, Netflix work ID, season, episode, and available
@@ -24,11 +24,11 @@ shows, multiple episodes in one batch.
 
 Netflix Helper must not:
 
-- Bypass DRM, region locks, login walls, or account restrictions.
-- Capture or export protected Netflix media streams.
+- Bypass DRM, region locks, login walls, ads, or account restrictions.
+- Capture or export protected media streams.
 - Steal cookies, tokens, account identifiers, or playback secrets.
-- Promise direct download of official Netflix caption files.
-- Automate behavior that requires defeating Netflix access controls.
+- Promise direct download of official platform caption files.
+- Automate behavior that requires defeating platform access controls.
 
 If a browser-visible page exposes safe metadata, the helper may use that
 metadata. If a user independently has subtitle files, GetSubtitle can process
@@ -47,6 +47,7 @@ Netflix Helper should be useful in two forms:
 
 2. **Standalone helper**
    - Works without a browser extension.
+   - Opens a browser where user can login with their credentials
    - Accepts a Netflix URL or exported manifest JSON.
    - Generates a GetSubtitle command/TOML.
    - Can run GetSubtitle if installed.
@@ -83,8 +84,8 @@ The helper should pass only safe metadata to GetSubtitle:
 }
 ```
 
-Do not include Netflix cookies, bearer tokens, license URLs, media URLs, or
-caption file URLs in the manifest.
+Do not include cookies, bearer tokens, license URLs, media URLs, account IDs,
+or protected caption URLs in the manifest.
 
 ## Chrome extension UX
 
@@ -401,7 +402,7 @@ approved design has a clear reason.
 ## Privacy and security
 
 - Store preferences locally.
-- Do not log Netflix account identifiers.
+- Do not log account identifiers.
 - Do not persist browsing history beyond explicit saved workflows.
 - Do not transmit page data to a remote service.
 - Native helper must be opt-in and local-only.

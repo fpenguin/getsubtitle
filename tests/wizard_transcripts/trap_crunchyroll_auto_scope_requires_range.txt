@@ -172,10 +172,10 @@ Q9. Subtitle text size?                                             Progress [�
 Review your workflow                                                Progress [◼◼◼◼◼◼◼◼◼◼◼◼◻] 99%
 
 Plan
-  • Fetch ja, ko for:
+  • Fetch Japanese, Korean for:
     MF GHOST  (season 3, episode 1-13)
   • Clean up cues (single line, strip broadcast noise)
-  • Stack ja, ko into one SRT file: *.ja-ko.srt
+  • Create one Japanese + Korean SRT study subtitle file
   • Use subtitle text size: Regular
   • Save to:
     ~/Downloads/GetSubtitle

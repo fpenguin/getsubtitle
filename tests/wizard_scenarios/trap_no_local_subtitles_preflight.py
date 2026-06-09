@@ -22,7 +22,7 @@ SCENARIO = Scenario(
         "n",           # don't open folder
     ],
     expect_stdout_contains=[
-        "Coverage estimate: no local subtitle files found",
+        "No local subtitle files found",
         "Check the folder path, extract MKV subtitles, or fetch/download subtitles first.",
     ],
     expect_main_call_count=1,

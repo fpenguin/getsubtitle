@@ -147,10 +147,10 @@ Q8. Subtitle text size?                                             Progress [�
 Review your workflow                                                Progress [◼◼◼◼◼◼◼◼◼◼◼◼◻] 99%
 
 Plan
-  • Fetch ja, en for:
+  • Fetch Japanese, English for:
     https://www.imdb.com/title/tt28299608/  (season 1, episode all)
   • Clean up cues (single line, strip broadcast noise)
-  • Stack ja, en into one SRT file: *.ja-en.srt
+  • Create one Japanese + English SRT study subtitle file
   • Use subtitle text size: Regular
   • Save to:
     ~/Downloads/GetSubtitle

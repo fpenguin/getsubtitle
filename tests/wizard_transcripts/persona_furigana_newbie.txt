@@ -110,10 +110,10 @@ Q5. Final output format.                                            Progress [�
 Review your workflow                                                Progress [◼◼◼◼◼◼◼◼◼◼◼◼◻] 99%
 
 Plan
-  • Use local ja, en files in:
+  • Use local Japanese, English files in:
     {TMP}/Show
-  • Add reading aids: ja:hiragana
-  • Stack ja, en into one VTT file: *.ja-en.vtt
+  • Add pronunciation guides: Japanese hiragana readings
+  • Create one Japanese + English VTT study subtitle file
   • Save to:
     {TMP}/Show
 

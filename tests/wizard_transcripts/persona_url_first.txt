@@ -137,10 +137,10 @@ Q7. Final output format.                                            Progress [�
 Review your workflow                                                Progress [◼◼◼◼◼◼◼◼◼◼◼◼◻] 99%
 
 Plan
-  • Fetch ja, en for:
+  • Fetch Japanese, English for:
     https://www.imdb.com/title/tt28299608/  (season 1, episode all)
-  • Add reading aids: ja:hiragana
-  • Stack ja, en into one VTT file: *.ja-en.vtt
+  • Add pronunciation guides: Japanese hiragana readings
+  • Create one Japanese + English VTT study subtitle file
   • Save to:
     ~/Downloads/GetSubtitle
 

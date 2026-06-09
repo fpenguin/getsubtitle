@@ -98,6 +98,26 @@ final multi-language subtitle is readable enough to use for study.
 - v1.0 should not require users to understand provider internals, subtitle
   formats, or TOML before getting one useful multi-language subtitle file.
 
+## v0.9.6.4 — what's new
+
+- **Local sources first.** `getsubtitle fetch PATH` now checks embedded text
+  subtitle tracks and sidecar subtitles before online providers, then searches
+  online only for requested languages that are still missing. Image subtitle
+  streams are reported but skipped because they need OCR first.
+- **Cleaner local-file scanning.** macOS AppleDouble metadata files such as
+  `._Movie.mkv` are ignored across video, SRT, SMI, and wizard scans so they
+  no longer appear as fake media or trigger probe errors.
+- **More human wizard review and recovery.** The final review, preflight
+  coverage messages, partial-success summaries, and post-run success output
+  use learner-facing language and hide diagnostics until they are useful.
+- **Chinese/Cantonese reading-aid bridge.** Cantonese Jyutping workflows can
+  fetch ordinary Chinese subtitle files (`zh`) and derive `yue:numbers`
+  reading-aid tracks from them, because providers rarely expose Cantonese as a
+  separate downloadable language.
+- **Streaming helper guardrails.** `NetflixHelper.md` now frames Netflix and
+  Crunchyroll pages as safe metadata/workflow starters while preserving clear
+  privacy, security, and no-bypass boundaries.
+
 ## v0.9.6.3 — what's new
 
 - **Safer local-folder merge repair.** Merge can now conservatively use

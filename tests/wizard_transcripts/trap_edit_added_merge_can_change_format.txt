@@ -136,10 +136,10 @@ Q7. Subtitle text size?                                             Progress [�
 Review your workflow                                                Progress [◼◼◼◼◼◼◼◼◼◼◼◼◻] 99%
 
 Plan
-  • Fetch ko, en for:
+  • Fetch Korean, English for:
     {TMP}/Show
   • Clean up cues (single line, strip broadcast noise)
-  • Stack ko, en into one SRT file: *.ko-en.srt
+  • Create one Korean + English SRT study subtitle file
   • Use subtitle text size: Regular
   • Save to:
     {TMP}/Show
@@ -234,10 +234,10 @@ Current settings
 Review your workflow                                                Progress [◼◼◼◼◼◼◼◼◼◼◼◼◻] 99%
 
 Plan
-  • Fetch ko, en for:
+  • Fetch Korean, English for:
     {TMP}/Show
   • Clean up cues (single line, strip broadcast noise)
-  • Stack ko, en into one ASS file: *.ko-en.ass
+  • Create one Korean + English ASS study subtitle file
   • Use subtitle text size: Regular
   • Save to:
     {TMP}/Show

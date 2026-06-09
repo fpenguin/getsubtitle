@@ -120,10 +120,10 @@ Q6. Subtitle text size?                                             Progress [�
 Review your workflow                                                Progress [◼◼◼◼◼◼◼◼◼◼◼◼◻] 99%
 
 Plan
-  • Use local ja, en files in:
+  • Use local Japanese, English files in:
     {TMP}/Show
   • Clean up cues (single line, strip broadcast noise)
-  • Stack ja, en into one SRT file: *.ja-en.srt
+  • Create one Japanese + English SRT study subtitle file
   • Use subtitle text size: Regular
   • Save to:
     {TMP}/Show
@@ -144,9 +144,9 @@ What next?
   Number [1 | b=back | q=quit] > 1
 
 Preflight check — 1 item(s) to know about:
-  • Coverage estimate: 1/2 episode(s) already have all requested languages
+  • Some requested subtitles are not in this folder yet
       Why: Optional — the run works, but may fail or look worse without it.
-      Fix: S01E02 missing en
+      Fix: Local subtitles found: Japanese, English; S01E02 missing en
 
 ------------------------------------------------------------------------------------------------
 Running:

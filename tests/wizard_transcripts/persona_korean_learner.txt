@@ -104,7 +104,7 @@ Q6. Subtitle text size?                                             Progress [�
     Subtitle text size
     Format: ASS
 
-    This output uses ASS and will usually show 2 lines at once.
+    This output uses ASS and will usually show 3 lines at once.
     These presets are recommended:
 
     1) Regular (58) — recommended
@@ -118,17 +118,18 @@ Q6. Subtitle text size?                                             Progress [�
 Review your workflow                                                Progress [◼◼◼◼◼◼◼◼◼◼◼◼◻] 99%
 
 Plan
-  • Use local ko, en files in:
+  • Use local Korean, English files in:
     {TMP}/Show
-  • Add reading aids: ko:revised
-  • Stack ko, en into one ASS file: *.ko-en.ass
+  • Add pronunciation guides: Korean Revised Romanization
+  • Create one Korean + English ASS study subtitle file
   • Use subtitle text size: Regular
   • Save to:
     {TMP}/Show
 
 Before you run
-  ⚠ ASS reading aids use parenthetical text instead of true ruby above
-    the script.
+  ⚠ ASS shows reading aids as stacked subtitle lines. VTT is recommended
+    for positioned kanji reading support in desktop browser with
+    asbplayer plugin.
 
 Smart defaults
   Display order   ko, en  (top → bottom on screen)

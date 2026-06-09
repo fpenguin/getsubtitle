@@ -142,8 +142,9 @@ GetSubtitle searches public community databases such as Jimaku and Wyzie.
 It does **not** bypass DRM, account login, or region locks. Do not redistribute
 downloaded subtitles in violation of their original license.
 
-For local MKV files, GetSubtitle can extract embedded text subtitle tracks you
-already have and use them as translation or merge sources.
+For local video files, `getsubtitle fetch PATH` checks embedded text subtitle
+tracks and sidecar files first, then searches online only for missing
+languages.
 
 ## License
 

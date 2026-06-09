@@ -490,6 +490,16 @@ def request_json(
 _TMDB_CACHE: dict[str, object] = {}
 
 
+def _split_title_year_hint(title: str) -> tuple[str, int | None]:
+    """Return (clean_title, year) for common user/folder input like `Title (1996)`."""
+    text = str(title or "").strip()
+    m = re.search(r"\s*\((19\d{2}|20\d{2})\)\s*$", text)
+    if not m:
+        return text, None
+    clean = text[: m.start()].strip()
+    return clean or text, int(m.group(1))
+
+
 def _tmdb_get(path: str, params: dict[str, str], api_key: str) -> dict | None:
     """GET https://api.themoviedb.org/3/<path>?<params>&api_key=...
     Returns parsed JSON dict or None on any failure. Cached per call."""
@@ -532,9 +542,11 @@ def tmdb_search_movie(title: str, year: int | None = None, *, api_key: str | Non
     Shape: {tmdb_id, imdb_id, title, year, original_language}."""
     if api_key is None:
         api_key = get_provider_api_key("tmdb")
-    if not api_key or not title.strip():
+    clean_title, hinted_year = _split_title_year_hint(title)
+    year = year or hinted_year
+    if not api_key or not clean_title.strip():
         return None
-    params: dict[str, str] = {"query": title.strip()}
+    params: dict[str, str] = {"query": clean_title.strip()}
     if year:
         params["year"] = str(year)
     data = _tmdb_get("search/movie", params, api_key)
@@ -564,9 +576,13 @@ def tmdb_search_tv(title: str, *, api_key: str | None = None) -> dict | None:
     Shape: {tmdb_id, imdb_id, title, year, original_language}."""
     if api_key is None:
         api_key = get_provider_api_key("tmdb")
-    if not api_key or not title.strip():
+    clean_title, hinted_year = _split_title_year_hint(title)
+    if not api_key or not clean_title.strip():
         return None
-    data = _tmdb_get("search/tv", {"query": title.strip()}, api_key)
+    params: dict[str, str] = {"query": clean_title.strip()}
+    if hinted_year:
+        params["first_air_date_year"] = str(hinted_year)
+    data = _tmdb_get("search/tv", params, api_key)
     if not data:
         return None
     results = data.get("results") or []
@@ -659,6 +675,8 @@ def enrich_media_from_tmdb(
                 media.tmdb_id = hit["tmdb_id"]
             if hit.get("imdb_id"):
                 media.imdb_id = hit["imdb_id"]
+            if searcher is tmdb_search_movie:
+                media.is_movie = True
             if media.tmdb_id or media.imdb_id:
                 return True
     return False
@@ -1341,7 +1359,7 @@ def bridge_anilist_to_external_ids(media: MediaInfo) -> None:
     if not media.anilist_id or media.imdb_id or media.tmdb_id:
         return
     try:
-        with _StatusLine("Loading anime ID database"):
+        with _StatusLine("Checking title metadata"):
             data = request_json(ANIME_IDS_URL)
     except CliError:
         return
@@ -1375,7 +1393,7 @@ def bridge_external_ids_to_anilist(media: MediaInfo) -> None:
     if not (media.mal_id or media.imdb_id or media.tmdb_id or media.tvdb_id):
         return
     try:
-        with _StatusLine("Loading anime ID database"):
+        with _StatusLine("Checking title metadata"):
             data = request_json(ANIME_IDS_URL)
     except CliError:
         return
@@ -5088,16 +5106,32 @@ _VTT_RUBY_RE = re.compile(r"<ruby>(.*?)<rt>(.*?)</rt>(?:\s*</ruby>)?", re.DOTALL
 _VTT_HTML_TAG_RE = re.compile(r"<[^>]+>")
 
 
-def _strip_vtt_markup(text: str) -> str:
+def _strip_vtt_markup(text: str, *, preserve_ruby: bool = False) -> str:
     """Remove WebVTT/HTML markup from cue text. Ruby `<ruby>漢字<rt>かんじ</rt></ruby>`
     collapses to `漢字（かんじ）` (parenthetical reading) so merged output
-    preserves furigana information. Other HTML tags are stripped wholesale."""
+    preserves furigana information. Other HTML tags are stripped wholesale.
+
+    When `preserve_ruby` is true, keep existing ruby markup but still remove
+    WebVTT cue classes such as Netflix's `<c.bg_transparent>` wrappers.
+    """
     def _ruby_to_parens(m: re.Match) -> str:
         base = m.group(1).strip()
         reading = m.group(2).strip()
         return f"{base}（{reading}）" if reading else base
-    text = _VTT_RUBY_RE.sub(_ruby_to_parens, text)
+
+    protected: dict[str, str] = {}
+    if preserve_ruby:
+        def _protect_ruby(m: re.Match) -> str:
+            token = f"__GETSUBTITLE_VTT_RUBY_{len(protected)}__"
+            protected[token] = m.group(0)
+            return token
+
+        text = _VTT_RUBY_RE.sub(_protect_ruby, text)
+    else:
+        text = _VTT_RUBY_RE.sub(_ruby_to_parens, text)
     text = _VTT_HTML_TAG_RE.sub("", text)
+    for token, ruby in protected.items():
+        text = text.replace(token, ruby)
     return text
 
 
@@ -5140,7 +5174,7 @@ def parse_vtt(text: str, *, preserve_ruby: bool = False) -> list[SrtCue]:
         srt_time_line = f"{start} --> {end}"
         text_lines = []
         for ln in lines[time_line_idx + 1:]:
-            stripped = ln.strip() if preserve_ruby else _strip_vtt_markup(ln).strip()
+            stripped = _strip_vtt_markup(ln, preserve_ruby=preserve_ruby).strip()
             if stripped:
                 text_lines.append(stripped)
         cues.append(SrtCue(
@@ -5817,12 +5851,16 @@ def scan_smi_files(paths: list[Path]) -> list[Path]:
     sorted and deduplicated. Case-insensitive on the extension."""
     discovered: list[Path] = []
     for root in paths:
-        if root.is_file():
+        if root.is_file() and not is_filesystem_metadata_name(root.name):
             if root.suffix.lower() == ".smi":
                 discovered.append(root)
         elif root.is_dir():
             for p in root.rglob("*"):
-                if p.is_file() and p.suffix.lower() == ".smi":
+                if (
+                    p.is_file()
+                    and p.suffix.lower() == ".smi"
+                    and not is_filesystem_metadata_name(p.name)
+                ):
                     discovered.append(p)
     return sorted(set(discovered))
 
@@ -7161,6 +7199,13 @@ def cantonese_reading_pair_lines(text: str, mode: str) -> tuple[str, str] | None
     return ("".join(reading_chunks), "".join(text_chunks)) if has_reading else None
 
 
+def _cantonese_output_stem(src: Path) -> str:
+    stem = src.with_suffix("").name
+    if ".yue" not in stem and ".zh" in stem:
+        return stem + ".yue"
+    return stem
+
+
 def srt_to_cantonese_readings(src: Path, mode: str, single_line: bool = False) -> Path:
     text = src.read_text(encoding="utf-8-sig", errors="replace")
     blocks = re.split(r"\n\s*\n", text.strip())
@@ -7183,7 +7228,7 @@ def srt_to_cantonese_readings(src: Path, mode: str, single_line: bool = False) -
         output_blocks.append("\n".join(prefix + converted))
 
     out = src.with_suffix("").with_name(
-        src.with_suffix("").name + romanization_suffix("yue", mode, "asb.srt", single_line)
+        _cantonese_output_stem(src) + romanization_suffix("yue", mode, "asb.srt", single_line)
     )
     out.write_text("\n\n".join(output_blocks) + "\n", encoding="utf-8")
     return out
@@ -7211,7 +7256,7 @@ def srt_to_cantonese_ruby_vtt(src: Path, mode: str, single_line: bool = False) -
             output_blocks.append("\n".join([time_line] + converted))
 
     out = src.with_suffix("").with_name(
-        src.with_suffix("").name + romanization_suffix("yue", mode, "ruby.vtt", single_line)
+        _cantonese_output_stem(src) + romanization_suffix("yue", mode, "ruby.vtt", single_line)
     )
     out.write_text("\n\n".join(output_blocks) + "\n", encoding="utf-8")
     return out
@@ -7261,7 +7306,7 @@ Format: Layer, Start, End, Style, Text
             events.append(f"Dialogue: 0,{start},{end},Reading,{reading_row}")
 
     out = src.with_suffix("").with_name(
-        src.with_suffix("").name + romanization_suffix("yue", mode, "stacked.ass", single_line)
+        _cantonese_output_stem(src) + romanization_suffix("yue", mode, "stacked.ass", single_line)
     )
     out.write_text(header + "\n".join(events) + "\n", encoding="utf-8")
     return out
@@ -7277,7 +7322,11 @@ def generate_cantonese_romanization(
         formats = {"srt"}
     generated: list[Path] = []
     for path in paths:
-        if ".yue" not in path.name:
+        # Cantonese subtitles are commonly distributed as Chinese subtitles
+        # (`.zh.srt`) rather than a separate `.yue.srt` track. Generate
+        # Jyutping from either; the side file still uses `.yue.romanization-*`
+        # so merge can request `yue-numbers` as a learner-facing row.
+        if ".yue" not in path.name and ".zh" not in path.name:
             continue
         if path.suffix.lower() != ".srt":
             continue
@@ -8351,6 +8400,10 @@ def _format_rate(rate: float) -> str:
     return f"{rate * 100:.0f}%"
 
 
+def _format_alignment_rates(rates: dict[str, float]) -> str:
+    return ", ".join(f"{lang} aligned: {_format_rate(rate)}" for lang, rate in rates.items()) or "master only"
+
+
 MERGED_WATERMARK_LINES = [
     "Created with GetSubtitle",
     "Subtitles © their respective copyright holders",
@@ -8467,6 +8520,8 @@ def combine_main(argv: list[str]) -> int:
             base = _PSEUDO_LANG_VARIANTS[master_lang][0]
             if base in langs:
                 master_lang = base
+            elif base == "yue" and "zh" in langs:
+                master_lang = "zh"
     master_lang = master_lang.lower()
     if master_lang not in langs:
         raise CliError(
@@ -8481,27 +8536,22 @@ def combine_main(argv: list[str]) -> int:
             "Path not found: " + ", ".join(str(p) for p in missing)
         )
 
-    # If per-language :format hints OR pseudo-lang variants are present,
-    # use the extended scanner that also finds .vtt, .ass/.ssa, .smi, and
-    # multi-variant reading-aid side files. Otherwise stay on the
-    # SRT-only fast path for behavior parity.
+    # Use the extended scanner for merge by default. It still prefers SRT
+    # when multiple formats exist, but it also finds common local inputs like
+    # Netflix/streaming .vtt sidecars without forcing users to write
+    # `-l ja:vtt,ko:vtt`.
     inferred_scan: list[tuple[Path, int, int, str, str]] = []
-    if _effective_format_hints or pseudo_langs:
-        scanned_ext = scan_subtitle_files_extended(
-            paths,
-            format_hints=_effective_format_hints,
-            pseudo_langs=pseudo_langs,
-            requested_langs=langs,
-            inferred_out=inferred_scan,
-        )
-        grouped = group_subtitle_files_with_hints(
-            scanned_ext, format_hints=_effective_format_hints,
-        )
-        scanned_count = len(scanned_ext)
-    else:
-        scanned, inferred_scan = scan_srt_files_for_merge(paths, requested_langs=langs)
-        grouped = group_srts_by_episode(scanned)
-        scanned_count = len(scanned)
+    scanned_ext = scan_subtitle_files_extended(
+        paths,
+        format_hints=_effective_format_hints,
+        pseudo_langs=pseudo_langs,
+        requested_langs=langs,
+        inferred_out=inferred_scan,
+    )
+    grouped = group_subtitle_files_with_hints(
+        scanned_ext, format_hints=_effective_format_hints,
+    )
+    scanned_count = len(scanned_ext)
     output_dir_arg = Path(args.output).expanduser() if args.output else None
     sync_preset = SYNC_PRESETS[args.sync]
     episode_threshold = float(sync_preset["episode_success"])
@@ -8576,6 +8626,7 @@ def combine_main(argv: list[str]) -> int:
                 continue
             if is_pseudo_lang(lang):
                 base_lang, _infix, _mode = _PSEUDO_LANG_VARIANTS[lang]
+                source_base_lang = "zh" if base_lang == "yue" and "zh" in files else base_lang
                 use_ruby_side_file = (
                     args.format == "vtt"
                     and lang in files
@@ -8592,19 +8643,19 @@ def combine_main(argv: list[str]) -> int:
                         continue
                     except Exception:
                         pass
-                if base_lang not in base_cue_cache:
-                    if base_lang not in files:
+                if source_base_lang not in base_cue_cache:
+                    if source_base_lang not in files:
                         continue
                     try:
-                        base_cue_cache[base_lang] = read_cues_from_file(
-                            files[base_lang],
-                            lang_hint=base_lang,
+                        base_cue_cache[source_base_lang] = read_cues_from_file(
+                            files[source_base_lang],
+                            lang_hint=source_base_lang,
                             preserve_vtt_ruby=args.format == "vtt",
                         )
                     except Exception:
                         continue
                 target_cues[lang] = derive_pseudo_lang_cues(
-                    base_cue_cache[base_lang],
+                    base_cue_cache[source_base_lang],
                     lang,
                     preserve_lines=args.preserve_lines,
                 )
@@ -8653,7 +8704,7 @@ def combine_main(argv: list[str]) -> int:
             missing_str = ", ".join(missing_langs) if missing_langs else "low time-overlap"
             skipped.append((
                 key,
-                f"match rate {_format_rate(worst_rate)} below {args.sync} threshold {_format_rate(episode_threshold)} "
+                f"alignment {_format_rate(worst_rate)} below {args.sync} threshold {_format_rate(episode_threshold)} "
                 f"(missing: {missing_str}; use --force to write anyway)",
             ))
             continue
@@ -8672,9 +8723,16 @@ def combine_main(argv: list[str]) -> int:
         _COMBINE_PENDING[dest_path] = (combined, missing_langs)
 
     print(f"\nPlanned outputs: {len(plan)}")
+    show_alignment_details = any(
+        any(rate < 0.999 for rate in rates.values())
+        for _key, _src, _dest, rates in plan
+    )
+    if show_alignment_details:
+        print("  Alignment compares support-language cues against the timing master.")
+        print("  Lower percentages usually mean missing lines or different cue timing, not translation quality.")
     for key, _src, dest, rates in plan:
-        rate_str = ", ".join(f"{lang}={_format_rate(r)}" for lang, r in rates.items()) or "(master only)"
-        print(f"  {_episode_label_se(*key)} -> {dest.name}  [{rate_str}]")
+        rate_suffix = f"  [{_format_alignment_rates(rates)}]" if rates and show_alignment_details else ""
+        print(f"  {_episode_label_se(*key)} -> {dest.name}{rate_suffix}")
 
     if skipped:
         print(f"\nSkipped: {len(skipped)}")
@@ -9155,12 +9213,20 @@ IMAGE_SUBTITLE_CODECS = {"hdmv_pgs_subtitle", "dvd_subtitle", "dvb_subtitle", "x
 def scan_video_files(paths: list[Path]) -> list[Path]:
     out: list[Path] = []
     for p in paths:
-        if p.is_file() and p.suffix.lower() in _BATCH_VIDEO_EXTS:
+        if (
+            p.is_file()
+            and p.suffix.lower() in _BATCH_VIDEO_EXTS
+            and not is_filesystem_metadata_name(p.name)
+        ):
             out.append(p)
         elif p.is_dir():
             out.extend(
                 f for f in p.rglob("*")
-                if f.is_file() and f.suffix.lower() in _BATCH_VIDEO_EXTS
+                if (
+                    f.is_file()
+                    and f.suffix.lower() in _BATCH_VIDEO_EXTS
+                    and not is_filesystem_metadata_name(f.name)
+                )
             )
     return sorted(out)
 
@@ -9177,10 +9243,10 @@ def _ffprobe_subtitle_streams(path: Path) -> list[dict]:
     ]
     proc = subprocess.run(cmd, text=True, capture_output=True)
     if proc.returncode != 0:
-        msg = (proc.stderr or proc.stdout or "ffprobe failed").strip()
+        msg = (getattr(proc, "stderr", "") or getattr(proc, "stdout", "") or "ffprobe failed").strip()
         raise CliError(msg)
     try:
-        data = json.loads(proc.stdout or "{}")
+        data = json.loads(getattr(proc, "stdout", "") or "{}")
     except json.JSONDecodeError as e:
         raise CliError(f"ffprobe returned invalid JSON: {e}") from e
     return list(data.get("streams") or [])
@@ -9198,6 +9264,13 @@ def plan_mkv_subtitle_extraction(video_files: list[Path]) -> tuple[list[tuple[Pa
     plan: list[tuple[Path, int, str, str, Path]] = []
     notes: list[str] = []
     for video in video_files:
+        try:
+            if video.stat().st_size == 0:
+                notes.append(f"{video.name}: no embedded subtitle streams")
+                continue
+        except OSError as e:
+            notes.append(f"{video.name}: {e}")
+            continue
         try:
             streams = _ffprobe_subtitle_streams(video)
         except CliError as e:
@@ -9281,6 +9354,204 @@ def _embedded_subtitle_lang_summary(plan: list[tuple[Path, int, str, str, Path]]
         if base_lang not in langs:
             langs.append(base_lang)
     return ", ".join(langs) if langs else "unknown"
+
+
+def _local_fetch_lang_counts(paths: list[Path], requested_langs: list[str]) -> dict[str, int]:
+    requested = {lang for lang in requested_langs if lang and not is_pseudo_lang(lang)}
+    counts = {lang: 0 for lang in requested}
+    if not requested:
+        return counts
+    seen: set[tuple[Path, str]] = set()
+    scanned = scan_subtitle_files_extended(paths, requested_langs=list(requested))
+    for path, _season, _episode, lang, _is_mt, _fmt in scanned:
+        base_lang = lang.split(".", 1)[0]
+        if base_lang in requested and (path, base_lang) not in seen:
+            counts[base_lang] = counts.get(base_lang, 0) + 1
+            seen.add((path, base_lang))
+    return counts
+
+
+def _smi_fetch_conversion_plan(
+    paths: list[Path],
+    *,
+    requested_langs: list[str],
+    already_covered: set[str],
+) -> tuple[list[tuple[Path, set[str]]], dict[str, int], list[str]]:
+    requested = {lang for lang in requested_langs if lang and not is_pseudo_lang(lang)}
+    plans: list[tuple[Path, set[str]]] = []
+    counts = {lang: 0 for lang in requested}
+    notes: list[str] = []
+    if not requested:
+        return plans, counts, notes
+
+    for smi in scan_smi_files(paths):
+        try:
+            by_lang = parse_sami(_sami_decode_bytes(smi.read_bytes()))
+        except Exception as e:
+            notes.append(f"{smi.name}: could not inspect SAMI subtitles ({e})")
+            continue
+        wanted = {
+            lang for lang in requested
+            if lang not in already_covered and lang in by_lang and by_lang.get(lang)
+        }
+        if not wanted:
+            continue
+        plans.append((smi, wanted))
+        for lang in wanted:
+            counts[lang] = counts.get(lang, 0) + 1
+    return plans, counts, notes
+
+
+def _filter_embedded_plan_for_fetch(
+    plan: list[tuple[Path, int, str, str, Path]],
+    *,
+    requested_langs: list[str],
+    already_covered: set[str],
+) -> tuple[list[tuple[Path, int, str, str, Path]], dict[str, int]]:
+    requested = {lang for lang in requested_langs if lang and not is_pseudo_lang(lang)}
+    counts = {lang: 0 for lang in requested}
+    filtered: list[tuple[Path, int, str, str, Path]] = []
+    for row in plan:
+        _video, _stream_index, lang, _codec, _dest = row
+        base_lang = lang.split(".", 1)[0]
+        if base_lang not in requested or base_lang in already_covered:
+            continue
+        filtered.append(row)
+        counts[base_lang] = counts.get(base_lang, 0) + 1
+    return filtered, counts
+
+
+def _complete_fetch_langs(counts: dict[str, int], expected_items: int) -> set[str]:
+    expected = max(1, expected_items)
+    return {lang for lang, count in counts.items() if count >= expected}
+
+
+def _local_subtitle_scan_paths_for_fetch(target: Path) -> list[Path]:
+    if not target.is_file() or target.suffix.lower() not in _BATCH_VIDEO_EXTS:
+        return [target]
+    stem = target.with_suffix("").name
+    suffixes = {".srt", ".vtt", ".ass", ".ssa", ".smi"}
+    sidecars = [
+        p for p in sorted(target.parent.glob(stem + ".*"))
+        if p.is_file() and p.suffix.lower() in suffixes
+    ]
+    return sidecars or [target]
+
+
+def prepare_local_subtitle_sources_for_fetch(
+    target: Path,
+    *,
+    requested_langs: list[str],
+    dry_run: bool,
+) -> list[str]:
+    """Inspect/extract local subtitle sources before online fetch.
+
+    `fetch PATH` treats embedded video subtitle streams and sidecar files as
+    first-class subtitle sources. It prepares requested languages that are
+    already local, then returns only the languages still worth searching
+    online.
+    """
+    requested = [lang for lang in requested_langs if lang and not is_pseudo_lang(lang)]
+    if not requested:
+        return requested_langs
+
+    subtitle_paths = _local_subtitle_scan_paths_for_fetch(target)
+    video_files = scan_video_files([target])
+    expected_items = max(1, len(video_files))
+
+    local_counts = _local_fetch_lang_counts(subtitle_paths, requested)
+    preexisting_counts = dict(local_counts)
+    covered = _complete_fetch_langs(local_counts, expected_items)
+
+    smi_plan, smi_counts, smi_notes = _smi_fetch_conversion_plan(
+        subtitle_paths,
+        requested_langs=requested,
+        already_covered=covered,
+    )
+    for lang, count in smi_counts.items():
+        local_counts[lang] = local_counts.get(lang, 0) + count
+    covered = _complete_fetch_langs(local_counts, expected_items)
+
+    embedded_plan: list[tuple[Path, int, str, str, Path]] = []
+    embedded_notes: list[str] = []
+    if video_files:
+        try:
+            raw_plan, embedded_notes = plan_mkv_subtitle_extraction(video_files)
+            embedded_plan, embedded_counts = _filter_embedded_plan_for_fetch(
+                raw_plan,
+                requested_langs=requested,
+                already_covered=covered,
+            )
+            for lang, count in embedded_counts.items():
+                local_counts[lang] = local_counts.get(lang, 0) + count
+        except CliError as e:
+            embedded_notes.append(str(e))
+
+    covered_after_plan = _complete_fetch_langs(local_counts, expected_items)
+    if not covered_after_plan and not smi_plan and not embedded_plan:
+        return requested
+
+    print("\nLocal subtitle source check:")
+    print(f"  Requested: {', '.join(requested)}")
+    if expected_items > 1:
+        print(f"  Local coverage target: {expected_items} video file(s)")
+    preexisting_covered = _complete_fetch_langs(preexisting_counts, expected_items)
+    if preexisting_covered:
+        existing = ", ".join(f"{lang} ({preexisting_counts.get(lang, 0)}/{expected_items})" for lang in sorted(preexisting_covered))
+        print(f"  Already available beside video: {existing}")
+    if smi_plan:
+        smi_langs = sorted({lang for _path, langs in smi_plan for lang in langs})
+        action = "Would convert" if dry_run else "Converting"
+        print(f"  {action} SMI sidecar subtitles: {', '.join(smi_langs)}")
+        for smi, langs in smi_plan[:8]:
+            print(f"    - {smi.name} ({', '.join(sorted(langs))})")
+        if len(smi_plan) > 8:
+            print(f"    ... and {len(smi_plan) - 8} more")
+    if embedded_plan:
+        embedded_langs = sorted({lang.split('.', 1)[0] for _v, _i, lang, _c, _d in embedded_plan})
+        action = "Would extract" if dry_run else "Extracting"
+        print(f"  {action} embedded text subtitle streams: {', '.join(embedded_langs)}")
+        for video, stream_index, lang, codec, dest in embedded_plan[:8]:
+            print(f"    - {video.name} stream {stream_index} ({lang}, {codec}) -> {dest.name}")
+        if len(embedded_plan) > 8:
+            print(f"    ... and {len(embedded_plan) - 8} more")
+    for note in [*smi_notes, *embedded_notes][:8]:
+        print(f"  Note: {note}")
+
+    if not dry_run:
+        for smi, langs in smi_plan:
+            try:
+                written, skipped = convert_smi_file(smi, only_langs=langs)
+            except CliError as e:
+                print(f"  SMI conversion skipped: {e}")
+                continue
+            for path in [*written, *skipped]:
+                parsed = parse_srt_filename(path.name)
+                if parsed:
+                    local_counts[parsed[2]] = local_counts.get(parsed[2], 0) + 1
+        if embedded_plan:
+            try:
+                written, skipped, errors = extract_mkv_subtitle_plan(embedded_plan)
+            except CliError as e:
+                print(f"  Embedded extraction skipped: {e}")
+                written, skipped, errors = [], [], []
+            for msg in errors[:8]:
+                print(f"  Embedded extraction error: {msg}")
+            for path in sorted(set([*written, *skipped])):
+                srt_path, _was_written = convert_text_subtitle_to_srt_file(path)
+                final_path = srt_path or path
+                m = _LANG_FILENAME_PATTERN.search(final_path.name)
+                if m:
+                    lang = LANGUAGE_ALIASES.get(m.group(1).lower(), m.group(1).lower())
+                    local_counts[lang] = local_counts.get(lang, 0) + 1
+
+    covered_final = _complete_fetch_langs(local_counts, expected_items)
+    remaining = [lang for lang in requested if lang not in covered_final]
+    if remaining:
+        print(f"  Online fetch will search missing languages: {', '.join(remaining)}")
+    else:
+        print("  All requested languages are available locally; online fetch skipped.")
+    return remaining
 
 
 def maybe_extract_embedded_subtitles_after_fetch_miss(
@@ -9520,7 +9791,7 @@ def modify_main(argv: list[str]) -> int:
         ja_paths = [t[0] for t in scanned if t[3] == "ja"]
         ko_paths = [t[0] for t in scanned if t[3] == "ko"]
         zh_paths = [t[0] for t in scanned if t[3] == "zh"]
-        yue_paths = [t[0] for t in scanned if t[3] == "yue"]
+        yue_paths = [t[0] for t in scanned if t[3] in {"yue", "zh"}]
         if args.ja_reading and not ja_paths:
             print("(--reading ja:* requested but no .ja.srt files found; that step will be a no-op.)")
         if args.ko_reading and not ko_paths:
@@ -9528,7 +9799,7 @@ def modify_main(argv: list[str]) -> int:
         if args.zh_reading and not zh_paths:
             print("(--reading zh:* requested but no .zh.srt files found; that step will be a no-op.)")
         if args.yue_reading and not yue_paths:
-            print("(--reading yue:* requested but no .yue.srt files found; that step will be a no-op.)")
+            print("(--reading yue:* requested but no .zh/.yue.srt files found; that step will be a no-op.)")
 
         print(f"\nPlanned in-place: {len(scanned)} file(s)")
         for path, _season, _episode, lang, _is_mt in scanned[:20]:
@@ -9538,8 +9809,8 @@ def modify_main(argv: list[str]) -> int:
                 suffix = "  [ko → romanization variants]"
             elif args.zh_reading and lang == "zh":
                 suffix = "  [zh → pinyin variants]"
-            elif args.yue_reading and lang == "yue":
-                suffix = "  [yue → jyutping variants]"
+            elif args.yue_reading and lang in {"yue", "zh"}:
+                suffix = "  [Chinese text → Cantonese Jyutping variants]"
             else:
                 suffix = ""
             print(f"  {path.name}{suffix}")
@@ -9644,7 +9915,7 @@ def modify_main(argv: list[str]) -> int:
                             formats=reading_formats,
                         )
                     )
-                if args.yue_reading and lang == "yue":
+                if args.yue_reading and lang in {"yue", "zh"}:
                     cantonese_generated.extend(
                         generate_cantonese_romanization(
                             [path], args.yue_reading, bool(args.single_line),
@@ -9871,7 +10142,11 @@ def _batch_find_video_folders(root: "Path") -> list["Path"]:
     so the library root isn't treated as a show folder)."""
     folders: set["Path"] = set()
     for p in root.rglob("*"):
-        if p.is_file() and p.suffix.lower() in _BATCH_VIDEO_EXTS:
+        if (
+            p.is_file()
+            and p.suffix.lower() in _BATCH_VIDEO_EXTS
+            and not is_filesystem_metadata_name(p.name)
+        ):
             if p.parent == root:
                 continue
             folders.add(p.parent)
@@ -9884,13 +10159,19 @@ def _batch_find_bare_video_files(root: "Path") -> list["Path"]:
         return []
     return sorted(
         p for p in root.iterdir()
-        if p.is_file() and p.suffix.lower() in _BATCH_VIDEO_EXTS
+        if (
+            p.is_file()
+            and p.suffix.lower() in _BATCH_VIDEO_EXTS
+            and not is_filesystem_metadata_name(p.name)
+        )
     )
 
 
 def _directory_has_direct_video_files(root: "Path") -> bool:
     return root.is_dir() and any(
-        p.is_file() and p.suffix.lower() in _BATCH_VIDEO_EXTS
+        p.is_file()
+        and p.suffix.lower() in _BATCH_VIDEO_EXTS
+        and not is_filesystem_metadata_name(p.name)
         for p in root.iterdir()
     )
 
@@ -9953,17 +10234,18 @@ def build_fetch_parser() -> argparse.ArgumentParser:
 
     `fetch` accepts either a URL (resolves IDs from the URL and fetches
     matching subtitles — equivalent to typing `getsubtitle URL ...`) or
-    a PATH. With a PATH, it treats the folder as one show and runs the
-    per-show download per detected profile. Add --subdirectory to walk
-    one level of subdirs and treat each as its own show."""
+    a PATH. With a PATH, it checks local sidecars / embedded text subtitle
+    streams first, then runs online search only for missing languages. Add
+    --subdirectory to walk one level of subdirs and treat each as its own
+    show."""
     p = argparse.ArgumentParser(
         prog="getsubtitle fetch",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         description=(
-            "Download subtitles for a URL or for folder(s) on disk. "
-            "Accepts URL (existing download flow), PATH (treat folder "
-            "as one show), or PATH with --subdirectory (treat each "
-            "immediate subdir as its own show)."
+            "Find subtitles for a URL or folder(s) on disk. "
+            "For local PATH targets, fetch checks embedded video subtitles "
+            "and sidecar files first, then searches online only for missing "
+            "languages."
         ),
         epilog=textwrap.dedent(
             """
@@ -9973,6 +10255,10 @@ def build_fetch_parser() -> argparse.ArgumentParser:
 
               # PATH single show
               getsubtitle fetch ~/Downloads/GetSubtitle/MF\\ Ghost
+
+              # PATH movie/video — use embedded/sidecar subtitles first,
+              # then search online only for missing languages
+              getsubtitle fetch ./Movie.mkv -l en,es,fr --run
 
               # PATH library, every immediate subdir = a show
               getsubtitle fetch ~/Downloads/GetSubtitle --subdirectory --run
@@ -9994,6 +10280,7 @@ def build_fetch_parser() -> argparse.ArgumentParser:
                    help="PATH only: override the movie/show title used for online subtitle lookup.")
     p.add_argument("--anilist", type=int, metavar="ID",
                    help="PATH/URL: AniList ID override for anime title lookup.")
+    p.add_argument("--movie", action="store_true", help=argparse.SUPPRESS)
     p.add_argument("--run", action="store_true",
                    help="PATH only: actually run. Default is dry-run.")
     p.add_argument("-h", "--help", action="store_true",
@@ -10088,12 +10375,16 @@ def fetch_main(argv: list[str]) -> int:
                 fetch_langs_override=requested_langs,
                 title_override=args.title,
                 anilist_override=args.anilist,
+                movie_override=args.movie,
             )
             rc_total = rc or rc_total
             total_targets += 1
 
     print()
-    print(f"Processed {total_targets} target(s).")
+    if total_targets == 1:
+        print(f"Finished searching {target_path.name}.")
+    else:
+        print(f"Finished searching {total_targets} folders/files.")
     _wizard_summary_add(
         "fetch",
         planned=total_targets,
@@ -10132,7 +10423,8 @@ def _batch_fetch_one(target: "Path", show_folder: "Path", season: int | None,
                      profile: str, dry_run: bool,
                      fetch_langs_override: list[str] | None = None,
                      title_override: str | None = None,
-                     anilist_override: int | None = None) -> int:
+                     anilist_override: int | None = None,
+                     movie_override: bool = False) -> int:
     """Run fetch for one disk target (folder or bare file).
 
     Fetch-only — does NOT auto-translate. Users wanting MT to fill missing
@@ -10146,9 +10438,17 @@ def _batch_fetch_one(target: "Path", show_folder: "Path", season: int | None,
     output_dir = target if is_folder else target.parent
 
     fetch_langs = fetch_langs_override or _BATCH_FETCH_LANGS.get(profile, _BATCH_FETCH_LANGS["en"])
-    episode_arg = "all"
+    remaining_langs = prepare_local_subtitle_sources_for_fetch(
+        target,
+        requested_langs=fetch_langs,
+        dry_run=dry_run,
+    )
+    if not remaining_langs:
+        return 0
+    fetch_langs = remaining_langs
+    episode_arg = "auto" if movie_override else "all"
     parsed_episode = parse_episode_marker(target.name) if target.is_file() else None
-    if parsed_episode is not None:
+    if parsed_episode is not None and not movie_override:
         parsed_season, parsed_ep = parsed_episode
         if season is None and parsed_season > 0:
             season = parsed_season
@@ -10159,12 +10459,15 @@ def _batch_fetch_one(target: "Path", show_folder: "Path", season: int | None,
         sys.executable, "-m", "getsubtitle",
     ] if not shutil.which("getsubtitle") else ["getsubtitle"]
     fetch_cmd += ["--title", title]
+    if movie_override:
+        fetch_cmd.append("--movie")
     if anilist_override:
         fetch_cmd += ["--anilist", str(anilist_override)]
-    if season is not None:
+    if season is not None and not movie_override:
         fetch_cmd += ["-s", str(season)]
-    fetch_cmd += ["-e", episode_arg, "-l", ",".join(fetch_langs),
-                  "--layout", "flat", "-o", str(output_dir), "-y"]
+    if not movie_override:
+        fetch_cmd += ["-e", episode_arg]
+    fetch_cmd += ["-l", ",".join(fetch_langs), "--layout", "flat", "-o", str(output_dir), "-y"]
     suffix = " (requested)" if fetch_langs_override else ""
     print(f"  fetch: -l {','.join(fetch_langs)}{suffix}")
     rc = _batch_run(fetch_cmd, dry_run=dry_run)
@@ -10670,6 +10973,21 @@ def pipeline_main(argv: list[str]) -> int:
         printed_any = True
         print(f"━━ {name} ━━")
 
+    def _modify_noop_is_safe_before_merge(target: str) -> bool:
+        if "merge" not in blocks:
+            return False
+        merge_langs_value = (
+            _pipeline_language_value(blocks.get("merge", []))
+            or _pipeline_language_value(fetch_options)
+        )
+        merge_langs = split_csv(merge_langs_value or "", "")
+        if not merge_langs:
+            return False
+        target_path = Path(target).expanduser()
+        if scan_srt_files([target_path]):
+            return False
+        return bool(scan_subtitle_files_extended([target_path], requested_langs=merge_langs))
+
     if "fetch" in blocks:
         assert fetch_target is not None  # checked above
         _heading(f"fetch {fetch_target}")
@@ -10742,7 +11060,10 @@ def pipeline_main(argv: list[str]) -> int:
         if shared_force and "--force" not in sub_argv:
             sub_argv.append("--force")
         rc = modify_main(sub_argv)
-        rc_total = rc or rc_total
+        if rc and _modify_noop_is_safe_before_merge(downstream_target):
+            print("Modify skipped SRT-only cleanup; merge will use existing non-SRT subtitles.")
+        else:
+            rc_total = rc or rc_total
 
     if "merge" in blocks:
         if downstream_target is None:
@@ -11719,6 +12040,7 @@ def build_parser() -> argparse.ArgumentParser:
     search.add_argument("-l", "--languages", "--langs", "--lang", dest="langs", default="ja", metavar="CODES", help="Comma-separated language codes. Default: ja. Accepts ISO codes (ja,en) or full names (japanese,english). Example: ja,en,es")
     search.add_argument("--title", metavar="TEXT", help="Title override when URL metadata is missing or blocked.")
     search.add_argument("--anilist", type=int, metavar="ID", help="AniList ID override for anime.")
+    search.add_argument("--movie", action="store_true", help=argparse.SUPPRESS)
     search.add_argument("--browser", action="store_true", help="Open the URL in your browser first, useful for login/Cloudflare pages.")
     search.add_argument("--manual-search", nargs="?", const="on-missing", choices=["off", "on-missing", "always"], default="on-missing", metavar="{off,on-missing,always}", help="After automatic providers miss Japanese/Korean/Chinese subtitles, show community search links and offer to open them. Default: on-missing.")
     search.add_argument("--no-manual-search", "--no-manual-download", dest="manual_search", action="store_const", const="off", help="Disable community search suggestions after provider misses.")
@@ -12494,6 +12816,31 @@ def _wizard_unique_preview(items: Iterable[str], limit: int = 6) -> list[str]:
     return out
 
 
+def _wizard_issue_is_output_exists(item: str) -> bool:
+    return "output exists" in str(item).casefold()
+
+
+def _wizard_all_issues_are_output_exists(summary: _WizardRunSummary) -> bool:
+    issues: list[str] = []
+    for step in summary.steps_by_name.values():
+        issues.extend(step.missing)
+        issues.extend(step.failures)
+    return bool(issues) and all(_wizard_issue_is_output_exists(item) for item in issues)
+
+
+def _wizard_command_with_force(command: str) -> str:
+    if not command or " --force" in command or " -f" in command:
+        return command
+    return command + " --force"
+
+
+def _wizard_filename_preview(path_text: str) -> str:
+    try:
+        return Path(path_text).name
+    except Exception:
+        return str(path_text)
+
+
 def _wizard_print_run_summary(summary: _WizardRunSummary | None, rc: int) -> None:
     if summary is None:
         return
@@ -12504,17 +12851,35 @@ def _wizard_print_run_summary(summary: _WizardRunSummary | None, rc: int) -> Non
     missing_any = any(
         s.missing or s.failures for s in summary.steps_by_name.values()
     )
+    output_exists_only = _wizard_all_issues_are_output_exists(summary)
     show_details = not _wizard_is_interactive()
     merge_outputs = summary.steps_by_name.get("merge", _WizardStepSummary()).outputs
     if rc == 0 and not missing_any:
         print("Completed successfully")
+    elif output_exists_only:
+        print("Completed with no changes")
     else:
         print("Completed with issues")
-    if not show_details and (rc != 0 or missing_any):
+    if merge_outputs and rc == 0 and not missing_any:
+        print()
+        print("Created:")
+        for item in _wizard_unique_preview(merge_outputs, limit=6):
+            print(f"  ✓ {_wizard_filename_preview(item)}")
+        if len(merge_outputs) > 6:
+            print(f"  ... and {len(merge_outputs) - 6} more")
+    if not show_details and output_exists_only:
+        print("The merged subtitle already exists, so GetSubtitle did not overwrite it.")
+    elif not show_details and (rc != 0 or missing_any):
         print("Some subtitles were missing, or a provider reported an issue.")
         print("Use the messages above to retry, search manually, or merge again.")
 
-    if show_details and rc != 0:
+    if show_details and output_exists_only:
+        print(_format_failure(
+            what="No files were changed because the requested output already exists.",
+            why="GetSubtitle avoids overwriting merged subtitle files unless you ask it to.",
+            how="Re-run with --force to overwrite, or change the output folder / format.",
+        ))
+    elif show_details and rc != 0:
         # Standardised What / Why / How so a failed run is actionable.
         print(_format_failure(
             what="The workflow finished with issues (details per step below).",
@@ -12575,11 +12940,17 @@ def _wizard_print_run_summary(summary: _WizardRunSummary | None, rc: int) -> Non
     next_step = 1
     if merge_outputs:
         for text in (
-            "Open the merged subtitle file in your player.",
-            "Check subtitle timing and readability.",
+            "Open the subtitle file in your player.",
             "Adjust font size or format if needed.",
         ):
             print(f"  {next_step}. {text}")
+            next_step += 1
+    elif output_exists_only:
+        print(f"  {next_step}. Open the existing merged subtitle file, or re-run with --force to overwrite it.")
+        next_step += 1
+        if summary.command:
+            print(f"  {next_step}. Overwrite existing output with:")
+            print("     " + _wizard_command_with_force(summary.command))
             next_step += 1
     elif missing_any:
         for text in (
@@ -12596,7 +12967,7 @@ def _wizard_print_run_summary(summary: _WizardRunSummary | None, rc: int) -> Non
     else:
         print(f"  {next_step}. Add another language or reading aid when you want a multi-language file.")
         next_step += 1
-    if summary.command:
+    if summary.command and not output_exists_only:
         print(f"  {next_step}. Re-run this workflow command after any setup fixes:")
         print("     " + summary.command)
 
@@ -14300,7 +14671,7 @@ _SETUP_INSTALL_HINTS: dict[str, tuple[str, str]] = {
     "furigana":        ("~210 MB",  "30-60 seconds"),
     "romanization-ko": ("~80 MB", "30-60 seconds (nltk corpus on first run)"),
     "romanization-zh": ("~5 MB",  "~10 seconds"),
-    "romanization-yue": ("~20 MB", "~30 seconds"),
+    "romanization-yue": ("~45 MB", "~30 seconds"),
 }
 # Same shape but keyed by bare package name for when an extra isn't used.
 _SETUP_INSTALL_HINTS_BY_PACKAGE: dict[str, tuple[str, str]] = {
@@ -14309,7 +14680,7 @@ _SETUP_INSTALL_HINTS_BY_PACKAGE: dict[str, tuple[str, str]] = {
     "korean-romanizer":  ("~5 MB",  "~10 seconds"),
     "g2pk":              ("~70 MB", "30-60 seconds (nltk corpus on first run)"),
     "pypinyin":          ("~5 MB",  "~10 seconds"),
-    "pycantonese":       ("~20 MB", "~30 seconds"),
+    "pycantonese":       ("~45 MB", "~30 seconds"),
     "argostranslate":    ("~50 MB", "30-60 seconds"),
 }
 _SETUP_EXTRA_PACKAGES: dict[str, str] = {
@@ -15422,11 +15793,13 @@ Usage:
 With a URL, fetch resolves IDs from the URL and downloads matching
 subtitles from providers (Jimaku for anime; Wyzie for movies/TV).
 
-With a PATH, fetch treats the folder as one show: derives the title
-from the folder name, auto-detects the show's origin language via
-TMDB (or character-set heuristic when no TMDB key), and runs the
-right per-profile fetch chain. Add --subdirectory to walk one level
-of subdirs and treat each as its own show — the whole-library mode.
+With a PATH, fetch treats local subtitles as sources before going online:
+embedded text subtitle streams and matching sidecar files are used first,
+then online providers are searched only for missing languages. It derives
+the title from the folder name, auto-detects the show's origin language via
+TMDB (or character-set heuristic when no TMDB key), and runs the right
+per-profile fetch chain. Add --subdirectory to walk one level of subdirs
+and treat each as its own show — the whole-library mode.
 
 `fetch` is download-only. To fill in missing languages via MT, modify
 the cleanup pass, or stack a merge afterward, use the pipeline form
@@ -16490,6 +16863,8 @@ def _wizard_media_counts(path: Path, limit: int = 5000) -> tuple[int, int, int, 
     truncated = False
     if path.is_file():
         suffix = path.suffix.lower()
+        if is_filesystem_metadata_name(path.name):
+            return 0, 0, 0, False
         return (
             1 if suffix in _BATCH_VIDEO_EXTS else 0,
             1 if suffix in SUB_EXTENSIONS else 0,
@@ -16504,7 +16879,7 @@ def _wizard_media_counts(path: Path, limit: int = 5000) -> tuple[int, int, int, 
             break
         if item.is_dir() and parse_season_from_folder_name(item.name) is not None:
             season_dir_count += 1
-        elif item.is_file():
+        elif item.is_file() and not is_filesystem_metadata_name(item.name):
             suffix = item.suffix.lower()
             if suffix in _BATCH_VIDEO_EXTS:
                 video_count += 1
@@ -16677,10 +17052,16 @@ def _wizard_pick_title_candidate(title: str) -> tuple[str, str, str, bool] | Non
         print("    2) Use exactly what I typed (advanced; may fail)")
         while True:
             pick = _wizard_prompt("Number, URL, ID, or title", "1").strip()
-            if pick == "1" or not pick:
-                return "retry"
             if pick == "2":
                 return None
+            if pick == "1" or not pick:
+                try:
+                    pick = _wizard_prompt("Title, URL, or ID").strip()
+                except (_WizardBack, _WizardAbort):
+                    return "retry"
+                if not pick:
+                    print("    Please enter a title, metadata URL, AniList ID, or choose 2.")
+                    continue
             metadata_candidate = _wizard_candidate_from_metadata_input(pick)
             if metadata_candidate:
                 return metadata_candidate
@@ -16745,6 +17126,16 @@ def _wizard_path_fetch_title_guess(path: Path) -> str:
 def _wizard_clean_video_filename_title(name: str) -> str:
     text = Path(name).stem
     text = re.sub(r"^(?:\[[^\]]+\]|\([^)]+\))\s*", "", text).strip()
+    # Movie release filenames often have the useful title/year followed by
+    # rip/codec/audio/release-group tags. Prefer a clean "Title (Year)"
+    # guess over sending the whole release name to TMDB/AniList.
+    year_match = re.search(r"\b(19\d{2}|20\d{2})\b", text)
+    if year_match:
+        before_year = text[:year_match.start()].strip(" -._")
+        if before_year:
+            before_year = re.sub(r"[._]+", " ", before_year)
+            before_year = re.sub(r"\s+", " ", before_year)
+            return f"{before_year} ({year_match.group(1)})"
     text = re.sub(
         r"\s+(?:S\d{1,2}E\d{1,3}|s\d{1,2}e\d{1,3})(?:\b|[ ._-]).*$",
         "",
@@ -16752,6 +17143,12 @@ def _wizard_clean_video_filename_title(name: str) -> str:
     ).strip()
     text = re.sub(r"\s+-\s+(?:E)?\d{1,3}(?:\b|[ ._-]).*$", "", text).strip()
     text = re.sub(r"\s+E\d{1,3}(?:\b|[ ._-]).*$", "", text).strip()
+    release_tokens = (
+        r"WEB[- ]?DL|WEBRip|BluRay|BDRip|HDRip|DVDRip|HDTV|NF|AMZN|DSNP|"
+        r"Netflix|1080p|720p|2160p|480p|x264|x265|H\.?264|H\.?265|HEVC|"
+        r"AAC|DDP?5\.1|Atmos|2Audio|Dual Audio"
+    )
+    text = re.sub(rf"\s+(?:{release_tokens})(?:\b|[ ._-]).*$", "", text, flags=re.IGNORECASE).strip()
     text = re.sub(r"\s{2,}", " ", text)
     return text.strip(" ._-")
 
@@ -18601,7 +18998,11 @@ def _wizard_q9_format(state: _WizardState) -> None:
 def _wizard_expected_stack_line_count(state: _WizardState) -> int:
     if "merge" not in state.steps:
         return 1
-    return max(1, len(_wizard_merge_order(state)))
+    count = max(1, len(_wizard_merge_order(state)))
+    inline_reading = _wizard_merge_inline_reading_spec(state)
+    if inline_reading and (state.format or "").lower() in {"srt", "ass", "smi", "txt"}:
+        count += 1
+    return count
 
 
 def _wizard_should_ask_font_size(state: _WizardState) -> bool:
@@ -18625,6 +19026,7 @@ def _wizard_q_font_size(state: _WizardState) -> None:
 
     custom_default = re.sub(r"\D+", "", label(regular)) or "30"
     plural = "line" if line_count == 1 else "lines"
+    recommended_pick = "2" if fmt == "ass" and line_count >= 4 else "1"
     print()
     print(_wizard_next_q(state, "Subtitle text size?"))
     print("    Subtitle text size")
@@ -18637,12 +19039,12 @@ def _wizard_q_font_size(state: _WizardState) -> None:
         print(f"    This output uses {fmt.upper()} and will usually show {line_count} {plural} at once.")
         print("    These presets are recommended:")
     print()
-    print(f"    1) Regular ({label(regular)}) — recommended")
-    print(f"    2) Smaller ({label(smaller)})")
-    print(f"    3) Larger ({label(larger)})")
+    print(f"    1) Regular ({label(regular)})" + (" — recommended" if recommended_pick == "1" else ""))
+    print(f"    2) Smaller ({label(smaller)})" + (" — recommended" if recommended_pick == "2" else ""))
+    print(f"    3) Larger ({label(larger)})" + (" — recommended" if recommended_pick == "3" else ""))
     print("    4) Custom — enter exact font size")
     while True:
-        pick = _wizard_read_choice("Number", ["1", "2", "3", "4"], "1")
+        pick = _wizard_read_choice("Number", ["1", "2", "3", "4"], recommended_pick)
         if pick == "2":
             state.font_size = "smaller"
             return
@@ -18682,11 +19084,59 @@ def _wizard_q10_output(state: _WizardState) -> None:
         state.output = _wizard_prompt("Output folder", "~/Downloads/GetSubtitle")
 
 
+_WIZARD_READING_AID_DISPLAY = {
+    "ja:hiragana": "Japanese hiragana readings",
+    "ja:furigana": "Japanese hiragana readings",
+    "ja:katakana": "Japanese katakana readings",
+    "ja:romaji": "Japanese full-sentence romaji",
+    "ko:revised": "Korean Revised Romanization",
+    "ko:yale": "Korean Yale Romanization",
+    "zh:marks": "Chinese pinyin",
+    "zh:numbers": "Chinese numbered-tone pinyin",
+    "yue:numbers": "Cantonese Jyutping",
+}
+
+
+def _wizard_human_reading_aids(specs: Iterable[str]) -> list[str]:
+    out: list[str] = []
+    for spec in specs:
+        label = _WIZARD_READING_AID_DISPLAY.get(spec)
+        if label is None and ":" in spec:
+            lang, mode = spec.split(":", 1)
+            label = f"{_display_lang(lang)} {mode.replace('-', ' ')}"
+        if label is None:
+            label = spec
+        if label not in out:
+            out.append(label)
+    return out
+
+
+def _wizard_merge_language_labels(state: _WizardState) -> list[str]:
+    labels: list[str] = []
+    for lang in state.order or state.languages:
+        if is_pseudo_lang(lang):
+            continue
+        label = _display_lang(lang)
+        if label not in labels:
+            labels.append(label)
+    return labels
+
+
+def _wizard_join_human_list(items: list[str]) -> str:
+    if not items:
+        return ""
+    if len(items) == 1:
+        return items[0]
+    if len(items) == 2:
+        return f"{items[0]} + {items[1]}"
+    return ", ".join(items[:-1]) + f" + {items[-1]}"
+
+
 def _wizard_plain_plan(state: _WizardState) -> list[str]:
     """A few plain-language lines describing what the workflow will do, so
     the user sees the intent at a glance instead of decoding the full CLI
     flag string."""
-    langs = ", ".join(state.languages)
+    langs = ", ".join(_display_lang(lang) for lang in state.languages)
     src = state.source_title or _wizard_short_path(state.source) or "your files"
     steps = state.steps
     if "rename" in steps:
@@ -18707,14 +19157,16 @@ def _wizard_plain_plan(state: _WizardState) -> list[str]:
         lines.append(f"Fill gaps with {state.mt_engine.title()} AI translation")
     if "modify" in steps:
         if state.reading_aids:
-            lines.append(f"Add reading aids: {', '.join(state.reading_aids)}")
+            lines.append(f"Add pronunciation guides: {', '.join(_wizard_human_reading_aids(state.reading_aids))}")
         else:
             lines.append("Clean up cues (single line, strip broadcast noise)")
     if "merge" in steps:
         fmt = (state.format or "srt").upper()
-        ext = (state.format or "srt").lower()
-        suffix = "-".join(state.order or state.languages)
-        lines.append(f"Stack {langs} into one {fmt} file: *.{suffix}.{ext}")
+        merge_langs = _wizard_join_human_list(_wizard_merge_language_labels(state))
+        if merge_langs:
+            lines.append(f"Create one {merge_langs} {fmt} study subtitle file")
+        else:
+            lines.append(f"Create one {fmt} study subtitle file")
         if state.font_size:
             size_label = {
                 "regular": "Regular",
@@ -18739,7 +19191,12 @@ def _wizard_review_risks(state: _WizardState) -> list[str]:
     if state.reading_aids and state.format == "vtt":
         risks.append("VTT reading aids work best in browsers/asbplayer; local player support varies.")
     if state.reading_aids and state.format in {"srt", "smi", "ass"}:
-        risks.append(f"{state.format.upper()} reading aids use parenthetical text instead of true ruby above the script.")
+        if state.format == "ass":
+            risks.append(
+                "ASS shows reading aids as stacked subtitle lines. VTT is recommended for positioned kanji reading support in desktop browser with asbplayer plugin."
+            )
+        else:
+            risks.append(f"{state.format.upper()} reading aids use parenthetical text beside the script.")
     return risks
 
 
@@ -19205,6 +19662,26 @@ def _run_wizard_with_back_nav(state: _WizardState) -> tuple[_WizardState, str]:
 
 # ─── Emitters: CLI command + TOML workflow ────────────────────────────
 
+def _wizard_fetch_languages(state: _WizardState) -> list[str]:
+    """Languages to ask online/local fetch providers for.
+
+    Providers rarely expose Cantonese (`yue`) as a separate subtitle label.
+    In practice, Cantonese learners usually need a Chinese subtitle (`zh`)
+    plus Jyutping reading aids. Keep the wizard's learner-facing language as
+    Cantonese, but search/download Chinese text as the source track.
+    """
+    out: list[str] = []
+    for lang in state.languages:
+        fetch_lang = "zh" if lang == "yue" else lang
+        if fetch_lang not in out:
+            out.append(fetch_lang)
+    return out
+
+
+def _wizard_runtime_base_language(lang: str) -> str:
+    return "zh" if lang == "yue" else lang
+
+
 def _wizard_emit_cli(state: _WizardState) -> list[str]:
     """Build a canonical-form argv list for the wizard's answers.
 
@@ -19224,22 +19701,6 @@ def _wizard_emit_cli(state: _WizardState) -> list[str]:
             argv += ["--season", state.season]
         if state.episode:
             argv += ["--episode", state.episode]
-
-    def merge_order() -> list[str]:
-        order = list(state.order)
-        for lang in list(state.order):
-            modes = [
-                spec.split(":", 1)[1]
-                for spec in state.reading_aids
-                if spec.startswith(f"{lang}:")
-            ]
-            if len(modes) <= 1 or lang not in order:
-                continue
-            variants = [f"{lang}-{mode}" for mode in modes if is_pseudo_lang(f"{lang}-{mode}")]
-            if variants:
-                idx = order.index(lang)
-                order[idx:idx] = variants
-        return order
 
     def modify_reading_needed_for_cli() -> bool:
         if not state.reading_aids:
@@ -19278,11 +19739,11 @@ def _wizard_emit_cli(state: _WizardState) -> list[str]:
     if "fetch" not in steps and local_steps == {"merge"}:
         argv = ["getsubtitle", "merge", state.source]
         add_downstream_episode_filter(argv)
-        order = merge_order()
+        order = _wizard_merge_order(state)
         if len(order) >= 2:
             argv += ["--languages", ",".join(order)]
         if state.master:
-            argv += ["--master", state.master]
+            argv += ["--master", _wizard_runtime_base_language(state.master)]
         if state.format:
             argv += ["--format", state.format]
         if state.font_size:
@@ -19313,6 +19774,8 @@ def _wizard_emit_cli(state: _WizardState) -> list[str]:
             argv += ["--fetch", state.source]
             if state.source_title:
                 argv += ["--title", state.source_title]
+            if state.source_kind == "path" and state.is_movie:
+                argv.append("--movie")
         if state.source_anilist_id and (
             state.source_kind != "url" or "anilist.co" not in state.source.lower()
         ):
@@ -19325,8 +19788,9 @@ def _wizard_emit_cli(state: _WizardState) -> list[str]:
             argv += ["--episode-filename-start", state.episode_filename_start]
     else:
         argv += ["--source", state.source]
-    if state.languages and "fetch" in steps:
-        argv += ["--languages", ",".join(state.languages)]
+    fetch_languages = _wizard_fetch_languages(state)
+    if fetch_languages and "fetch" in steps:
+        argv += ["--languages", ",".join(fetch_languages)]
     # Translate verb. --translate ENGINE is the canonical form when MT
     # is requested; --no-engine is the explicit opt-out when fetch is
     # selected without translate.
@@ -19353,7 +19817,7 @@ def _wizard_emit_cli(state: _WizardState) -> list[str]:
                     argv += ["--reading-format", "vtt"]
     # Merge block — only when 2+ languages.
     if "merge" in steps and len(state.order) >= 2:
-        order = merge_order()
+        order = _wizard_merge_order(state)
         argv.append("--merge")
         # Fetch languages are inherited by merge when the display order is
         # identical. Keep --languages when the user changed order or added
@@ -19365,7 +19829,7 @@ def _wizard_emit_cli(state: _WizardState) -> list[str]:
         if merge_reading:
             argv += ["--reading", merge_reading]
         if state.master:
-            argv += ["--master", state.master]
+            argv += ["--master", _wizard_runtime_base_language(state.master)]
         if state.format:
             argv += ["--format", state.format]
         if state.font_size:
@@ -19435,19 +19899,32 @@ def _wizard_open_folder_target(state: _WizardState) -> Path | None:
 
 def _wizard_merge_order(state: _WizardState) -> list[str]:
     order = list(state.order or state.languages)
+    inline_reading = _wizard_merge_inline_reading_spec(state)
+    runtime_order: list[str] = []
     for lang in list(order):
         modes = [
             spec.split(":", 1)[1]
             for spec in state.reading_aids
             if spec.startswith(f"{lang}:")
         ]
-        if len(modes) <= 1 or lang not in order:
-            continue
-        variants = [f"{lang}-{mode}" for mode in modes if is_pseudo_lang(f"{lang}-{mode}")]
+        variants = []
+        for mode in modes:
+            spec = f"{lang}:{mode}"
+            # A single Japanese reading can be applied directly during merge
+            # (ruby for VTT, stacked/bracket fallback elsewhere). Other
+            # languages need their generated reading-aid side file included
+            # as an explicit pseudo-language row.
+            if spec == inline_reading:
+                continue
+            pseudo = f"{lang}-{mode}"
+            if is_pseudo_lang(pseudo):
+                variants.append(pseudo)
         if variants:
-            idx = order.index(lang)
-            order[idx:idx] = variants
-    return order
+            runtime_order.extend(v for v in variants if v not in runtime_order)
+        base_lang = _wizard_runtime_base_language(lang)
+        if base_lang not in runtime_order:
+            runtime_order.append(base_lang)
+    return runtime_order
 
 
 def _wizard_merge_inline_reading_spec(state: _WizardState) -> str | None:
@@ -19470,6 +19947,8 @@ def _wizard_emit_toml(state: _WizardState) -> str:
             lines.append(f'source = "{state.source}"')
             if state.source_title:
                 lines.append(f'title = "{state.source_title}"')
+            if state.source_kind == "path" and state.is_movie:
+                lines.append("movie = true")
         if state.source_anilist_id:
             lines.append(f'anilist = "{state.source_anilist_id}"')
         if state.source_kind in ("url", "title"):
@@ -19479,8 +19958,9 @@ def _wizard_emit_toml(state: _WizardState) -> str:
                 lines.append(f'episode = "{state.episode}"')
             if state.episode_filename_start:
                 lines.append(f'episode_filename_start = "{state.episode_filename_start}"')
-        if state.languages:
-            lines.append(f'languages = "{",".join(state.languages)}"')
+        fetch_languages = _wizard_fetch_languages(state)
+        if fetch_languages:
+            lines.append(f'languages = "{",".join(fetch_languages)}"')
         if not state.mt_engine and state.source_kind in ("url", "title"):
             lines.append("no_engine = true")
         lines.append("")
@@ -19529,7 +20009,7 @@ def _wizard_emit_toml(state: _WizardState) -> str:
         if merge_reading:
             lines.append(f'reading = "{merge_reading}"')
         if state.master:
-            lines.append(f'priority = ["{state.master}"]')
+            lines.append(f'priority = ["{_wizard_runtime_base_language(state.master)}"]')
         lines.append('sync = "auto"')
         if state.format:
             lines.append(f'format = "{state.format}"')
@@ -19741,7 +20221,7 @@ def _wizard_fast_subtitle_scan(
         if scanned >= limit:
             truncated = True
             break
-        if root.is_file():
+        if root.is_file() and not is_filesystem_metadata_name(root.name):
             consider(root)
             continue
         if not root.is_dir():
@@ -19750,7 +20230,11 @@ def _wizard_fast_subtitle_scan(
             if scanned >= limit:
                 truncated = True
                 break
-            if path.is_file() and path.suffix.lower() in {".srt", ".vtt", ".ass", ".ssa", ".smi"}:
+            if (
+                path.is_file()
+                and path.suffix.lower() in {".srt", ".vtt", ".ass", ".ssa", ".smi"}
+                and not is_filesystem_metadata_name(path.name)
+            ):
                 consider(path)
     return rows, truncated, scanned
 
@@ -19774,13 +20258,13 @@ def _wizard_coverage_preflight(state: _WizardState) -> list[tuple[str, str, str]
         if "fetch" in state.steps:
             notes.append((
                 "warn",
-                "Coverage estimate: no local subtitles found yet",
-                "Fetch will try online providers; if it misses, use manual search or MKV extraction.",
+                "No subtitles found in this folder yet",
+                "Fetch will search online providers automatically.",
             ))
         else:
             notes.append((
                 "warn",
-                "Coverage estimate: no local subtitle files found",
+                "No local subtitle files found",
                 "Check the folder path, extract MKV subtitles, or fetch/download subtitles first.",
             ))
         return notes
@@ -19804,27 +20288,57 @@ def _wizard_coverage_preflight(state: _WizardState) -> list[tuple[str, str, str]
 
     requested = list(state.languages or state.order or [])
     if "merge" in state.steps and len(requested) >= 2:
+        runtime_requested = [_wizard_runtime_base_language(lang) for lang in requested]
         complete = [
             key for key in selected_keys
-            if all(lang in grouped.get(key, set()) for lang in requested)
+            if all(lang in grouped.get(key, set()) for lang in runtime_requested)
         ]
         missing_examples: list[str] = []
         for key in selected_keys:
-            missing = [lang for lang in requested if lang not in grouped.get(key, set())]
+            missing = [
+                lang for lang, runtime_lang in zip(requested, runtime_requested)
+                if runtime_lang not in grouped.get(key, set())
+            ]
             if missing:
                 missing_examples.append(f"{_episode_label_se(*key)} missing {','.join(missing)}")
             if len(missing_examples) >= 4:
                 break
         if len(complete) < len(selected_keys):
+            available = [
+                lang for lang, runtime_lang in zip(requested, runtime_requested)
+                if any(runtime_lang in grouped.get(key, set()) for key in selected_keys)
+            ]
+            missing_langs = [
+                lang for lang, runtime_lang in zip(requested, runtime_requested)
+                if not any(runtime_lang in grouped.get(key, set()) for key in selected_keys)
+            ]
+            detail_parts: list[str] = []
+            if available:
+                detail_parts.append(
+                    "Local subtitles found: "
+                    + ", ".join(_display_lang(lang) for lang in available)
+                )
+            if missing_langs:
+                if "fetch" in state.steps:
+                    detail_parts.append(
+                        "Fetch will search online providers for: "
+                        + ", ".join(_display_lang(lang) for lang in missing_langs)
+                    )
+                else:
+                    detail_parts.append(
+                        "Missing: " + ", ".join(_display_lang(lang) for lang in missing_langs)
+                    )
+            if missing_examples:
+                detail_parts.append("; ".join(missing_examples))
             notes.append((
                 "warn",
-                f"Coverage estimate: {len(complete)}/{len(selected_keys)} episode(s) already have all requested languages",
-                "; ".join(missing_examples) or "Some requested languages are missing.",
+                "Some requested subtitles are not in this folder yet",
+                "; ".join(detail_parts or missing_examples) or "Some requested languages are missing.",
             ))
         else:
             notes.append((
                 "info",
-                f"Coverage estimate: {len(complete)}/{len(selected_keys)} episode(s) have all requested languages",
+                "Local subtitles found for all requested languages",
                 f"Fast scan checked {scanned_count} subtitle candidate(s).",
             ))
         existing_outputs = _wizard_existing_merge_outputs(
@@ -20481,6 +20995,8 @@ def main(argv: list[str] | None = None) -> int:
         raise CliError("--episode-filename-start must be a positive integer.")
     langs = split_csv(args.langs, "ja")
     media = infer_media(args.url)
+    if args.movie:
+        media.is_movie = True
     # User-supplied -s wins; otherwise keep any season the URL inferred
     # (e.g. Crunchyroll "...-season-2" slug → season=2). Same pattern for -e.
     if str(args.season).lower() != "auto":
@@ -20493,13 +21009,15 @@ def main(argv: list[str] | None = None) -> int:
         media.episode = "auto"
     if args.title:
         media.title = args.title
+        if args.movie:
+            media.is_movie = True
     elif media.provider == "crunchyroll" and not media.title:
         apply_crunchyroll_metadata(media)
     # TMDB title → IDs enrichment. Only fires when the user has a TMDB
     # API key configured AND we have a title but no IDs yet. Skipped for
     # Japanese-origin titles when `ja` is requested (preserves AniList
     # path for Jimaku). Pure no-op otherwise.
-    enrich_media_from_tmdb(media, langs=langs)
+    enrich_media_from_tmdb(media, langs=langs, prefer_movie=bool(media.is_movie))
     enrich_tmdb_catalog_external_ids(media)
     # If the URL gave us a TVDB ID but no IMDb/TMDB yet (e.g. a /thetvdb.com/
     # series page), use Wikidata to bridge. This lets non-anime TVDB shows
@@ -21251,7 +21769,11 @@ def main(argv: list[str] | None = None) -> int:
                     )
                 )
     if getattr(args, "yue_reading", None):
-        yue_sources = [path for path in saved if ".yue" in path.name and path.suffix.lower() == ".srt"]
+        yue_sources = [
+            path for path in saved
+            if (".yue" in path.name or ".zh" in path.name)
+            and path.suffix.lower() == ".srt"
+        ]
         if yue_sources:
             print("\nGenerating Cantonese Jyutping:")
             for idx, path in enumerate(yue_sources, start=1):
@@ -21311,7 +21833,7 @@ def main(argv: list[str] | None = None) -> int:
             for path in yue_generated:
                 print(f"  {path}")
         else:
-            print("\nCantonese Jyutping: no .yue.srt files were generated; Jyutping is created from Cantonese SRT.")
+            print("\nCantonese Jyutping: no .zh/.yue.srt files were generated; Jyutping is created from Chinese subtitle text.")
     reading_outputs = [*generated, *ko_generated, *zh_generated, *yue_generated]
     if reading_outputs or args.ja_reading or getattr(args, "ko_reading", None) or getattr(args, "zh_reading", None) or getattr(args, "yue_reading", None):
         _wizard_summary_add(

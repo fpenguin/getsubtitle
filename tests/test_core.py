@@ -1223,6 +1223,28 @@ def test_tmdb_search_movie_returns_top_match_with_imdb():
     assert hit["year"] == 1994
 
 
+def test_tmdb_search_movie_strips_parenthesized_year_hint():
+    payloads = {
+        "search/movie": {"results": [{
+            "id": 41343, "title": "The God of Cookery",
+            "release_date": "1996-12-21", "original_language": "cn",
+        }]},
+        "movie/41343": {"imdb_id": "tt0116426"},
+    }
+    restore, calls = _install_fake_tmdb(payloads)
+    MODULE["_TMDB_CACHE"].clear()
+    try:
+        hit = MODULE["tmdb_search_movie"]("The God of Cookery (1996)", api_key="dummy")
+    finally:
+        restore()
+        MODULE["_TMDB_CACHE"].clear()
+    assert hit and hit["tmdb_id"] == "41343"
+    search_url = next(call for call in calls if "/search/movie?" in call)
+    assert "query=The+God+of+Cookery" in search_url
+    assert "%281996%29" not in search_url
+    assert "year=1996" in search_url
+
+
 def test_tmdb_search_returns_none_without_key():
     # No api_key arg and no env / Keychain → None, no network call.
     # runpy.run_path returns a shallow COPY of the executed-module globals,
@@ -2957,6 +2979,39 @@ def test_combine_main_writes_vtt_font_size(tmp_path):
     assert rc == 0
     body = (tmp_path / "Show.S01E01.ja-en.vtt").read_text(encoding="utf-8")
     assert "STYLE\n::cue { font-size: 36px; }" in body
+
+
+def test_combine_main_finds_vtt_inputs_without_format_hints(tmp_path, capsys):
+    (tmp_path / "Show.S01E09.ja.vtt").write_text(
+        "WEBVTT\n\n"
+        "1\n00:00:01.000 --> 00:00:03.000 position:50.00%,middle align:middle\n"
+        "<c.japanese><c.bg_transparent>日本語</c.bg_transparent></c.japanese>\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "Show.S01E09.ko.vtt").write_text(
+        "WEBVTT\n\n"
+        "1\n00:00:01.000 --> 00:00:03.000 position:50.00%,middle align:middle\n"
+        "<c.korean><c.bg_transparent>한국어</c.bg_transparent></c.korean>\n",
+        encoding="utf-8",
+    )
+
+    rc = MODULE["combine_main"]([
+        str(tmp_path),
+        "-l", "ja,ko",
+        "--format", "vtt",
+        "--no-watermark",
+        "--no-open-folder-prompt",
+    ])
+
+    assert rc == 0
+    out = capsys.readouterr().out
+    assert "Alignment compares support-language cues against the timing master." not in out
+    assert "[ko aligned: 100%]" not in out
+    body = (tmp_path / "Show.S01E09.ja-ko.vtt").read_text(encoding="utf-8")
+    assert "日本語" in body
+    assert "한국어" in body
+    assert "<c." not in body
+    assert "&lt;c." not in body
 
 
 def test_multi_variant_master_default_prefers_base_over_pseudo():
@@ -6359,6 +6414,32 @@ def test_pipeline_translate_inherits_merge_languages_for_local_workflow():
     assert "--mt-source" not in tr_args
 
 
+def test_pipeline_modify_merge_vtt_inputs_succeeds_without_format_hints(tmp_path):
+    (tmp_path / "Show.S01E09.ja.vtt").write_text(
+        "WEBVTT\n\n"
+        "1\n00:00:01.000 --> 00:00:03.000 position:50.00%,middle align:middle\n"
+        "<c.japanese><c.bg_transparent>日本語</c.bg_transparent></c.japanese>\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "Show.S01E09.ko.vtt").write_text(
+        "WEBVTT\n\n"
+        "1\n00:00:01.000 --> 00:00:03.000 position:50.00%,middle align:middle\n"
+        "<c.korean><c.bg_transparent>한국어</c.bg_transparent></c.korean>\n",
+        encoding="utf-8",
+    )
+
+    rc = MODULE["main"]([
+        "--source", str(tmp_path),
+        "--modify", "--strip-cc-noise", "--single-line",
+        "--merge", "--languages", "ja,ko", "--format", "vtt",
+        "--output", str(tmp_path),
+        "--no-open-folder-prompt",
+    ])
+
+    assert rc == 0
+    assert (tmp_path / "Show.S01E09.ja-ko.vtt").exists()
+
+
 def test_pipeline_no_open_folder_prompt_is_global_not_modify_arg():
     blocks = MODULE["split_pipeline_argv"]([
         "--fetch", "title://mashle",
@@ -6723,6 +6804,34 @@ def test_inline_pipeline_path_fetch_adds_run_by_default():
         scope["fetch_main"] = saved_fetch
 
 
+def test_batch_fetch_movie_override_does_not_emit_episode_all(tmp_path, monkeypatch):
+    captured: list[list[str]] = []
+    g = MODULE["_batch_fetch_one"].__globals__
+    monkeypatch.setitem(g, "_batch_run", lambda cmd, dry_run: captured.append(list(cmd)) or 0)
+    monkeypatch.setattr(g["shutil"], "which", lambda _name: "getsubtitle")
+
+    MODULE["_batch_fetch_one"](
+        target=tmp_path,
+        show_folder=tmp_path,
+        season=None,
+        profile="en",
+        dry_run=False,
+        fetch_langs_override=["zh", "ko", "en"],
+        title_override="The God of Cookery",
+        movie_override=True,
+    )
+
+    assert captured
+    cmd = captured[0]
+    assert "--title" in cmd
+    assert "The God of Cookery" in cmd
+    assert "--movie" in cmd
+    assert "-e" not in cmd
+    assert "--episode" not in cmd
+    assert "-s" not in cmd
+    assert "--season" not in cmd
+
+
 def test_pipeline_url_source_does_not_auto_add_run():
     # URL fetch doesn't use --run (it's PATH-only). Auto-add should skip URLs.
     import io, contextlib
@@ -7009,6 +7118,18 @@ def test_parse_vtt_handles_mm_ss_format():
     assert len(cues) == 1
     assert "00:01:23,500" in cues[0].time_line
     assert "00:01:25,000" in cues[0].time_line
+
+
+def test_parse_vtt_strips_netflix_classes_when_preserving_ruby():
+    parse_vtt = MODULE["parse_vtt"]
+    text = (
+        "WEBVTT\n\n"
+        "00:00:01.000 --> 00:00:02.000\n"
+        "<c.japanese><c.bg_transparent><ruby>日本語<rt>にほんご</rt></ruby></c.bg_transparent></c.japanese>\n"
+    )
+    cues = parse_vtt(text, preserve_ruby=True)
+
+    assert cues[0].text_lines == ["<ruby>日本語<rt>にほんご</rt></ruby>"]
 
 
 def test_read_cues_from_file_dispatches_by_extension():
@@ -9592,7 +9713,7 @@ def test_wizard_coverage_preflight_reports_complete_local_merge_set(tmp_path):
     notes = MODULE["_wizard_coverage_preflight"](state)
     assert notes
     assert notes[0][0] == "info"
-    assert "1/1 episode(s) have all requested languages" in notes[0][1]
+    assert "Local subtitles found for all requested languages" in notes[0][1]
 
 
 def test_wizard_coverage_preflight_warns_about_partial_local_merge_set(tmp_path):
@@ -9620,7 +9741,7 @@ def test_wizard_coverage_preflight_warns_about_partial_local_merge_set(tmp_path)
         steps={"modify", "merge"},
     )
     notes = MODULE["_wizard_coverage_preflight"](state)
-    partial = [n for n in notes if "already have all requested languages" in n[1]]
+    partial = [n for n in notes if "Some requested subtitles are not in this folder yet" in n[1]]
     assert partial and partial[0][0] == "warn"
     assert "S01E02 missing en" in partial[0][2]
 
@@ -9749,9 +9870,42 @@ def test_wizard_run_summary_prints_outcome_and_next_steps(tmp_path, capsys):
     assert "Fetch: planned 2, wrote 1, missing/issues 1" in out
     assert "Merge: planned 1, wrote 1" in out
     assert "Next steps:" in out
-    assert "1. Open the merged subtitle file in your player." in out
-    assert "2. Check subtitle timing and readability." in out
-    assert "3. Adjust font size or format if needed." in out
+    assert "1. Open the subtitle file in your player." in out
+    assert "2. Adjust font size or format if needed." in out
+
+
+def test_wizard_run_summary_output_exists_is_no_change(tmp_path, capsys, monkeypatch):
+    state = _wizard_state(
+        source=str(tmp_path),
+        source_kind="path",
+        languages=["ja", "ko"],
+        order=["ja", "ko"],
+        output=str(tmp_path),
+    )
+    monkeypatch.setitem(
+        MODULE["_wizard_print_run_summary"].__globals__,
+        "_wizard_is_interactive",
+        lambda: True,
+    )
+    try:
+        summary = MODULE["_wizard_summary_begin"](state)
+        summary.command = f"getsubtitle --source {tmp_path} --merge --languages ja,ko"
+        MODULE["_wizard_summary_add"](
+            "merge",
+            scanned=2,
+            skipped=1,
+            missing=["S01E09: output exists: Show.S01E09.ja-ko.vtt (use --force to overwrite)"],
+        )
+        summary = MODULE["_wizard_summary_end"]()
+        MODULE["_wizard_print_run_summary"](summary, 1)
+    finally:
+        MODULE["_wizard_summary_end"]()
+    out = capsys.readouterr().out
+    assert "Completed with no changes" in out
+    assert "already exists" in out
+    assert "Some subtitles were missing" not in out
+    assert "Fill missing subtitles" not in out
+    assert "--force" in out
 
 
 def test_wizard_dependency_check_saves_instead_of_running_with_remaining_blocker():
@@ -10240,6 +10394,79 @@ def test_wizard_path_fetch_title_guess_prefers_video_filename(tmp_path):
     guess = MODULE["_wizard_path_fetch_title_guess"](root)
 
     assert guess == "NieR Automata Ver1.1a"
+
+
+def test_wizard_path_fetch_title_guess_cleans_movie_release_filename(tmp_path):
+    root = tmp_path / "식신"
+    root.mkdir()
+    (root / "The.God.of.Cookery.1996.WEBRip.1080p.x264.AAC.2Audio-TiNyHD.mkv").touch()
+
+    guess = MODULE["_wizard_path_fetch_title_guess"](root)
+
+    assert guess == "The God of Cookery (1996)"
+
+
+def test_wizard_path_fetch_movie_hint_avoids_episode_all(tmp_path):
+    root = tmp_path / "식신"
+    root.mkdir()
+    (root / "The.God.of.Cookery.1996.WEBRip.1080p.x264.AAC.2Audio-TiNyHD.mkv").touch()
+    state = _wizard_state(
+        source=str(root),
+        source_kind="path",
+        source_title="The God of Cookery",
+        is_movie=True,
+        season="",
+        episode="",
+        languages=["zh", "ko", "en"],
+        order=["zh", "ko", "en"],
+        steps={"fetch", "modify", "merge"},
+    )
+
+    cli = MODULE["_wizard_emit_cli"](state)
+
+    assert "--movie" in cli
+    assert "--episode" not in cli
+
+
+def test_wizard_title_no_match_retry_accepts_free_text_title():
+    fn = MODULE["_wizard_pick_title_candidate"]
+    fn_g = fn.__globals__
+    saved_candidates = fn_g["_wizard_title_candidates"]
+    saved_prompt = fn_g["_wizard_prompt"]
+    answers = iter(["1", "식신", "2"])
+
+    def fake_candidates(title):
+        if title == "식신":
+            return [
+                {
+                    "provider": "tmdb-tv",
+                    "label": "TMDB TV: 식신로드 (2010)",
+                    "url": "https://www.themoviedb.org/tv/1",
+                    "is_movie": False,
+                },
+                {
+                    "provider": "tmdb-movie",
+                    "label": "TMDB Movie: The God of Cookery (1996)",
+                    "url": "https://www.themoviedb.org/movie/123",
+                    "is_movie": True,
+                },
+            ]
+        return []
+
+    try:
+        fn_g["_wizard_title_candidates"] = fake_candidates
+        fn_g["_wizard_prompt"] = lambda *a, **k: next(answers)
+        picked = fn("The.God.of.Cookery.1996.WEBRip.1080p")
+    finally:
+        fn_g["_wizard_title_candidates"] = saved_candidates
+        fn_g["_wizard_prompt"] = saved_prompt
+
+    assert picked == (
+        "https://www.themoviedb.org/movie/123",
+        "tmdb-movie",
+        "TMDB Movie: The God of Cookery (1996)",
+        True,
+    )
 
 
 def test_wizard_crunchyroll_watch_url_asks_for_stronger_source_when_metadata_fails():
@@ -12367,6 +12594,34 @@ def test_wizard_font_size_labels_follow_selected_format():
     assert s.font_size == "regular"
 
 
+def test_wizard_font_size_recommends_smaller_for_four_line_ass_stack():
+    import io, contextlib
+    fn_g = MODULE["_wizard_q_font_size"].__globals__
+    saved_input = fn_g.get("input")
+    try:
+        fn_g["input"] = lambda *a, **k: ""
+        s = MODULE["_WizardState"](
+            steps={"modify", "merge"},
+            languages=["zh", "ko", "en"],
+            order=["zh", "ko", "en"],
+            reading_aids=["zh:marks"],
+            format="ass",
+        )
+        assert MODULE["_wizard_merge_order"](s) == ["zh-marks", "zh", "ko", "en"]
+        assert MODULE["_wizard_expected_stack_line_count"](s) == 4
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            MODULE["_wizard_q_font_size"](s)
+    finally:
+        if saved_input is not None:
+            fn_g["input"] = saved_input
+    out = buf.getvalue()
+    assert "This output uses ASS and will usually show 4 lines at once." in out
+    assert "1) Regular (58)" in out
+    assert "2) Smaller (46) — recommended" in out
+    assert s.font_size == "smaller"
+
+
 def test_wizard_font_size_custom_back_returns_to_size_choices():
     import io, contextlib
     fn_g = MODULE["_wizard_q_font_size"].__globals__
@@ -12396,6 +12651,78 @@ def test_wizard_font_size_custom_back_returns_to_size_choices():
 
     assert s.font_size == "larger"
     assert "Going back to text-size choices." in buf.getvalue()
+
+
+def test_wizard_plain_plan_hides_reading_aid_pseudo_language_tokens():
+    s = MODULE["_WizardState"](
+        steps={"fetch", "modify", "merge"},
+        source="The God of Cookery",
+        source_kind="title",
+        languages=["zh", "ko"],
+        order=["zh", "ko"],
+        reading_aids=["zh:marks"],
+        format="ass",
+        font_size="smaller",
+    )
+
+    plan = "\n".join(MODULE["_wizard_plain_plan"](s))
+
+    assert "Chinese pinyin" in plan
+    assert "Chinese + Korean ASS study subtitle file" in plan
+    assert "zh-marks" not in plan
+
+
+def test_wizard_emit_cli_merges_single_chinese_pinyin_variant():
+    """A single non-Japanese reading aid still needs its pseudo-language
+    side file included in merge. Otherwise modify generates pinyin but the
+    final output merges only plain zh+ko."""
+    s = MODULE["_WizardState"](
+        steps={"fetch", "modify", "merge"},
+        source="/tmp/God Of Cookery",
+        source_kind="path",
+        source_title="The God of Cookery",
+        is_movie=True,
+        languages=["zh", "ko"],
+        order=["zh", "ko"],
+        reading_aids=["zh:marks"],
+        format="ass",
+        font_size="regular",
+        output="/tmp/God Of Cookery",
+    )
+
+    cli = MODULE["_wizard_emit_cli"](s)
+
+    merge_index = cli.index("--merge")
+    merge_languages_index = cli.index("--languages", merge_index)
+    assert cli[merge_languages_index + 1] == "zh-marks,zh,ko"
+    assert cli[cli.index("--reading") + 1] == "zh:marks"
+
+
+def test_wizard_emit_cli_fetches_chinese_for_cantonese_jyutping_workflow():
+    """Cantonese subtitle provider labels are rare. The wizard should fetch
+    Chinese text, then create a Cantonese Jyutping row from that source."""
+    s = MODULE["_WizardState"](
+        steps={"fetch", "modify", "merge"},
+        source="/tmp/God Of Cookery",
+        source_kind="path",
+        source_title="The God of Cookery",
+        is_movie=True,
+        languages=["yue", "ko"],
+        order=["yue", "ko"],
+        reading_aids=["yue:numbers"],
+        format="ass",
+        font_size="regular",
+        output="/tmp/God Of Cookery",
+    )
+
+    cli = MODULE["_wizard_emit_cli"](s)
+
+    fetch_languages_index = cli.index("--languages")
+    assert cli[fetch_languages_index + 1] == "zh,ko"
+    merge_index = cli.index("--merge")
+    merge_languages_index = cli.index("--languages", merge_index)
+    assert cli[merge_languages_index + 1] == "yue-numbers,zh,ko"
+    assert cli[cli.index("--reading") + 1] == "yue:numbers"
 
 
 def test_wizard_reading_aid_labels_format_agnostic():
@@ -12640,7 +12967,7 @@ def test_text_with_cantonese_readings_and_ruby():
         restore()
 
 
-def test_generate_cantonese_romanization_walks_only_yue_srt():
+def test_generate_cantonese_romanization_accepts_yue_or_zh_srt():
     import tempfile
     from pathlib import Path
     restore = _install_fake_pycantonese()
@@ -12655,7 +12982,7 @@ def test_generate_cantonese_romanization_walks_only_yue_srt():
             )
             zh_path = root / "Show.S01E01.zh.srt"
             zh_path.write_text(
-                "1\n00:00:01,000 --> 00:00:03,000\n普通話\n",
+                "1\n00:00:01,000 --> 00:00:03,000\n你好\n",
                 encoding="utf-8",
             )
             out = fn([yue_path, zh_path], "numbers", formats={"srt", "vtt"})
@@ -12663,8 +12990,40 @@ def test_generate_cantonese_romanization_walks_only_yue_srt():
             assert names == [
                 "Show.S01E01.yue.romanization-numbers.asb.srt",
                 "Show.S01E01.yue.romanization-numbers.ruby.vtt",
+                "Show.S01E01.zh.yue.romanization-numbers.asb.srt",
+                "Show.S01E01.zh.yue.romanization-numbers.ruby.vtt",
             ]
-            assert "廣東話（gwong2 dung1 waa2）" in out[0].read_text(encoding="utf-8")
+            assert any("廣東話（gwong2 dung1 waa2）" in p.read_text(encoding="utf-8") for p in out)
+            assert any("你好（nei5 hou2）" in p.read_text(encoding="utf-8") for p in out)
+    finally:
+        restore()
+
+
+def test_combine_can_derive_cantonese_jyutping_from_chinese_subtitle(tmp_path, capsys):
+    restore = _install_fake_pycantonese()
+    try:
+        (tmp_path / "Show.S01E01.zh.srt").write_text(
+            "1\n00:00:01,000 --> 00:00:03,000\n你好\n",
+            encoding="utf-8",
+        )
+        (tmp_path / "Show.S01E01.ko.srt").write_text(
+            "1\n00:00:01,000 --> 00:00:03,000\n안녕하세요\n",
+            encoding="utf-8",
+        )
+
+        rc = MODULE["combine_main"]([
+            str(tmp_path),
+            "--languages", "yue-numbers,zh,ko",
+            "--format", "srt",
+        ])
+
+        assert rc == 0
+        out_file = tmp_path / "Show.S01E01.yue-numbers-zh-ko.srt"
+        assert out_file.exists()
+        text = out_file.read_text(encoding="utf-8")
+        assert "nei5 hou2" in text
+        assert "你好" in text
+        assert "안녕하세요" in text
     finally:
         restore()
 
@@ -12685,7 +13044,7 @@ def test_plan_mkv_subtitle_extraction_skips_image_streams_and_names_text_outputs
         g["_ffprobe_subtitle_streams"] = fake_probe
         with tempfile.TemporaryDirectory() as td:
             video = Path(td) / "Episode.mkv"
-            video.write_bytes(b"")
+            video.write_bytes(b"video")
             plan, notes = fn([video])
             assert [(p[1], p[2], p[3], p[4].name) for p in plan] == [
                 (2, "ko", "subrip", "Episode.ko.srt"),
@@ -12694,6 +13053,113 @@ def test_plan_mkv_subtitle_extraction_skips_image_streams_and_names_text_outputs
             assert any("image subtitle" in note for note in notes)
     finally:
         g["_ffprobe_subtitle_streams"] = saved_probe
+
+
+def test_scan_video_files_ignores_macos_appledouble_sidecars(tmp_path):
+    real = tmp_path / "Movie.mkv"
+    sidecar = tmp_path / "._Movie.mkv"
+    real.write_bytes(b"not really a movie")
+    sidecar.write_bytes(b"metadata")
+
+    found = MODULE["scan_video_files"]([tmp_path])
+
+    assert found == [real]
+
+
+def test_fetch_path_uses_embedded_subtitles_before_online(tmp_path, monkeypatch):
+    captured: list[list[str]] = []
+    g = MODULE["_batch_fetch_one"].__globals__
+    monkeypatch.setitem(g, "_batch_run", lambda cmd, dry_run: captured.append(list(cmd)) or 0)
+
+    def fake_probe(_path):
+        return [
+            {"index": 2, "codec_name": "subrip", "tags": {"language": "eng"}},
+            {"index": 3, "codec_name": "subrip", "tags": {"language": "spa"}},
+        ]
+
+    monkeypatch.setitem(g, "_ffprobe_subtitle_streams", fake_probe)
+    video = tmp_path / "Movie.mkv"
+    video.write_bytes(b"video")
+
+    rc = MODULE["_batch_fetch_one"](
+        target=video,
+        show_folder=tmp_path,
+        season=None,
+        profile="en",
+        dry_run=True,
+        fetch_langs_override=["en", "es"],
+        title_override="Movie",
+        movie_override=True,
+    )
+
+    assert rc == 0
+    assert captured == []
+
+
+def test_fetch_path_smi_sidecar_suppresses_online_for_that_language(tmp_path, monkeypatch):
+    captured: list[list[str]] = []
+    g = MODULE["_batch_fetch_one"].__globals__
+    monkeypatch.setitem(g, "_batch_run", lambda cmd, dry_run: captured.append(list(cmd)) or 0)
+    monkeypatch.setitem(g, "_ffprobe_subtitle_streams", lambda _path: [])
+    video = tmp_path / "The.God.of.Cookery.1996.mkv"
+    video.write_bytes(b"video")
+    (tmp_path / "The.God.of.Cookery.1996.smi").write_text(
+        "<SAMI><BODY>"
+        "<SYNC Start=1000><P Class=KOKRCC>안녕하세요"
+        "<SYNC Start=2000><P Class=KOKRCC>&nbsp;"
+        "</BODY></SAMI>",
+        encoding="utf-8",
+    )
+
+    rc = MODULE["_batch_fetch_one"](
+        target=tmp_path,
+        show_folder=tmp_path,
+        season=None,
+        profile="en",
+        dry_run=True,
+        fetch_langs_override=["zh", "ko", "en"],
+        title_override="The God of Cookery",
+        movie_override=True,
+    )
+
+    assert rc == 0
+    assert captured
+    cmd = captured[0]
+    assert "-l" in cmd
+    assert cmd[cmd.index("-l") + 1] == "zh,en"
+
+
+def test_fetch_path_single_video_counts_same_stem_sidecars_before_embedded(tmp_path, monkeypatch):
+    captured: list[list[str]] = []
+    g = MODULE["_batch_fetch_one"].__globals__
+    monkeypatch.setitem(g, "_batch_run", lambda cmd, dry_run: captured.append(list(cmd)) or 0)
+
+    def fake_probe(_path):
+        return [
+            {"index": 2, "codec_name": "subrip", "tags": {"language": "eng"}},
+            {"index": 3, "codec_name": "subrip", "tags": {"language": "spa"}},
+            {"index": 4, "codec_name": "subrip", "tags": {"language": "fre"}},
+        ]
+
+    monkeypatch.setitem(g, "_ffprobe_subtitle_streams", fake_probe)
+    video = tmp_path / "Movie.mkv"
+    video.write_bytes(b"video")
+    (tmp_path / "Movie.en.srt").write_text("1\n00:00:01,000 --> 00:00:02,000\nHi\n", encoding="utf-8")
+    (tmp_path / "Movie.es.srt").write_text("1\n00:00:01,000 --> 00:00:02,000\nHola\n", encoding="utf-8")
+
+    rc = MODULE["_batch_fetch_one"](
+        target=video,
+        show_folder=tmp_path,
+        season=None,
+        profile="en",
+        dry_run=True,
+        fetch_langs_override=["en", "es", "fr"],
+        title_override="Movie",
+        movie_override=True,
+    )
+
+    assert rc == 0
+    assert captured == []
 
 
 def test_convert_text_subtitle_to_srt_file_converts_ass_source():

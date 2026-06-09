@@ -76,9 +76,9 @@ Q4. Reading aids (phonetic guides for the original script).         Progress [�
 Review your workflow                                                Progress [◼◼◼◼◼◼◼◼◼◼◼◼◻] 99%
 
 Plan
-  • Use local ja files in:
+  • Use local Japanese files in:
     {TMP}/Foo.ja.srt
-  • Add reading aids: ja:hiragana
+  • Add pronunciation guides: Japanese hiragana readings
   • Save to:
     {TMP}
 
