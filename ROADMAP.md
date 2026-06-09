@@ -98,6 +98,19 @@ final multi-language subtitle is readable enough to use for study.
 - v1.0 should not require users to understand provider internals, subtitle
   formats, or TOML before getting one useful multi-language subtitle file.
 
+## v0.9.6.5 — local follow-up
+
+- **Chinese text variants.** Simplified/Traditional labels such as
+  `zh-Hans`, `zh-Hant`, `zh-CN`, `zh-TW`, `chs`, and `cht` are accepted as
+  Chinese subtitle sources and normalized to `zh` for merge/modify.
+- **Mandarin vs Cantonese reading aids.** Mandarin pinyin remains `zh:*`;
+  Cantonese Jyutping remains `yue:*`. The wizard explains that Cantonese
+  workflows usually search/download Chinese text (`zh`) and derive a Jyutping
+  row from it.
+- **Chinese-friendly filenames.** Pinyin/Jyutping generators now handle
+  script-labelled Chinese sidecars and produce merge-discoverable reading-aid
+  outputs.
+
 ## v0.9.6.4 — what's new
 
 - **Local sources first.** `getsubtitle fetch PATH` now checks embedded text

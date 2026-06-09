@@ -4786,6 +4786,11 @@ def test_language_aliases_includes_jp_and_cn_variants():
     assert aliases.get("chi") == "zh"
     assert aliases.get("chinese") == "zh"
     assert aliases.get("mandarin") == "zh"
+    assert aliases.get("simplified chinese") == "zh"
+    assert aliases.get("traditional chinese") == "zh"
+    assert aliases.get("zh-hans") == "zh"
+    assert aliases.get("zh-hant") == "zh"
+    assert aliases.get("cantonese") == "yue"
 
 
 def test_lang_matches_recognises_cn_for_zh():
@@ -4802,6 +4807,27 @@ def test_split_csv_resolves_jp_and_cn():
     s = MODULE["split_csv"]
     assert s("jp,cn", "ja") == ["ja", "zh"]
     assert s("chinese,japanese", "ja") == ["zh", "ja"]
+    assert s("traditional chinese,cantonese", "ja") == ["zh", "yue"]
+
+
+def test_script_specific_chinese_subtitle_suffixes_parse_as_zh():
+    parse = MODULE["parse_srt_filename"]
+    assert parse("Show.S01E01.zh-Hans.srt") == (1, 1, "zh", False)
+    assert parse("Show.S01E01.zh-Hant.srt") == (1, 1, "zh", False)
+    assert parse("Show.S01E01.zh-TW.srt") == (1, 1, "zh", False)
+    assert parse("Show.S01E01.chs.srt") == (1, 1, "zh", False)
+    assert parse("Show.S01E01.cht.srt") == (1, 1, "zh", False)
+    assert parse("Show.S01E01.pt-BR.srt") == (1, 1, "pt", False)
+    assert parse("Show.S01E01.ja-ko.srt") is None
+
+
+def test_wizard_language_normalization_explains_chinese_and_cantonese(capsys):
+    fn = MODULE["_wizard_print_language_normalization"]
+    fn("traditional chinese,cantonese,korean", ["zh", "yue", "ko"])
+    out = capsys.readouterr().out
+    assert "traditional chinese → Chinese (Traditional Chinese; searched as zh)" in out
+    assert "cantonese → Cantonese (Cantonese; searches Chinese subtitles as zh, then adds Jyutping)" in out
+    assert "korean → Korean" in out
 
 
 def test_parse_mt_source_lang_resolves_jp_alias_in_single_form():
@@ -12999,6 +13025,39 @@ def test_generate_cantonese_romanization_accepts_yue_or_zh_srt():
         restore()
 
 
+def test_generate_chinese_and_cantonese_readings_from_script_specific_suffixes(tmp_path):
+    restore_py = _install_fake_pypinyin()
+    restore_yue = _install_fake_pycantonese()
+    try:
+        zh_hant = tmp_path / "Show.S01E01.zh-Hant.srt"
+        zh_hant.write_text(
+            "1\n00:00:01,000 --> 00:00:03,000\n你好\n",
+            encoding="utf-8",
+        )
+        chs = tmp_path / "Show.S01E02.chs.srt"
+        chs.write_text(
+            "1\n00:00:01,000 --> 00:00:03,000\n你好\n",
+            encoding="utf-8",
+        )
+        zh_out = MODULE["generate_chinese_romanization"](
+            [zh_hant, chs], "marks", formats={"srt"}
+        )
+        assert sorted(p.name for p in zh_out) == [
+            "Show.S01E01.zh.romanization-marks.asb.srt",
+            "Show.S01E02.zh.romanization-marks.asb.srt",
+        ]
+        yue_out = MODULE["generate_cantonese_romanization"](
+            [zh_hant, chs], "numbers", formats={"srt"}
+        )
+        assert sorted(p.name for p in yue_out) == [
+            "Show.S01E01.zh-Hant.yue.romanization-numbers.asb.srt",
+            "Show.S01E02.chs.yue.romanization-numbers.asb.srt",
+        ]
+    finally:
+        restore_yue()
+        restore_py()
+
+
 def test_combine_can_derive_cantonese_jyutping_from_chinese_subtitle(tmp_path, capsys):
     restore = _install_fake_pycantonese()
     try:
@@ -13210,9 +13269,9 @@ def test_doctor_main_runs_without_network_or_provider_calls():
     assert "ffmpeg" in out
 
 
-def test_generate_chinese_romanization_walks_only_zh_srt():
-    """Orchestrator only touches .zh.srt files; emits one side file per
-    requested format. Non-.zh and non-.srt paths skipped."""
+def test_generate_chinese_romanization_walks_chinese_text_srt_sources():
+    """Orchestrator touches Chinese text SRT files; emits one side file per
+    requested format. Non-Chinese and non-SRT paths are skipped."""
     import tempfile
     from pathlib import Path
     restore = _install_fake_pypinyin()
@@ -13286,6 +13345,10 @@ def test_apply_reading_to_args_routes_ja_ko_zh():
     )
     fn(args3)
     assert args3.zh_reading == "letters"
+    args_aliases = argparse.Namespace(reading="mandarin:true,cantonese:true")
+    fn(args_aliases)
+    assert args_aliases.zh_reading == "marks"
+    assert args_aliases.yue_reading == "numbers"
 
 
 def test_apply_reading_to_args_still_rejects_deferred_languages():

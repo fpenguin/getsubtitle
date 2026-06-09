@@ -13,6 +13,14 @@ script. They help you connect sound, writing, and meaning while watching.
 | Cantonese (`yue`) | `numbers`, `marks` | `pip install -e ".[romanization-yue]"` |
 | Thai / Arabic / Hindi / Russian | Royal Thai / ALA-LC / IAST / ISO-9 | Wired through; backends land per ROADMAP |
 
+Chinese subtitles are treated as written text (`zh`). They may be Simplified or
+Traditional: `zh-Hans`, `zh-Hant`, `zh-CN`, `zh-TW`, `chs`, and `cht` all scan as
+Chinese source files. Reading aids then choose the pronunciation system:
+
+- `zh:marks`, `zh:numbers`, `zh:letters` = Mandarin pinyin.
+- `yue:numbers` = Cantonese Jyutping. The wizard searches Chinese subtitles
+  (`zh`) first, then derives the Jyutping row from that text.
+
 ## Format Recommendations
 
 | Use case | Format | Notes |
@@ -51,7 +59,7 @@ getsubtitle merge FOLDER -l ja,ja-hiragana,en
 getsubtitle merge FOLDER -l ja,ja-hiragana,ja-romaji,en
 getsubtitle merge FOLDER -l ko,ko-revised,en
 getsubtitle merge FOLDER -l zh,zh-marks,en
-getsubtitle merge FOLDER -l yue,yue-numbers,en
+getsubtitle merge FOLDER -l yue-numbers,zh,en
 ```
 
 Output filenames collapse same-base tokens, so you get:

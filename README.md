@@ -37,11 +37,14 @@ into one study-friendly file.
 Stack Korean, Revised Romanization or Yale romanization, and English so you can
 follow sound, spelling, and meaning together.
 
-### Mandarin Or Cantonese
+### Chinese, Mandarin, Or Cantonese
 
 ![Mandarin pinyin stack](examples/capability-zh-pinyin-ass-stack.png)
 
-Render pinyin or jyutping above Chinese subtitles and combine them with a support language.
+Use Chinese subtitle text as the base, then add Mandarin pinyin or Cantonese
+Jyutping as reading aids. Simplified and Traditional Chinese labels such as
+`zh-Hans`, `zh-Hant`, `zh-CN`, `zh-TW`, `chs`, and `cht` are accepted as Chinese
+subtitle sources.
 
 ### Missing Tracks And Library Cleanup
 
@@ -117,7 +120,7 @@ More examples: [docs/examples.md](docs/examples.md).
 - Fetch subtitles from movie, TV, anime, and streaming/catalog URLs.
 - Work from local folders, video files, or subtitle files.
 - Use streaming page metadata to identify titles, episodes, and better search aliases.
-- Add reading aids for Japanese, Korean, Mandarin, and Cantonese.
+- Add reading aids for Japanese, Korean, Mandarin pinyin, and Cantonese Jyutping.
 - Merge 2-4 subtitle tracks into one synced file.
 - Translate missing subtitles with local or online engines.
 - Save reusable TOML workflows.

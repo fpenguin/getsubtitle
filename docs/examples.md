@@ -55,6 +55,18 @@ search suggestions and can open likely sources in your browser.
 --manual-search off|on-missing|always
 ```
 
+For Chinese learners, request Chinese text with `zh` (or aliases such as
+`traditional chinese`, `zh-Hant`, `zh-TW`, `simplified chinese`, `zh-Hans`,
+`zh-CN`). Add pronunciation separately:
+
+```sh
+# Mandarin pinyin
+getsubtitle merge FOLDER -l zh,zh-marks,en
+
+# Cantonese Jyutping from a Chinese subtitle source
+getsubtitle merge FOLDER -l yue-numbers,zh,en
+```
+
 For non-anime TV, `-e all` needs a TMDB key. Set one once:
 
 ```sh

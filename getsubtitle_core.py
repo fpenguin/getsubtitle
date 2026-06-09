@@ -140,6 +140,37 @@ LANGUAGE_ALIASES = {
     "cmn": "zh",
     "chinese": "zh",
     "mandarin": "zh",
+    "mandarin chinese": "zh",
+    "simplified chinese": "zh",
+    "chinese simplified": "zh",
+    "simplified mandarin": "zh",
+    "mandarin simplified": "zh",
+    "zh-hans": "zh",
+    "zh-cn": "zh",
+    "chs": "zh",
+    "简体": "zh",
+    "简体中文": "zh",
+    "traditional chinese": "zh",
+    "chinese traditional": "zh",
+    "traditional mandarin": "zh",
+    "mandarin traditional": "zh",
+    "zh-hant": "zh",
+    "zh-tw": "zh",
+    "zh-hk": "zh",
+    "cht": "zh",
+    "繁體": "zh",
+    "繁體中文": "zh",
+    "繁体": "zh",
+    "繁体中文": "zh",
+    "taiwanese mandarin": "zh",
+    "taiwan mandarin": "zh",
+    "taiwanese chinese": "zh",
+    "cantonese": "yue",
+    "cantonese chinese": "yue",
+    "hong kong cantonese": "yue",
+    "zh-yue": "yue",
+    "yue-hant": "yue",
+    "yue": "yue",
     # French
     "fre": "fr",
     "fra": "fr",
@@ -151,6 +182,9 @@ LANGUAGE_ALIASES = {
     # Portuguese
     "por": "pt",
     "portuguese": "pt",
+    "pt-br": "pt",
+    "pt-pt": "pt",
+    "brazilian portuguese": "pt",
     # Italian
     "ita": "it",
     "italian": "it",
@@ -180,6 +214,10 @@ LANGUAGE_TAG_VARIANTS: dict[str, tuple[str, ...]] = {
         "zh-cn", "zh-tw", "zh-hk", "zh-hans", "zh-hant",
         "chs", "cht",
     ),
+    "yue": (
+        "yue", "cantonese", "cantonese chinese", "hong kong cantonese",
+        "zh-yue", "zh-hk", "yue-hant",
+    ),
     "fr": ("fr", "fre", "fra", "french"),
     "de": ("de", "ger", "deu", "german"),
     "pt": ("pt", "por", "portuguese", "pt-br", "pt-pt", "brazilian portuguese"),
@@ -191,6 +229,17 @@ PROVIDER_LANGUAGE_QUERY_VARIANTS: dict[str, tuple[str, ...]] = {
     # filters a few common Spanish dialect/code spellings to try when a direct
     # lookup misses.
     "es": ("es", "spa", "es-419", "es-mx", "es-es"),
+}
+
+_SIMPLIFIED_CHINESE_TOKENS = {
+    "simplified chinese", "chinese simplified", "simplified mandarin",
+    "mandarin simplified", "zh-hans", "zh-cn", "chs", "简体", "简体中文",
+}
+_TRADITIONAL_CHINESE_TOKENS = {
+    "traditional chinese", "chinese traditional", "traditional mandarin",
+    "mandarin traditional", "zh-hant", "zh-tw", "zh-hk", "cht",
+    "繁體", "繁體中文", "繁体", "繁体中文", "taiwanese mandarin",
+    "taiwan mandarin", "taiwanese chinese",
 }
 
 
@@ -6906,6 +6955,18 @@ def hanzi_reading_pair_lines(text: str, mode: str) -> tuple[str, str] | None:
 
 # ── Per-format side-file generators (mirror srt_to_korean_* for ko) ───
 
+def _chinese_output_stem(src: Path) -> str:
+    stem = src.with_suffix("").name
+    return re.sub(r"\.(?:zh-(?:hans|hant|cn|tw|hk)|chs|cht)$", ".zh", stem, flags=re.I)
+
+
+def _is_chinese_subtitle_source(path: Path) -> bool:
+    if path.suffix.lower() != ".srt":
+        return False
+    m = _LANG_FILENAME_PATTERN.search(path.name)
+    return bool(m and _normalize_filename_lang_token(m.group(1)) == "zh")
+
+
 def srt_to_chinese_readings(src: Path, mode: str, single_line: bool = False) -> Path:
     """SRT side file with inline parenthetical pinyin per hanzi run.
     Mirror of `srt_to_korean_readings`."""
@@ -6930,7 +6991,7 @@ def srt_to_chinese_readings(src: Path, mode: str, single_line: bool = False) -> 
         output_blocks.append("\n".join(prefix + converted))
 
     out = src.with_suffix("").with_name(
-        src.with_suffix("").name + romanization_suffix("zh", mode, "asb.srt", single_line)
+        _chinese_output_stem(src) + romanization_suffix("zh", mode, "asb.srt", single_line)
     )
     out.write_text("\n\n".join(output_blocks) + "\n", encoding="utf-8")
     return out
@@ -6960,7 +7021,7 @@ def srt_to_chinese_ruby_vtt(src: Path, mode: str, single_line: bool = False) -> 
         output_blocks.append("\n".join([time_line] + converted))
 
     out = src.with_suffix("").with_name(
-        src.with_suffix("").name + romanization_suffix("zh", mode, "ruby.vtt", single_line)
+        _chinese_output_stem(src) + romanization_suffix("zh", mode, "ruby.vtt", single_line)
     )
     out.write_text("\n\n".join(output_blocks) + "\n", encoding="utf-8")
     return out
@@ -7015,7 +7076,7 @@ Format: Layer, Start, End, Style, Text
             events.append(f"Dialogue: 0,{start},{end},Reading,{reading_row}")
 
     out = src.with_suffix("").with_name(
-        src.with_suffix("").name + romanization_suffix("zh", mode, "stacked.ass", single_line)
+        _chinese_output_stem(src) + romanization_suffix("zh", mode, "stacked.ass", single_line)
     )
     out.write_text(header + "\n".join(events) + "\n", encoding="utf-8")
     return out
@@ -7034,9 +7095,7 @@ def generate_chinese_romanization(
         formats = {"srt"}
     generated: list[Path] = []
     for path in paths:
-        if ".zh" not in path.name:
-            continue
-        if path.suffix.lower() != ".srt":
+        if not _is_chinese_subtitle_source(path):
             continue
         if "srt" in formats:
             generated.append(srt_to_chinese_readings(path, mode, single_line))
@@ -7201,9 +7260,17 @@ def cantonese_reading_pair_lines(text: str, mode: str) -> tuple[str, str] | None
 
 def _cantonese_output_stem(src: Path) -> str:
     stem = src.with_suffix("").name
-    if ".yue" not in stem and ".zh" in stem:
+    if ".yue" not in stem and _is_chinese_subtitle_source(src):
         return stem + ".yue"
     return stem
+
+
+def _is_cantonese_subtitle_source(path: Path) -> bool:
+    if path.suffix.lower() != ".srt":
+        return False
+    if ".yue" in path.name.lower():
+        return True
+    return _is_chinese_subtitle_source(path)
 
 
 def srt_to_cantonese_readings(src: Path, mode: str, single_line: bool = False) -> Path:
@@ -7326,9 +7393,7 @@ def generate_cantonese_romanization(
         # (`.zh.srt`) rather than a separate `.yue.srt` track. Generate
         # Jyutping from either; the side file still uses `.yue.romanization-*`
         # so merge can request `yue-numbers` as a learner-facing row.
-        if ".yue" not in path.name and ".zh" not in path.name:
-            continue
-        if path.suffix.lower() != ".srt":
+        if not _is_cantonese_subtitle_source(path):
             continue
         if "srt" in formats:
             generated.append(srt_to_cantonese_readings(path, mode, single_line))
@@ -7404,7 +7469,7 @@ _RELEASE_EPISODE_PATTERN = re.compile(r"\s-\s*(\d{1,3})(?:\s+END)?\s*(?=[\[(])",
 #   "Show.S01E07.es.sdh.srt"      -> ("es", "")
 #   "Show.S01E07.fr.forced.srt"   -> ("fr", "")
 _LANG_FILENAME_PATTERN = re.compile(
-    r"\.([a-z]{2,3})(\.mt)?(?:\.(?:hi|cc|sdh|forced))?\.(?:srt|vtt|ass|ssa)$",
+    r"\.([a-z]{2,3}(?:-(?:hans|hant|[a-z]{2}))?)(\.mt)?(?:\.(?:hi|cc|sdh|forced))?\.(?:srt|vtt|ass|ssa)$",
     re.I,
 )
 # Combined output: hyphen-joined language token before .srt.
@@ -7524,7 +7589,29 @@ def is_combined_output_name(name: str) -> bool:
     """True if `name` looks like one of our combined outputs (hyphenated lang
     token, e.g. .ja-ko.srt). Used so re-scanning an output folder doesn't
     pick up its own previous outputs as inputs."""
+    m = _LANG_FILENAME_PATTERN.search(name)
+    if m and _normalize_filename_lang_token(m.group(1)) is not None:
+        return False
     return bool(_COMBINED_OUTPUT_PATTERN.search(name))
+
+
+def _normalize_filename_lang_token(token: str) -> str | None:
+    """Normalize subtitle filename language tokens.
+
+    Real-world sidecars often use script/region tags such as `.zh-Hant.srt`,
+    `.zh-TW.vtt`, `.chs.ass`, or `.cht.srt`. The merge/modify engine works on
+    broad text-language buckets, so these become `zh` while still letting the
+    user's filename keep its original label.
+    """
+    raw = (token or "").strip().lower()
+    canon = LANGUAGE_ALIASES.get(raw, raw)
+    if canon in LANGUAGE_TAG_VARIANTS or canon in LANGUAGE_ALIASES.values():
+        return canon
+    # Keep ordinary ISO-ish tokens accepted for less common languages, but do
+    # not accept hyphenated unknowns such as `ja-ko` as a single language.
+    if re.fullmatch(r"[a-z]{2,3}", canon):
+        return canon
+    return None
 
 
 def is_furigana_output_name(name: str) -> bool:
@@ -7549,7 +7636,10 @@ def parse_srt_filename(name: str) -> tuple[int, int, str, bool] | None:
     if not m:
         return None
     season, episode = ep
-    return season, episode, m.group(1).lower(), bool(m.group(2))
+    lang = _normalize_filename_lang_token(m.group(1))
+    if lang is None:
+        return None
+    return season, episode, lang, bool(m.group(2))
 
 
 def scan_srt_files(
@@ -7727,7 +7817,10 @@ def _parse_vtt_filename(name: str) -> tuple[int, int, str, bool] | None:
     if not m:
         return None
     season, episode = ep
-    return season, episode, m.group(1).lower(), bool(m.group(2))
+    lang = _normalize_filename_lang_token(m.group(1))
+    if lang is None:
+        return None
+    return season, episode, lang, bool(m.group(2))
 
 
 def _parse_ass_filename(name: str) -> tuple[int, int, str, bool] | None:
@@ -7743,7 +7836,10 @@ def _parse_ass_filename(name: str) -> tuple[int, int, str, bool] | None:
     if not m:
         return None
     season, episode = ep
-    return season, episode, m.group(1).lower(), bool(m.group(2))
+    lang = _normalize_filename_lang_token(m.group(1))
+    if lang is None:
+        return None
+    return season, episode, lang, bool(m.group(2))
 
 
 def scan_subtitle_files_extended(
@@ -15446,6 +15542,10 @@ Mandarin Chinese (zh) — ships today
 ──────────────────────────────────────────────────────────────────────
 Install: `pip install -e ".[romanization-zh]"` (or just `pip install pypinyin`)
 
+`zh` means Chinese subtitle text. Simplified/Traditional labels such as
+zh-Hans, zh-Hant, zh-CN, zh-TW, chs, and cht are accepted as Chinese source
+files; the reading mode below decides whether to add Mandarin pinyin.
+
 Modes:
   zh:marks       Default. Pinyin with diacritical tone marks above vowels:
                    你好世界  →  nǐ hǎo shì jiè
@@ -15471,6 +15571,12 @@ Cantonese — Jyutping
 ──────────────────────────────────────────────────────────────────────
   yue:numbers    Default. Cantonese jyutping with numbered tones:
                    廣東話  →  gwong2 dung1 waa2
+
+Cantonese subtitles are rarely labelled separately by providers. In the wizard,
+choosing Cantonese searches for Chinese text (`zh`) first, then creates a
+Jyutping reading-aid row from that Chinese subtitle. For CLI workflows, merge
+the Jyutping row with the Chinese source, for example:
+  getsubtitle merge PATH -l yue-numbers,zh,en
 
 Requires PyCantonese:
   python3 -m pip install pycantonese
@@ -18284,8 +18390,6 @@ def _wizard_canonical_language_token(token: str) -> str | None:
     raw = token.strip().lower()
     if not raw:
         return None
-    if raw == "cantonese":
-        return "yue"
     canon = LANGUAGE_ALIASES.get(raw, raw)
     if canon in _wizard_known_language_codes():
         return canon
@@ -18329,17 +18433,37 @@ def _wizard_suggest_language_list(raw: str) -> list[str]:
 
 
 def _wizard_print_language_normalization(raw: str, languages: list[str]) -> None:
-    pieces = [p.strip().lower() for p in re.split(r"[,.;/|\s]+", raw) if p.strip()]
+    comma_pieces = [p.strip().lower() for p in raw.split(",") if p.strip()]
+    pieces = comma_pieces if len(comma_pieces) == len(languages) else [
+        p.strip().lower() for p in re.split(r"[,.;/|\s]+", raw) if p.strip()
+    ]
     if len(pieces) != len(languages):
         pieces = languages
     print()
     print("    Languages selected:")
     for raw_token, canon in zip(pieces, languages):
         label = _display_lang(canon)
-        if raw_token == canon:
+        note = _wizard_language_selection_note(raw_token, canon)
+        if raw_token == canon and not note:
             print(f"      {canon} → {label}")
+        elif note:
+            print(f"      {raw_token} → {label} ({note})")
         else:
             print(f"      {raw_token} → {label} (normalized to {canon})")
+
+
+def _wizard_language_selection_note(raw_token: str, canon: str) -> str:
+    raw = (raw_token or "").strip().lower()
+    if canon == "zh":
+        if raw in _SIMPLIFIED_CHINESE_TOKENS:
+            return "Simplified Chinese; searched as zh"
+        if raw in _TRADITIONAL_CHINESE_TOKENS:
+            return "Traditional Chinese; searched as zh"
+        if raw in {"mandarin", "mandarin chinese", "cmn"}:
+            return "Mandarin reading aids use zh:pinyin"
+    if canon == "yue":
+        return "Cantonese; searches Chinese subtitles as zh, then adds Jyutping"
+    return ""
 
 
 def _wizard_q2_languages(state: _WizardState) -> None:
