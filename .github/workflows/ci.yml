@@ -1,0 +1,68 @@
+name: CI
+
+# Guardrail: prove HEAD is self-consistent on a clean checkout. This catches
+# the class of failure where the working tree passed locally but committed
+# code + tests/transcripts were out of sync (a broken HEAD). The test suite
+# mocks all network access, so this runs fully offline.
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  pull_request:
+  workflow_dispatch:
+
+# Cancel superseded runs on the same ref to save CI minutes.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: tests (py${{ matrix.python-version }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # requires-python = ">=3.10"; test the floor and the dev version.
+        python-version: ["3.10", "3.11"]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+          cache-dependency-path: pyproject.toml
+
+      - name: Install (with all reading-aid backends, to match local)
+        run: |
+          python -m pip install --upgrade pip
+          # Install every optional reading-aid backend so the full suite runs
+          # the same way it does locally. If an optional backend ever becomes
+          # un-installable on CI, split it into a separate non-blocking job
+          # rather than dropping coverage here.
+          pip install -e ".[dev,furigana,romanization-ko,romanization-zh,romanization-yue]"
+
+      - name: Compile check
+        run: |
+          python -m py_compile getsubtitle.py getsubtitle_core.py \
+            tests/test_core.py tests/wizard_harness.py
+
+      - name: Run test suite
+        # No WIZARD_UPDATE_SNAPSHOTS here: golden transcripts must already be
+        # blessed and committed. A drifted transcript fails the scenario tests,
+        # which is exactly the signal we want.
+        run: python -m pytest tests/test_core.py -q
+
+      - name: Help smoke (no tracebacks on the topic pages)
+        run: |
+          python getsubtitle.py --help >/dev/null
+          for topic in fetch translate modify merge run interactive config keys reading advanced; do
+            python getsubtitle.py --help "$topic" >/dev/null
+          done
