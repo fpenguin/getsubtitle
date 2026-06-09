@@ -20,15 +20,15 @@ Start
   -> If Rename only: rename source -> variation picker -> change planner -> preview -> apply/copy
   -> Otherwise:
        source selection
-       languages
        fetch scope when Fetch is selected
+       languages
        translation engine when Translate is selected
        reading aids when Modify is selected and language supports them
        output format when Merge or converted reading-aid output needs it
        subtitle text size when selected format supports useful size control
        output folder
-       plan preview
-       final action: Run / Save / Edit / Restart / Quit / Show exact command
+       review workflow
+       final action: Run / Change a setting / Show exact command / Save / Start over / Quit
        preflight: blockers + warnings + info
        run summary or saved-workflow instructions
 ```

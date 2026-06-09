@@ -25,7 +25,7 @@ import zipfile
 from dataclasses import dataclass, field, fields, replace
 from html import unescape
 from pathlib import Path
-from typing import Iterable
+from typing import Callable, Iterable
 
 
 JIMAKU_API = "https://jimaku.cc/api"
@@ -125,11 +125,18 @@ LANGUAGE_ALIASES = {
     "spa": "es",
     "spanish": "es",
     "castilian": "es",
+    "castilian spanish": "es",
     "es-es": "es",
     "es-la": "es",
     "es-419": "es",
     "es-mx": "es",
     "es-ar": "es",
+    "spanish spain": "es",
+    "spanish (spain)": "es",
+    "spain spanish": "es",
+    "spanish latin america": "es",
+    "spanish (latin america)": "es",
+    "latin america spanish": "es",
     "latam": "es",
     "latin spanish": "es",
     "latin american spanish": "es",
@@ -144,6 +151,7 @@ LANGUAGE_ALIASES = {
     "mandarin": "zh",
     "mandarin chinese": "zh",
     "simplified chinese": "zh",
+    "chinese (simplified)": "zh",
     "chinese simplified": "zh",
     "simplified mandarin": "zh",
     "mandarin simplified": "zh",
@@ -153,6 +161,7 @@ LANGUAGE_ALIASES = {
     "简体": "zh",
     "简体中文": "zh",
     "traditional chinese": "zh",
+    "chinese (traditional)": "zh",
     "chinese traditional": "zh",
     "traditional mandarin": "zh",
     "mandarin traditional": "zh",
@@ -187,12 +196,83 @@ LANGUAGE_ALIASES = {
     "pt-br": "pt",
     "pt-pt": "pt",
     "brazilian portuguese": "pt",
+    "portuguese brazil": "pt",
+    "portuguese (brazil)": "pt",
+    "portuguese portugal": "pt",
+    "portuguese (portugal)": "pt",
     # Italian
     "ita": "it",
     "italian": "it",
     # Russian
     "rus": "ru",
     "russian": "ru",
+    # Netflix/common subtitle language names
+    "tha": "th",
+    "thai": "th",
+    "tur": "tr",
+    "turkish": "tr",
+    "pol": "pl",
+    "polish": "pl",
+    "dut": "nl",
+    "nld": "nl",
+    "dutch": "nl",
+    "swe": "sv",
+    "swedish": "sv",
+    "nor": "no",
+    "nob": "no",
+    "norwegian": "no",
+    "dan": "da",
+    "danish": "da",
+    "fin": "fi",
+    "finnish": "fi",
+    "ara": "ar",
+    "arabic": "ar",
+    "ar-eg": "ar",
+    "egyptian arabic": "ar",
+    "arabic egyptian": "ar",
+    "arabic (egyptian)": "ar",
+    "standard arabic": "ar",
+    "modern standard arabic": "ar",
+    "arabic (standard)": "ar",
+    "hin": "hi",
+    "hindi": "hi",
+    "vie": "vi",
+    "vietnamese": "vi",
+    "rum": "ro",
+    "ron": "ro",
+    "romanian": "ro",
+    "heb": "he",
+    "iw": "he",
+    "hebrew": "he",
+    "ind": "id",
+    "in": "id",
+    "indonesian": "id",
+    "ukr": "uk",
+    "ukrainian": "uk",
+    # Additional common Netflix/dubbing languages
+    "hrv": "hr",
+    "croatian": "hr",
+    "cz": "cs",
+    "cze": "cs",
+    "ces": "cs",
+    "czech": "cs",
+    "filipino": "fil",
+    "tagalog": "fil",
+    "tl": "fil",
+    "tgl": "fil",
+    "gre": "el",
+    "ell": "el",
+    "greek": "el",
+    "hun": "hu",
+    "hungarian": "hu",
+    "may": "ms",
+    "msa": "ms",
+    "zsm": "ms",
+    "malay": "ms",
+    "tam": "ta",
+    "tamil": "ta",
+    "tel": "te",
+    "telugu": "te",
 }
 
 
@@ -223,6 +303,35 @@ LANGUAGE_TAG_VARIANTS: dict[str, tuple[str, ...]] = {
     "fr": ("fr", "fre", "fra", "french"),
     "de": ("de", "ger", "deu", "german"),
     "pt": ("pt", "por", "portuguese", "pt-br", "pt-pt", "brazilian portuguese"),
+    "it": ("it", "ita", "italian"),
+    "ru": ("ru", "rus", "russian"),
+    "th": ("th", "tha", "thai"),
+    "tr": ("tr", "tur", "turkish"),
+    "pl": ("pl", "pol", "polish"),
+    "nl": ("nl", "dut", "nld", "dutch"),
+    "sv": ("sv", "swe", "swedish"),
+    "no": ("no", "nor", "nob", "norwegian"),
+    "da": ("da", "dan", "danish"),
+    "fi": ("fi", "fin", "finnish"),
+    "ar": (
+        "ar", "ara", "arabic", "ar-eg",
+        "egyptian arabic", "arabic egyptian",
+        "standard arabic", "modern standard arabic",
+    ),
+    "hi": ("hi", "hin", "hindi"),
+    "vi": ("vi", "vie", "vietnamese"),
+    "ro": ("ro", "rum", "ron", "romanian"),
+    "he": ("he", "heb", "iw", "hebrew"),
+    "id": ("id", "ind", "in", "indonesian"),
+    "uk": ("uk", "ukr", "ukrainian"),
+    "hr": ("hr", "hrv", "croatian"),
+    "cs": ("cs", "cz", "cze", "ces", "czech"),
+    "fil": ("fil", "filipino", "tagalog", "tl", "tgl"),
+    "el": ("el", "gre", "ell", "greek"),
+    "hu": ("hu", "hun", "hungarian"),
+    "ms": ("ms", "may", "msa", "zsm", "malay"),
+    "ta": ("ta", "tam", "tamil"),
+    "te": ("te", "tel", "telugu"),
 }
 
 
@@ -231,6 +340,8 @@ PROVIDER_LANGUAGE_QUERY_VARIANTS: dict[str, tuple[str, ...]] = {
     # filters a few common Spanish dialect/code spellings to try when a direct
     # lookup misses.
     "es": ("es", "spa", "es-419", "es-mx", "es-es"),
+    "pt": ("pt", "por", "pt-br", "pt-pt"),
+    "zh": ("zh", "chi", "zho", "cmn", "zh-cn", "zh-tw", "zh-hans", "zh-hant", "chs", "cht"),
 }
 
 _SIMPLIFIED_CHINESE_TOKENS = {
@@ -3353,11 +3464,92 @@ LANGUAGE_DISPLAY_NAMES = {
     "ru": "Russian",
     "it": "Italian",
     "yue": "Cantonese",
+    "th": "Thai",
+    "tr": "Turkish",
+    "pl": "Polish",
+    "nl": "Dutch",
+    "sv": "Swedish",
+    "no": "Norwegian",
+    "da": "Danish",
+    "fi": "Finnish",
+    "ar": "Arabic",
+    "hi": "Hindi",
+    "vi": "Vietnamese",
+    "ro": "Romanian",
+    "he": "Hebrew",
+    "id": "Indonesian",
+    "uk": "Ukrainian",
+    "hr": "Croatian",
+    "cs": "Czech",
+    "fil": "Filipino",
+    "el": "Greek",
+    "hu": "Hungarian",
+    "ms": "Malay",
+    "ta": "Tamil",
+    "te": "Telugu",
 }
 
 
 def _display_lang(code: str) -> str:
     return LANGUAGE_DISPLAY_NAMES.get(code.lower(), code)
+
+
+_LANGUAGE_GUIDE_ROWS: tuple[tuple[str, str, str], ...] = (
+    ("en", "English", "english"),
+    ("ko", "Korean", "korean"),
+    ("ja", "Japanese", "japanese, jp"),
+    ("es", "Spanish", "spanish, spanish latin america, spanish spain"),
+    ("fr", "French", "french"),
+    ("de", "German", "german"),
+    ("it", "Italian", "italian"),
+    ("pt", "Portuguese", "portuguese, portuguese brazil, portuguese portugal"),
+    ("zh", "Chinese / Mandarin", "chinese, mandarin, chinese simplified, chinese traditional"),
+    ("yue", "Cantonese", "cantonese"),
+    ("th", "Thai", "thai"),
+    ("tr", "Turkish", "turkish"),
+    ("pl", "Polish", "polish"),
+    ("ru", "Russian", "russian"),
+    ("nl", "Dutch", "dutch"),
+    ("sv", "Swedish", "swedish"),
+    ("no", "Norwegian", "norwegian"),
+    ("da", "Danish", "danish"),
+    ("fi", "Finnish", "finnish"),
+    ("ar", "Arabic", "arabic, standard arabic, egyptian arabic"),
+    ("hi", "Hindi", "hindi"),
+    ("vi", "Vietnamese", "vietnamese"),
+    ("ro", "Romanian", "romanian"),
+    ("he", "Hebrew", "hebrew"),
+    ("id", "Indonesian", "indonesian, in"),
+    ("uk", "Ukrainian", "ukrainian"),
+    ("hr", "Croatian", "croatian"),
+    ("cs", "Czech", "czech"),
+    ("fil", "Filipino", "filipino, tagalog"),
+    ("el", "Greek", "greek"),
+    ("hu", "Hungarian", "hungarian"),
+    ("ms", "Malay", "malay"),
+    ("ta", "Tamil", "tamil"),
+    ("te", "Telugu", "telugu"),
+)
+
+
+def _supported_language_guide_text(*, indent: str = "    ") -> str:
+    rows = [
+        f"{indent}Supported languages",
+        f"{indent}  Codes can be mixed with full names, e.g. ko,ja,es or korean,japanese,spanish.",
+        f"{indent}  Regional labels are accepted when providers expose them, but GetSubtitle",
+        f"{indent}  currently searches broad buckets for Spanish, Portuguese, Chinese, and Arabic.",
+        "",
+        f"{indent}  Code   Language                 Also accepts",
+        f"{indent}  ----   -----------------------  ----------------------------------------------",
+    ]
+    for code, label, aliases in _LANGUAGE_GUIDE_ROWS:
+        rows.append(f"{indent}  {code:<5}  {label:<23}  {aliases}")
+    return "\n".join(rows)
+
+
+def _print_supported_language_guide() -> None:
+    print()
+    print(_supported_language_guide_text())
 
 
 def _ollama_pull_detail(status: str, model: str) -> str:
@@ -7471,7 +7663,7 @@ _RELEASE_EPISODE_PATTERN = re.compile(r"\s-\s*(\d{1,3})(?:\s+END)?\s*(?=[\[(])",
 #   "Show.S01E07.es.sdh.srt"      -> ("es", "")
 #   "Show.S01E07.fr.forced.srt"   -> ("fr", "")
 _LANG_FILENAME_PATTERN = re.compile(
-    r"\.([a-z]{2,3}(?:-(?:hans|hant|[a-z]{2}))?)(\.mt)?(?:\.(?:hi|cc|sdh|forced))?\.(?:srt|vtt|ass|ssa)$",
+    r"\.([a-z]{2,3}(?:-(?:hans|hant|[a-z]{2}|\d{3}))?)(\.mt)?(?:\.(?:hi|cc|sdh|forced))?\.(?:srt|vtt|ass|ssa)$",
     re.I,
 )
 # Combined output: hyphen-joined language token before .srt.
@@ -12076,15 +12268,15 @@ def build_parser() -> argparse.ArgumentParser:
         formatter_class=argparse.RawDescriptionHelpFormatter,
         description=(
             "Find and prepare subtitles for language learning. Download multiple "
-            "languages, add Japanese furigana, clean SRT files for asbplayer, and "
-            "optionally machine-translate missing languages."
+            "languages, add reading aids (furigana, romanization, pinyin), clean "
+            "captions, and optionally machine-translate missing languages."
         ),
         epilog=textwrap.dedent(
             """
             Examples (basic):
               getsubtitle URL -l ja
               getsubtitle URL -s 1 -e 3 -l ja,ko,en,es
-              getsubtitle URL -s 1 -e all -l ja --reading ja:hiragana --single
+              getsubtitle URL -s 1 -e all -l ja --reading ja:hiragana --single-line
               getsubtitle "https://www.imdb.com/title/tt28299608/" -s 1 -e all -l ko,en,es --dry-run
 
             Examples (by source):
@@ -12103,7 +12295,7 @@ def build_parser() -> argparse.ArgumentParser:
               # Crunchyroll series — slug "Frieren Beyond Journeys End" may not
               # resolve cleanly on AniList; pass --anilist for a sure match.
               getsubtitle "https://www.crunchyroll.com/series/GG5H5XQX4/frieren-beyond-journeys-end" \\
-                -s 1 -e 1 -l ja,ko,en --anilist 154587 --furigana --single
+                -s 1 -e 1 -l ja,ko,en --anilist 154587 --reading ja:hiragana --single-line
 
               # Netflix browse — extracts jbv=60023642, bridges via Wikidata to
               # IMDb/TMDB so Wyzie can search even from a Netflix URL.
@@ -13269,11 +13461,29 @@ def open_manual_search_suggestions(suggestions: list[ManualSearchSuggestion]) ->
             print(f"  (could not open {suggestion.label}: {e})")
 
 
+def should_show_streaming_subtitle_tools(media: MediaInfo) -> bool:
+    """Return True when external streaming subtitle tools are likely relevant."""
+    provider = (media.provider or "").casefold()
+    if provider in {"netflix", "crunchyroll"}:
+        return True
+    if not media.source_url:
+        return False
+    host = urllib.parse.urlparse(media.source_url).netloc.casefold()
+    if host.startswith("www."):
+        host = host[4:]
+    streaming_hosts = {
+        "netflix.com",
+        "crunchyroll.com",
+    }
+    return any(host == item or host.endswith("." + item) for item in streaming_hosts)
+
+
 def print_manual_subtitle_recovery(
     requested_langs: list[str],
     *,
     expected_output_dir: Path | None = None,
     issue_kind: str = "not_found",
+    show_streaming_tools: bool = False,
 ) -> None:
     print()
     if issue_kind == "rate_limited":
@@ -13313,15 +13523,16 @@ def print_manual_subtitle_recovery(
     print(f"{next_number + 1}. Run:")
     target = shlex.quote(str(expected_output_dir)) if expected_output_dir is not None else "FOLDER"
     print(f"   getsubtitle merge {target} -l {','.join(requested_langs)}")
-    print()
-    print("Streaming subtitle tools you can try:")
-    print("  • NetflixSubtitleDownloader (confirmed working)")
-    print("    https://github.com/plateaukao/NetflixSubtitleDownloader")
-    print("  • Subtitle-Downloader (untested; older project)")
-    print("    https://github.com/wayneclub/Subtitle-Downloader")
-    print("  • multi-downloader-nx (untested; active anime downloader)")
-    print("    https://github.com/anidl/multi-downloader-nx")
-    print("  After downloading, come back here and run merge from the folder above.")
+    if show_streaming_tools:
+        print()
+        print("Streaming subtitle tools you can try:")
+        print("  • NetflixSubtitleDownloader (confirmed working)")
+        print("    https://github.com/plateaukao/NetflixSubtitleDownloader")
+        print("  • Subtitle-Downloader (untested; older project)")
+        print("    https://github.com/wayneclub/Subtitle-Downloader")
+        print("  • multi-downloader-nx (untested; active anime downloader)")
+        print("    https://github.com/anidl/multi-downloader-nx")
+        print("  After downloading, come back here and run merge from the folder above.")
 
 
 def yes_no_prompt(prompt: str, *, default: bool) -> bool:
@@ -13429,6 +13640,7 @@ def handle_no_subtitles_found_recovery(
         requested_langs,
         expected_output_dir=expected_output_dir,
         issue_kind=issue_kind,
+        show_streaming_tools=should_show_streaming_subtitle_tools(media),
     )
     if show_details:
         print_subtitle_search_technical_details(
@@ -14219,6 +14431,7 @@ class _SetupChoice:
     content: str
     venue: str
     mt: str
+    output_format: str = ""
 
 
 @dataclass
@@ -14344,6 +14557,7 @@ _SETUP_READING_AID_BY_LANG: dict[str, tuple[str, str, str]] = {
     "ru": ("ru:iso-9", "Russian ISO-9 transliteration",
            "Wired through; backend lands per ROADMAP."),
 }
+_SETUP_SHIPPED_READING_AID_LANGS: frozenset[str] = frozenset({"ja", "ko", "zh", "yue"})
 
 
 # Per-language "why" line, install-size hint, and setup-time string for the
@@ -14533,10 +14747,10 @@ def _setup_recommendations(choice: _SetupChoice) -> list[_SetupRecommendation]:
     # learner-targeted "why" plus an honest size estimate.
     for lang in choice.learning:
         meta = _SETUP_READING_AID_BY_LANG.get(lang)
-        if not meta:
+        if not meta or lang not in _SETUP_SHIPPED_READING_AID_LANGS:
             continue
         spec, label, status = meta
-        shipped = lang in ("ja", "ko", "zh", "yue")   # backends actually live today
+        shipped = lang in _SETUP_SHIPPED_READING_AID_LANGS
         prose = _SETUP_READING_AID_PROSE.get(lang)
         if prose is not None:
             reason, cost, setup_time = prose
@@ -14657,9 +14871,9 @@ def _setup_recommendation_group(rec: _SetupRecommendation) -> tuple[str, str]:
     return ("Other", "Optional helper.")
 
 
-def _setup_print_recommendations(recs: list[_SetupRecommendation]) -> None:
+def _setup_print_recommendation_details(recs: list[_SetupRecommendation]) -> None:
     print()
-    print("Recommended setup:")
+    print("Setup details:")
     grouped: dict[str, list[_SetupRecommendation]] = {}
     group_notes: dict[str, str] = {}
     for rec in recs:
@@ -14689,18 +14903,99 @@ def _setup_print_recommendations(recs: list[_SetupRecommendation]) -> None:
             idx += 1
 
 
+def _setup_print_recommendations(recs: list[_SetupRecommendation]) -> None:
+    recommended = [rec for rec in recs if rec.selected_by_default]
+    optional = [rec for rec in recs if not rec.selected_by_default]
+    grouped: dict[str, list[_SetupRecommendation]] = {}
+    for rec in recommended:
+        group, _note = _setup_recommendation_group(rec)
+        grouped.setdefault(group, []).append(rec)
+
+    print()
+    print("Recommended for you")
+    for group in ["Getting subtitles", "Language learning", "Translation fallback", "Convenience"]:
+        rows = grouped.get(group)
+        if not rows:
+            continue
+        print(group)
+        for rec in rows:
+            print(f"  ✓ {rec.title}")
+    if optional:
+        print("Optional")
+        for rec in optional:
+            print(f"  □ {rec.title}")
+    if _wizard_yesno("Show details?", default=False):
+        _setup_print_recommendation_details(recs)
+
+
+def _setup_format_reason(fmt: str) -> str:
+    return {
+        "srt": "highest compatibility",
+        "ass": "local desktop playback with better sizing/layout",
+        "vtt": "browser/asbplayer language learning",
+        "smi": "legacy Korean subtitle archives",
+        "txt": "plain text export without timestamps",
+    }.get(fmt, "custom")
+
+
+def _setup_format_recommendation(choice: _SetupChoice, reading_aids: list[str]) -> str:
+    if choice.venue == "browser":
+        return "vtt"
+    if choice.venue == "local":
+        return "ass"
+    if choice.venue in {"tablet", "plex"}:
+        return "srt"
+    return "srt"
+
+
+def _setup_reading_format_for_output(fmt: str) -> str:
+    return fmt if fmt in ALLOWED_FURIGANA_FORMATS else "srt"
+
+
+def _setup_select_output_format(choice: _SetupChoice) -> str:
+    reading_aids = _setup_profile_reading_aids(choice)
+    recommended = _setup_format_recommendation(choice, reading_aids)
+    print()
+    print("Choose the subtitle format that best matches your player.")
+    print()
+    print("  1) SRT — works almost everywhere")
+    print("     Plex, Jellyfin, Smart TVs, tablets, phones, VLC")
+    print()
+    print("  2) ASS — best for local study playback")
+    print("     Better subtitle positioning, sizing, and readability")
+    print()
+    print("  3) VTT — best for browser-based language learning")
+    print("     Works with asbplayer on Netflix, Disney+, YouTube, and other streaming sites")
+    print()
+    print("  4) SMI — Korean subtitle format")
+    print("     Common in older Korean subtitle archives")
+    print()
+    print("  5) TXT — plain text without timestamps")
+    print()
+    print("Recommended for your viewing setup:")
+    print(f"  {recommended.upper()} — {_setup_format_reason(recommended)}")
+    print()
+    pick = _setup_select(
+        "Which output format should setup save as your default?",
+        [
+            ("srt", "SRT"),
+            ("ass", "ASS"),
+            ("vtt", "VTT"),
+            ("smi", "SMI"),
+            ("txt", "TXT"),
+        ],
+        recommended,
+    )
+    return pick
+
+
 def _setup_config_summary(choice: _SetupChoice) -> list[str]:
     fetch_langs = [
         *choice.learning,
         *[lang for lang in choice.native if lang not in choice.learning],
     ] or ["ja", "en"]
-    reading_specs = [
-        _SETUP_READING_AID_BY_LANG[lang][0]
-        for lang in choice.learning
-        if lang in _SETUP_READING_AID_BY_LANG
-    ]
-    wants_ja_ruby = any(spec.startswith("ja:") for spec in reading_specs)
-    fmt = "VTT" if wants_ja_ruby and choice.venue == "browser" else "SRT"
+    reading_specs = _setup_profile_reading_aids(choice)
+    fmt, reason = _setup_profile_preferred_format(choice, reading_specs)
     if choice.mt in {"online", "deepl"}:
         mt = "DeepL translation fallback"
     elif choice.mt == "ollama":
@@ -14716,7 +15011,7 @@ def _setup_config_summary(choice: _SetupChoice) -> list[str]:
         "Languages: " + ", ".join(_display_lang(lang) for lang in fetch_langs),
         "Reading aids: " + (", ".join(reading_specs) if reading_specs else "none"),
         "Translation: " + mt,
-        f"Output format: {fmt}",
+        f"Output format: {fmt.upper()} ({reason})",
         "Download folder: ~/Downloads/GetSubtitle",
     ]
     return rows
@@ -14736,14 +15031,11 @@ def _setup_config_text(choice: _SetupChoice) -> str:
     # Each entry uses the language's documented default (ja:hiragana,
     # ko:revised, zh:marks, …) so the user can re-run with the wizard
     # and get the same defaults.
-    rom_specs = [
-        _SETUP_READING_AID_BY_LANG[lang][0]
-        for lang in choice.learning
-        if lang in _SETUP_READING_AID_BY_LANG
-    ]
+    rom_specs = _setup_profile_reading_aids(choice)
     has_reading_aids = bool(rom_specs)
     wants_ja_ruby = any(s.startswith("ja:") for s in rom_specs)
-    fmt = "vtt" if wants_ja_ruby and choice.venue == "browser" else "srt"
+    fmt, _reason = _setup_profile_preferred_format(choice, rom_specs)
+    reading_fmt = _setup_reading_format_for_output(fmt)
 
     # MT engine selection mirrors _setup_recommendations. New setup
     # profiles store explicit engines; older profiles may still say
@@ -14776,7 +15068,7 @@ def _setup_config_text(choice: _SetupChoice) -> str:
     if has_reading_aids:
         # `reading` is the canonical key (covers ja/ko/zh/…).
         lines.append(f'reading = "{",".join(rom_specs)}"')
-        lines.append(f'reading_format = "{fmt}"')
+        lines.append(f'reading_format = "{reading_fmt}"')
     lines += [
         "",
         "[merge]",
@@ -14842,21 +15134,26 @@ def _setup_write_config_status(choice: _SetupChoice) -> str:
         print("    ✓ " + row)
     print()
     print(f"  This creates or updates: {path}")
-    if _wizard_yesno("  Show raw config?", default=False):
-        print("  " + "─" * 60)
-        for line in new_text.splitlines():
-            print("  │ " + line)
-        print("  " + "─" * 60)
 
     if path.exists():
         existing = path.read_text(encoding="utf-8")
         if existing.strip() == new_text.strip():
             print(f"  No change — {path} already matches.")
+            if _wizard_yesno("  View configuration file?", default=False):
+                print("  " + "─" * 60)
+                for line in new_text.splitlines():
+                    print("  │ " + line)
+                print("  " + "─" * 60)
             return "already"
         print(f"  Existing file: {path}")
         print("  A backup will be saved to user_settings.toml.bak before overwriting.")
         if not _wizard_yesno(f"  Overwrite (backing up to .bak)?", default=False):
             print(f"  Kept existing config: {path}")
+            if _wizard_yesno("  View configuration details?", default=False):
+                print("  " + "─" * 60)
+                for line in new_text.splitlines():
+                    print("  │ " + line)
+                print("  " + "─" * 60)
             return "not_changed"
         try:
             backup = path.with_suffix(path.suffix + ".bak")
@@ -14869,6 +15166,11 @@ def _setup_write_config_status(choice: _SetupChoice) -> str:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(new_text, encoding="utf-8")
     print(f"  Created {path}")
+    if _wizard_yesno("  View configuration file?", default=False):
+        print("  " + "─" * 60)
+        for line in new_text.splitlines():
+            print("  │ " + line)
+        print("  " + "─" * 60)
     return "configured"
 
 
@@ -15016,7 +15318,7 @@ def _setup_smoke_test(choice: _SetupChoice) -> None:
     """Run one small dry-run against a known-good public URL to prove the
     stack works end-to-end. Best-effort; failures here aren't fatal."""
     print()
-    print("Quick subtitle search")
+    print("Quick test")
     langs = ",".join(choice.learning + [lang for lang in choice.native if lang not in choice.learning]) or "ja,en"
     argv = [_SETUP_SMOKE_URL, "-l", langs, "--dry-run"]
     print("  Checking Spirited Away without downloading files.")
@@ -15033,21 +15335,23 @@ def _setup_smoke_test(choice: _SetupChoice) -> None:
         print(f"    {e}")
         return
     text = output.getvalue()
-    result_lines = [
-        line.strip()
-        for line in text.splitlines()
-        if re.match(r"\w[\w-]*: Found \d+/\d+", line.strip())
-    ]
+    result_rows: list[tuple[str, int, int]] = []
+    for line in text.splitlines():
+        m = re.match(r"([A-Za-z][A-Za-z ]+):\s+(\d+)\s*/\s*(\d+)", line.strip())
+        if m:
+            result_rows.append((m.group(1), int(m.group(2)), int(m.group(3))))
     if rc == 0:
         print("  ✓ Subtitle providers reachable.")
-        if result_lines:
-            print("  Results:")
-            for line in result_lines[:6]:
-                print(f"    {line}")
-        print("  Setup looks good.")
+        if result_rows:
+            for label, found, total in result_rows[:6]:
+                if found:
+                    print(f"  ✓ {label} subtitles found ({found}/{total}).")
+                else:
+                    print(f"  ⚠ {label} subtitles not found in this quick test.")
+        print("  ✓ Configuration looks good.")
     else:
         print(f"  ⚠ Quick search exited with code {rc}.")
-    if _wizard_yesno("  Show full fetch output?", default=False):
+    if _wizard_yesno("  Show full search results?", default=False):
         print()
         print(f"  $ getsubtitle {' '.join(argv)}")
         for line in text.rstrip().splitlines():
@@ -15100,6 +15404,7 @@ def _setup_save_profile(choice: _SetupChoice) -> None:
             f'content = "{choice.content}"',
             f'venue = "{choice.venue}"',
             f'mt = "{choice.mt}"',
+            f'output_format = "{choice.output_format}"',
             "",
         ]
         path.write_text("\n".join(lines), encoding="utf-8")
@@ -15131,6 +15436,7 @@ def _setup_load_profile() -> _SetupChoice | None:
             content=fields_in.get("content", "mixed"),
             venue=fields_in.get("venue", "browser"),
             mt=fields_in.get("mt", "none"),
+            output_format=fields_in.get("output_format", ""),
         )
     except Exception:
         return None
@@ -15157,20 +15463,16 @@ def _setup_profile_reading_aids(choice: _SetupChoice) -> list[str]:
     return [
         _SETUP_READING_AID_BY_LANG[lang][0]
         for lang in choice.learning
-        if lang in _SETUP_READING_AID_BY_LANG
+        if lang in _SETUP_SHIPPED_READING_AID_LANGS
     ]
 
 
 def _setup_profile_preferred_format(choice: _SetupChoice, reading_aids: list[str]) -> tuple[str, str]:
-    """Infer a beginner-friendly format default from setup intent."""
-    has_ja_reading = any(spec.startswith("ja:") for spec in reading_aids)
-    if choice.venue == "browser" and has_ja_reading:
-        return "vtt", "browser/asbplayer"
-    if choice.venue == "local":
-        return "ass", "local desktop player"
-    if choice.venue in {"tablet", "plex"}:
-        return "srt", "TV/tablet/Plex compatibility"
-    return "", ""
+    """Return the saved format, or infer a beginner-friendly default."""
+    if choice.output_format:
+        return choice.output_format, _setup_format_reason(choice.output_format)
+    fmt = _setup_format_recommendation(choice, reading_aids)
+    return fmt, _setup_format_reason(fmt)
 
 
 def _setup_profile_summary(choice: _SetupChoice) -> list[tuple[str, str]]:
@@ -15323,24 +15625,35 @@ def _setup_try_examples() -> None:
 
 def _setup_prompt_langs(question: str, default: str, examples: str) -> list[str]:
     print()
-    print(f"  Examples: {examples}")
-    return _setup_parse_langs(_wizard_prompt(question, default))
+    print(f"  {question}")
+    print(f"    Examples: {examples}")
+    while True:
+        raw = _wizard_prompt(
+            "Languages (comma-separated)",
+            default,
+            guide=_print_supported_language_guide,
+        )
+        try:
+            return _setup_parse_langs(raw)
+        except CliError as e:
+            print(f"    {e}")
+            print("    Type 'g' for the full language guide, or try again.")
 
 
 def _setup_collect_choice() -> _SetupChoice:
     values: dict[str, object] = {}
     step = 0
-    while step < 5:
+    while step < 6:
         try:
             if step == 0:
                 values["native"] = _setup_prompt_langs(
-                    "What languages do you already understand? (comma-separated)",
+                    "What languages do you already know?",
                     "english",
                     "en,ko   english,korean",
                 )
             elif step == 1:
                 values["learning"] = _setup_prompt_langs(
-                    "What languages are you trying to learn? (comma-separated)",
+                    "What languages are you trying to learn?",
                     "japanese",
                     "ko,ja,es   korean,japanese,spanish",
                 )
@@ -15376,6 +15689,15 @@ def _setup_collect_choice() -> _SetupChoice:
                     "a",
                 )
                 values["mt"] = {"a": "none", "b": "argos", "c": "ollama", "d": "deepl"}[mt]
+            elif step == 5:
+                partial = _SetupChoice(
+                    native=list(values.get("native") or ["en"]),
+                    learning=list(values.get("learning") or ["ja"]),
+                    content=str(values.get("content") or "mixed"),
+                    venue=str(values.get("venue") or "browser"),
+                    mt=str(values.get("mt") or "none"),
+                )
+                values["output_format"] = _setup_select_output_format(partial)
             step += 1
         except _WizardBack:
             if step == 0:
@@ -15389,6 +15711,7 @@ def _setup_collect_choice() -> _SetupChoice:
         content=str(values.get("content") or "mixed"),
         venue=str(values.get("venue") or "browser"),
         mt=str(values.get("mt") or "none"),
+        output_format=str(values.get("output_format") or ""),
     )
 
 
@@ -15411,7 +15734,8 @@ def setup_main(argv: list[str]) -> int:
         print(
             f"  Loaded: native={','.join(choice.native) or '(none)'}, "
             f"learning={','.join(choice.learning) or '(none)'}, "
-            f"content={choice.content}, venue={choice.venue}, mt={choice.mt}"
+            f"content={choice.content}, venue={choice.venue}, mt={choice.mt}, "
+            f"format={choice.output_format or 'auto'}"
         )
         print()
         print("Your system:")
@@ -15452,19 +15776,12 @@ def _setup_run_recommendation_loop(
     not_changed: list[str] = []
     skipped: list[str] = []
     optional_not_set_up: list[str] = []
-    print()
-    print("Recommended items")
     recommended = [rec for rec in recs if rec.selected_by_default]
     optional = [rec for rec in recs if not rec.selected_by_default]
-    for rec in recommended:
-        print(f"  ✓ {rec.title}")
 
     include_optional = False
     if optional:
         print()
-        print("Advanced options")
-        for rec in optional:
-            print(f"  □ {rec.title}")
         include_optional = _wizard_yesno("Include advanced options too?", default=False)
         if not include_optional:
             optional_not_set_up.extend(_setup_ready_label(rec) for rec in optional)
@@ -15536,18 +15853,20 @@ def _setup_run_recommendation_loop(
         _setup_smoke_test(choice)
 
     print()
-    print("Next:")
-    print("  1) Start a guided workflow")
-    print("  2) Show example workflows")
-    print("  3) Exit")
+    print("You're ready to go.")
+    print("Here are a few helpful resources.")
+    print()
+    print("See help and examples")
+    print("    getsubtitle --help")
+    print()
+    print("Start your workflow with CLI command")
+    print("    getsubtitle --interactive  (or getsubtitle -i)")
     try:
-        pick = _wizard_read_choice("Number", ["1", "2", "3"], "1", allow_back=False)
+        start = _wizard_yesno("Do you want to start a guided workflow?", default=True)
     except _WizardAbort:
         return 0
-    if pick == "1":
+    if start:
         return interactive_main([])
-    if pick == "2":
-        _setup_try_examples()
     return 0
 
 
@@ -15681,10 +16000,11 @@ def _setup_print_final_summary(
             print(f"  ✓ {item}")
     print()
     print("Profile:")
-    print("  Known languages:")
-    print(f"    {_setup_display_langs(choice.native)}")
     print("  Learning:")
     print(f"    {_setup_display_langs(choice.learning)}")
+    print("  Known languages:")
+    print(f"    {_setup_display_langs(choice.native)}")
+    print()
     print("Defaults:")
     for row in _setup_profile_defaults(choice):
         print(f"  • {row}")
@@ -15882,13 +16202,37 @@ Layered config (lowest → highest priority):
 
 Topic help:
   getsubtitle --help fetch | translate | modify | merge | pipeline
-  getsubtitle --help setup | interactive | config | keys | reading | sources | advanced
+  getsubtitle --help setup | interactive | config | keys | language | reading | sources | advanced
 
 New here? Try `getsubtitle setup` first, then `getsubtitle -i`.
 """
 
 
 HELP_TOPICS: dict[str, str] = {
+    "language": f"""\
+Language codes and names.
+
+Use these anywhere GetSubtitle asks for languages:
+  getsubtitle URL -l ja,en
+  getsubtitle URL --languages japanese,korean,english
+  getsubtitle merge PATH -l "Spanish (Latin America),English"
+
+In setup and interactive mode, type `g` at a language prompt to show
+this guide without leaving the wizard.
+
+Notes:
+  - Full names and short codes can be mixed.
+  - `jp` is accepted as Japanese (`ja`), `kr` as Korean (`ko`), and
+    `cn` as Chinese (`zh`) because those are common user instincts.
+  - Regional labels such as Spanish (Latin America), Portuguese (Brazil),
+    Chinese (Simplified), and Arabic (Egyptian) are accepted. Today they
+    search broad internal buckets (`es`, `pt`, `zh`, `ar`) unless a provider
+    exposes a finer distinction.
+  - Cantonese (`yue`) is available for reading aids, but many subtitle
+    providers label Cantonese-written files as Chinese (`zh`).
+
+{_supported_language_guide_text(indent="  ")}
+""",
     "setup": """\
 First-time setup and onboarding.
 
@@ -15907,18 +16251,21 @@ Then it groups recommendations by outcome:
   - Translation fallback
   - Convenience
 
-Setup explains why each item helps, shows rough cost and time needed,
-offers to set up all recommended items together, opens the provider pages in
-your browser, saves API keys with the same secure key flow as `--set-key`,
-optionally saves your preferences in user_settings.toml, and finishes
-with Easy / Medium / Hard commands to try.
+Setup shows a concise checklist of recommended items, lets you view details
+only when you want them, opens the provider pages in your browser, saves API
+keys with the same secure key flow as `--set-key`, optionally saves your
+preferences in user_settings.toml, and can run a quick subtitle search to
+verify the setup.
+At the end it points you to `getsubtitle --help` and offers to start the
+guided workflow with `getsubtitle --interactive`.
 
 Notes:
   - API keys are never written to TOML.
   - Streaming apps on tablets/TVs usually cannot import custom subtitle
     files. Setup will recommend browser + asbplayer, Plex, or a local
     player instead.
-  - For asbplayer + Japanese pronunciation guides, use VTT and set:
+  - For browser/asbplayer + Japanese pronunciation guides, VTT can show
+    positioned kanji readings when:
     Settings > Misc > Subtitles > Subtitle HTML = Render.
 """,
     "keys": """\
@@ -16093,9 +16440,9 @@ Output formats (--reading-format)
   srt    Default. Broadly compatible; inline parenthetical readings
          (漢字（かんじ） for ja, 한국어（hangugeo） for ko). One file per
          episode. Safest fallback.
-  vtt    Ruby <ruby><rt> markup. Renders true furigana / inline reading
-         aids in asbplayer when Settings > Misc > Subtitles >
-         Subtitle HTML is set to Render.
+  vtt    Ruby <ruby><rt> markup. Best for Japanese hiragana/katakana
+         readings in browser/asbplayer when Settings > Misc > Subtitles >
+         Subtitle HTML is set to Render. Local video-player support varies.
   ass    Stacked-line layout (reading above original). Best local-player
          choice for Korean, Mandarin, and Cantonese reading aids.
   all    Generate all three. Same as srt,ass,vtt.
@@ -16314,6 +16661,9 @@ Notes:
   API keys are NEVER read from this file — keep them in macOS Keychain or
   environment variables (JIMAKU_API_KEY, WYZIE_API_KEY, SUBDL_API_KEY,
   DEEPL_API_KEY, TMDB_API_KEY).
+  For the full language code/name guide, including labels such as Spanish
+  (Latin America), Chinese (Traditional), Thai, Arabic, Hindi, and more,
+  run `getsubtitle --help language`.
   Run `getsubtitle config --show` to see what's currently active.
 """,
     "sources": """\
@@ -16540,9 +16890,10 @@ Merge options:
   --open-folder            Open output folder after writing
   --no-open-folder-prompt  Do not ask whether to open output folder
   --no-watermark           Skip GetSubtitle credit/disclaimer cues
-  --format FORMAT          srt, vtt, smi, ass, or txt. VTT is best for
-                           asbplayer/browser ruby; ASS is best for local
-                           stacked reading aids.
+  --format FORMAT          srt, vtt, smi, ass, or txt. SRT is the safest
+                           compatibility choice; ASS gives the best local
+                           layout/font control; VTT is best for browser/
+                           asbplayer Japanese ruby.
   --sync MODE              auto, strict, or loose. Default: auto
   --master LANG            Timing master. Default: first language in -l
   --label-langs            Prefix each language's line with [JA]/[KO]/… so
@@ -16733,8 +17084,10 @@ Naming conventions:
   - Other aliases: `language`/`langs` for `languages`,
     `seasons`/`episodes` for `season`/`episode`,
     `format`/`furigana_format`/`furigana_output_format` for `reading_format`.
-  - Language values accept ISO codes (ja, en, ko, es, fr, zh, de, it, pt, ru)
-    OR full names (japanese, english, korean, spanish, french, chinese, …)
+  - Language values accept short codes and full names. Run
+    `getsubtitle --help language` for the full supported list, including
+    Netflix-style labels such as Spanish (Latin America), Chinese
+    (Traditional), Thai, Arabic, Hindi, Vietnamese, and more.
   - Boolean true → flag emitted, false → flag omitted
 """,
     "interactive": """\
@@ -16778,6 +17131,7 @@ What it asks (only the questions relevant to your step choice appear):
       single-episode SPECIAL/OVA/ONA) and when the source filename
       already encodes SxxExx.
   • Languages to collect (comma list: ja,en,ko,es,…).
+      Type 'g' at the language prompt for the full supported guide.
   • AI translation engine: skip / argos / ollama / deepl. Only when
       translate is selected.
   • Reading aids — phonetic guides for the original script. Option 1 is
@@ -16814,14 +17168,14 @@ revisable via Edit — these are NOT asked as questions):
 
 Final action menu (answer by number):
   1) Run it now      — dispatches immediately. Default for local sources;
-                       URL/title sources default to 4 since fetches can
-                       be slow. Offers to open the output folder when
-                       finished.
+                       URL/title sources default to Save (option 4) since
+                       fetches can be slow. Offers to open the output
+                       folder when finished.
   2) Change a setting
                      — list current answers, jump to one question.
-  3) Show exact command & workflow file
+  3) Show exact command and workflow file
                      — prints the full CLI command and equivalent TOML.
-  4) Save as a workflow file
+  4) Save as a reusable workflow file
                      — writes a self-contained .toml. Re-prompts on
                        overwrite collisions. Run later via
                        `getsubtitle --config FILE.toml`.
@@ -16904,6 +17258,13 @@ Compatibility aliases (still accepted):
 }
 
 
+HELP_TOPIC_ALIASES: dict[str, str] = {
+    "languages": "language",
+    "langs": "language",
+    "lang": "language",
+}
+
+
 def _is_topic_help_request(argv: list[str]) -> bool:
     """Return True when argv should bypass argparse and show a topic page."""
     if not argv:
@@ -16970,6 +17331,7 @@ def _show_topic_help(argv: list[str]) -> int:
     if topic is None:
         sys.stdout.write(HELP_MAIN)
         return 0
+    topic = HELP_TOPIC_ALIASES.get(topic, topic)
     if topic in HELP_TOPICS:
         sys.stdout.write(HELP_TOPICS[topic])
         return 0
@@ -17163,6 +17525,7 @@ def _wizard_prompt(
     *,
     choices: list[str] | None = None,
     allow_back: bool = True,
+    guide: Callable[[], None] | None = None,
 ) -> str:
     """Read one answer. Empty input → default (if any). Trims whitespace.
 
@@ -17171,13 +17534,20 @@ def _wizard_prompt(
     free-form input on top of suggestions)."""
     can_go_back = allow_back and _wizard_back_nav_active()
     suffix = ""
+    guide_hint = " | g=guide" if guide is not None else ""
     if default is not None:
-        back_hint = " | b=back | q=quit" if can_go_back else (" | q=quit" if _wizard_back_nav_active() else "")
+        back_hint = (
+            f"{guide_hint} | b=back | q=quit"
+            if can_go_back
+            else (f"{guide_hint} | q=quit" if _wizard_back_nav_active() else guide_hint)
+        )
         suffix = f" [{default}{back_hint}]"
     elif can_go_back:
-        suffix = " [b=back | q=quit]"
+        suffix = f" [{guide_hint[3:] + ' | ' if guide_hint else ''}b=back | q=quit]"
     elif _wizard_back_nav_active():
-        suffix = " [q=quit]"
+        suffix = f" [{guide_hint[3:] + ' | ' if guide_hint else ''}q=quit]"
+    elif guide is not None:
+        suffix = " [g=guide]"
     while True:
         try:
             raw = input(f"\n  {question}{suffix} > ").strip()
@@ -17190,6 +17560,9 @@ def _wizard_prompt(
             raise _WizardAbort("user quit")
         if can_go_back and low in ("b", "back", "prev", "previous"):
             raise _WizardBack()
+        if guide is not None and low in ("g", "guide", "?"):
+            guide()
+            continue
         if raw:
             return raw
         if can_go_back:
@@ -18971,7 +19344,11 @@ def _wizard_q2_languages(state: _WizardState) -> None:
 
     while True:
         while True:
-            raw = _wizard_prompt("Languages (comma-separated)", "ja,en")
+            raw = _wizard_prompt(
+                "Languages (comma-separated)",
+                "ja,en",
+                guide=_print_supported_language_guide,
+            )
             norm, bad = _wizard_parse_language_list(raw)
             if bad:
                 suggestion = _wizard_suggest_language_list(raw)
@@ -18992,6 +19369,7 @@ def _wizard_q2_languages(state: _WizardState) -> None:
                 else:
                     print(f"    I don't recognize: {', '.join(bad)}")
                     print("    Use 2-letter codes or full names, like ja,en or japanese,korean,english.")
+                    print("    Type 'g' for the full language guide.")
                     continue
             if not norm:
                 print("    Please enter at least one language, like ja,en.")

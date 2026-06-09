@@ -7,9 +7,9 @@ Built for immersion learners who want subtitles that match how they actually stu
 Japanese + English, Korean + romanization, Mandarin + pinyin, Cantonese + jyutping,
 or whole Plex/Jellyfin folders prepared for repeated watching.
 
-![Multi-language subtitle with Japanese VTT ruby and English support lines](examples/capability-ja-vtt-ruby-quad-stack.png)
-*Japanese WebVTT in asbplayer: hiragana ruby above kanji, full-sentence
-romaji as a normal subtitle line, and English support in one synced cue.*
+![Multi-language subtitle with Japanese, Chinese, Korean, English, and Spanish study lines](examples/capability-ja-vtt-ruby-quad-stack.png)
+*A multi-language study subtitle: Japanese with reading support, Mandarin
+pinyin, Korean, English, and Spanish in one synced cue.*
 
 ## Why Learners Use It
 
@@ -21,6 +21,11 @@ romaji as a normal subtitle line, and English support in one synced cue.*
 - **Use browser-streaming subtitles when you already have them** — bring files
   from Netflix/Crunchyroll subtitle tools back into GetSubtitle for cleanup,
   reading aids, translation, and merging.
+- **Use familiar language names** — accepts Netflix-style labels such as
+  Spanish (Latin America), Portuguese (Brazil), Chinese (Simplified),
+  Thai, Arabic, Hindi, Indonesian, Croatian, Czech, Filipino, Greek,
+  Hungarian, Malay, Tamil, Telugu, and more. Type `g` at a language
+  prompt to see the full guide.
 - **Learn the CLI naturally** — the wizard builds the command for you, then shows exactly what it generated.
 
 ## Study Examples
@@ -36,12 +41,16 @@ into one study-friendly file.
 
 ![Korean Revised + Yale + English](examples/capability-ko-revised-yale-english-ass.png)
 
+![Korean romanization comparison](examples/capability-ko-revised-vs-yale.png)
+
 Stack Korean, Revised Romanization or Yale romanization, and English so you can
 follow sound, spelling, and meaning together.
 
 ### Chinese, Mandarin, Or Cantonese
 
 ![Mandarin pinyin stack](examples/capability-zh-pinyin-ass-stack.png)
+
+![Cantonese Jyutping stack](examples/capability-yue-jyutping-ass-stack.png)
 
 Use Chinese subtitle text as the base, then add Mandarin pinyin or Cantonese
 Jyutping as reading aids. Simplified and Traditional Chinese labels such as
@@ -51,6 +60,8 @@ subtitle sources.
 ### Missing Tracks And Library Cleanup
 
 ![Missing-track recovery flow](examples/capability-missing-tracks-fetch-merge.png)
+
+![SMI conversion to study subtitle stack](examples/capability-smi-to-study-stack.png)
 
 When a language is missing, GetSubtitle can search community sources, suggest manual searches,
 or fill the gap with machine translation.

@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
-"""Smoke-test European-language subtitle source coverage for getsubtitle.
+"""Smoke-test common international subtitle source coverage for getsubtitle.
 
 Default mode is offline-safe: it reports integration coverage and verifies
-local subtitle parsing with European text. Use --live for light provider and
-candidate-community probes.
+local subtitle parsing with multilingual text. Use --live for light provider
+and candidate-community probes.
 """
 
 import argparse
@@ -28,7 +28,12 @@ import getsubtitle_core as core  # noqa: E402
 
 
 DEFAULT_FIXTURE = ROOT / "tests" / "fixtures" / "european_sample.srt"
-DEFAULT_LANGS = ["fr", "de", "es", "it", "pt", "pl", "nl", "tr", "ru"]
+SOURCE_GROUP_NAME = "common"
+DEFAULT_LANGS = [
+    "fr", "de", "es", "it", "pt", "pl", "nl", "tr", "ru",
+    "sv", "no", "da", "fi", "ar", "hi", "vi", "ro", "he",
+    "id", "uk", "hr", "cs", "fil", "el", "hu", "ms", "ta", "te",
+]
 
 
 @dataclass
@@ -198,7 +203,7 @@ def local_european_check(fixture: Path = DEFAULT_FIXTURE) -> SourceResult:
     joined = "\n".join(line for cue in cues for line in cue.text_lines)
     expected = ["é", "ñ", "ş", "ł", "Пр"]
     if cues and all(token in joined for token in expected):
-        return SourceResult("Local SRT", "ok", f"Parsed multilingual European SRT ({len(cues)} cue(s))")
+        return SourceResult("Local SRT", "ok", f"Parsed multilingual SRT ({len(cues)} cue(s))")
     return SourceResult("Local SRT", "error", "Parsed text but lost expected accents/scripts")
 
 
@@ -255,7 +260,7 @@ def run_checks(*, live: bool, episodes: list[str], langs: list[str]) -> list[Sou
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
-        description="Smoke-test European-language subtitle source coverage for getsubtitle.",
+        description="Smoke-test common international subtitle source coverage for getsubtitle.",
     )
     parser.add_argument(
         "--live",
@@ -266,7 +271,7 @@ def main(argv: list[str] | None = None) -> int:
         "-l",
         "--langs",
         default=",".join(DEFAULT_LANGS),
-        help="Comma-separated language codes to probe. Default: fr,de,es,it,pt,pl,nl,tr,ru.",
+        help="Comma-separated language codes to probe. Default: common Netflix-style subtitle set.",
     )
     parser.add_argument(
         "-e",
@@ -282,14 +287,14 @@ def main(argv: list[str] | None = None) -> int:
     rows = run_checks(live=args.live, episodes=episodes, langs=langs)
     if args.json:
         print(json.dumps({
-            "name": "european",
+            "name": SOURCE_GROUP_NAME,
             "mode": "live" if args.live else "offline",
             "languages": langs,
             "results": [asdict(row) for row in rows],
         }, ensure_ascii=False, indent=2))
         return 0
 
-    print("European subtitle source smoke test")
+    print("Common subtitle source smoke test")
     print(f"Mode: {'live network probes' if args.live else 'offline diagnostics'}")
     print(f"Languages: {', '.join(langs)}")
     print()

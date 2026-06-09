@@ -12,7 +12,7 @@ ROOT = Path(__file__).resolve().parents[1]
 SCRIPTS = [
     ("korean", ROOT / "scripts" / "test_korean_sources.py"),
     ("chinese", ROOT / "scripts" / "test_chinese_sources.py"),
-    ("european", ROOT / "scripts" / "test_european_sources.py"),
+    ("common", ROOT / "scripts" / "test_european_sources.py"),
 ]
 
 

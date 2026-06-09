@@ -98,6 +98,23 @@ final multi-language subtitle is readable enough to use for study.
 - v1.0 should not require users to understand provider internals, subtitle
   formats, or TOML before getting one useful multi-language subtitle file.
 
+## v0.9.6.6 — local follow-up
+
+- **Docs and example audit cleanup.** README hero copy now matches the current
+  multi-language graphic, and previously orphaned Korean, Cantonese, and SMI
+  example images are surfaced in the learner-facing README.
+- **Canonical help examples.** Public help now teaches `--reading ja:hiragana`
+  and `--single-line` instead of legacy compatibility aliases.
+- **Safer UX audit generator.** `scripts/generate_wizard_ux_audit.py --help`
+  now behaves like help, and `--check` verifies generated UX artifacts without
+  rewriting files.
+- **Broader source diagnostics.** The combined source-smoke script now probes
+  the common subtitle language set that setup/interactive language prompts
+  accept.
+- **Streaming helper suggestions are contextual.** Netflix/Crunchyroll
+  downloader suggestions appear for streaming-source recovery, not every
+  generic manual-recovery path.
+
 ## v0.9.6.5 — local follow-up
 
 - **Chinese text variants.** Simplified/Traditional labels such as
@@ -110,10 +127,19 @@ final multi-language subtitle is readable enough to use for study.
 - **Chinese-friendly filenames.** Pinyin/Jyutping generators now handle
   script-labelled Chinese sidecars and produce merge-discoverable reading-aid
   outputs.
+- **Netflix-style language choices.** Setup and interactive language entry
+  now accept the broader common subtitle set: English, Korean, Japanese,
+  Spanish variants, French, German, Italian, Portuguese (Brazil), Chinese
+  variants, Thai, Turkish, Polish, Russian, Dutch, Swedish, Norwegian, Danish,
+  Finnish, Arabic, Hindi, Vietnamese, Romanian, Hebrew, Indonesian, Ukrainian,
+  Croatian, Czech, Filipino/Tagalog, Greek, Hungarian, Malay, Tamil, and Telugu.
+  Language prompts also support `g=guide` to show the full code/name list.
+  Regional labels currently normalize to broad internal buckets (`es`, `pt`,
+  `zh`, `ar`) unless a provider exposes a finer distinction.
 - **Setup UX polish.** `getsubtitle setup` now uses a more personal final
   summary, clearer recommended/advanced setup grouping, "time needed" wording,
-  and a stronger quick subtitle search using *Spirited Away* for broad
-  multilingual coverage.
+  explicit format guidance/selection, and a stronger quick subtitle search
+  using *Spirited Away* for broad multilingual coverage.
 - **Contributor and agent docs.** Added durable project guidance for agents,
   contributors, UX philosophy, and architecture navigation without stale line
   numbers.
@@ -513,10 +539,10 @@ vs original-file rename.
   underscores in TOML keys are now interchangeable
   (`dry-run` ≡ `dry_run`).
 - **Source smoke diagnostics.** Developer scripts under `scripts/` probe
-  Korean, Chinese, and European-language subtitle coverage before new
-  providers are wired into the main downloader. They check Wyzie coverage,
-  candidate community reachability, and local format support such as
-  `.smi` conversion, `.ass/.ssa` input, and Unicode SRT parsing.
+  common international subtitle coverage before new providers are wired into
+  the main downloader. They check Wyzie coverage, candidate community
+  reachability, and local format support such as `.smi` conversion,
+  `.ass/.ssa` input, and Unicode SRT parsing.
 - **Provider source/status diagnostics.** `getsubtitle sources --check`
   reports Wyzie source availability for the user's configured key, and
   `--debug-providers` now prints a compact table of provider/source counts,
@@ -569,7 +595,8 @@ vs original-file rename.
 - Time-overlap matching with `--sync auto | strict | loose` presets.
 - Master language: `--master` flag > `[merge].priority` config > first language in `-l`.
 - Inline readings on the matching merged line via `reading = "ja:hiragana"` or the CLI `--reading ja:hiragana`.
-- Output formats: `.srt` (default), `.vtt` (asbplayer ruby), `.smi`, `.ass`, and plain `.txt` without timestamps.
+- Output formats: `.srt` (default), `.vtt` (browser/asbplayer Japanese ruby),
+  `.smi`, `.ass`, and plain `.txt` without timestamps.
 
 ### Modify (post-processing)
 
@@ -595,7 +622,7 @@ vs original-file rename.
 
 ### Tests
 
-- 749 automated tests covering URL parsing, provider response shapes, TMDB / AniList resolution, low-confidence subtitle match gating, subtitle download sanity checks, SAMI parsing, VTT/ASS input parsing, MT helpers + auto_load/auto_unload, Argos direct/pivot package preflight, wizard run summaries, output/provider/coverage preflight, in-wizard pip dependency setup, setup onboarding UX, recoverable download timeouts, workflow save-path guardrails, editable smart defaults, explicit format selection, merge with format hints and font-size styling, Crunchyroll watch-URL metadata resolution, shared pipeline episode-scope inheritance, the wizard scenario harness, rename mode, the named pipeline registry, pipeline orchestration, `--config` CLI overrides, config validation, source smoke diagnostics, help system, and dispatch routing.
+- 765 automated tests covering URL parsing, provider response shapes, TMDB / AniList resolution, low-confidence subtitle match gating, subtitle download sanity checks, SAMI parsing, VTT/ASS input parsing, MT helpers + auto_load/auto_unload, Argos direct/pivot package preflight, wizard run summaries, output/provider/coverage preflight, in-wizard pip dependency setup, setup onboarding UX, recoverable download timeouts, workflow save-path guardrails, editable smart defaults, explicit format selection, merge with format hints and font-size styling, Crunchyroll watch-URL metadata resolution, shared pipeline episode-scope inheritance, the wizard scenario harness, rename mode, the named pipeline registry, pipeline orchestration, `--config` CLI overrides, config validation, source smoke diagnostics, help system, and dispatch routing.
 
 ## v2.0 target: AI-assisted subtitle sync engine
 

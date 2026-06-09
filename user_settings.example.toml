@@ -77,8 +77,10 @@
 [fetch]
 
 # Which language(s) to download by default. Comma-separated.
-# Accepts ISO codes (ja, en, ko, es, fr, zh, de, it, pt, ru) OR full names
-# (japanese, english, korean, spanish, french, chinese, ...).
+# Accepts short codes and full names. Run `getsubtitle --help language`
+# for the full guide, including Netflix-style labels such as Spanish
+# (Latin America), Chinese (Traditional), Thai, Arabic, Hindi, Vietnamese,
+# and more.
 # Override per-run with: getsubtitle URL -l ja,en
 # Default: "ja"
 languages = "ja"

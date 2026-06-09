@@ -639,6 +639,41 @@ def test_no_subtitle_recovery_no_keeps_manual_recovery_short(monkeypatch, capsys
     assert "Search results:" not in out
     assert "Warnings:" not in out
     assert "Try these subtitle sources:" not in out
+    assert "Streaming subtitle tools you can try:" not in out
+
+
+def test_no_subtitle_recovery_shows_streaming_tools_for_streaming_source(monkeypatch, capsys, tmp_path):
+    import io
+
+    class TtyInput(io.StringIO):
+        def isatty(self):
+            return True
+
+    media = MODULE["MediaInfo"](
+        source_url="https://www.netflix.com/watch/60023642",
+        provider="netflix",
+        title="Spirited Away",
+        season="auto",
+        is_movie=True,
+    )
+    results = [
+        MODULE["SearchResult"]("ja", "auto", "wyzie", "missing"),
+    ]
+    g = MODULE["handle_no_subtitles_found_recovery"].__globals__
+    monkeypatch.setattr(g["sys"], "stdin", TtyInput("n\nn\n"))
+    MODULE["handle_no_subtitles_found_recovery"](
+        media,
+        ["ja"],
+        ["auto"],
+        results,
+        [],
+        manual_search_mode="on-missing",
+        manual_search_open="ask",
+        expected_output_dir=tmp_path / "Spirited Away",
+    )
+    out = capsys.readouterr().out
+    assert "Streaming subtitle tools you can try:" in out
+    assert "NetflixSubtitleDownloader" in out
 
 
 def test_no_subtitle_recovery_details_are_opt_in(monkeypatch, capsys, tmp_path):
@@ -3719,6 +3754,22 @@ def test_setup_config_text_uses_learning_then_native_order_and_vtt_for_asbplayer
     assert "API keys are not stored here" in text
 
 
+def test_setup_config_text_respects_user_selected_output_format():
+    choice = MODULE["_SetupChoice"](
+        native=["ko"],
+        learning=["ja"],
+        content="anime",
+        venue="browser",
+        mt="none",
+        output_format="ass",
+    )
+    text = MODULE["_setup_config_text"](choice)
+    assert 'reading_format = "ass"' in text
+    assert 'format = "ass"' in text
+    summary = MODULE["_setup_profile_summary"](choice)
+    assert any(label == "Format" and "ASS" in value for label, value in summary)
+
+
 def test_setup_help_subcommand_works_without_tty():
     rc, out, _ = _capture_main(["setup", "--help"])
     assert rc == 0
@@ -3926,7 +3977,7 @@ def test_setup_collect_choice_accepts_short_language_codes_and_examples():
     fn = MODULE["_setup_collect_choice"]
     g = fn.__globals__
     saved_prompt = g["_wizard_prompt"]
-    answers = iter(["en,ko", "jp,es", "3", "1", "3"])
+    answers = iter(["en,ko", "jp,es", "3", "1", "3", "3"])
     try:
         g["_wizard_prompt"] = lambda q, default=None, **kw: next(answers)
         buf = io.StringIO()
@@ -3935,34 +3986,74 @@ def test_setup_collect_choice_accepts_short_language_codes_and_examples():
         out = buf.getvalue()
         assert "Examples: en,ko" in out
         assert "Examples: ko,ja,es" in out
+        assert "Which output format should setup save as your default?" in out
         assert choice.native == ["en", "ko"]
         assert choice.learning == ["ja", "es"]
         assert choice.content == "anime"
         assert choice.venue == "browser"
         assert choice.mt == "ollama"
+        assert choice.output_format == "vtt"
     finally:
         g["_wizard_prompt"] = saved_prompt
 
 
+def test_setup_language_prompt_guide_lists_supported_codes(monkeypatch):
+    import io, contextlib
+
+    g = MODULE["_wizard_prompt"].__globals__
+    answers = iter(["g", "croatian,czech,filipino,greek,hungarian,malay,tamil,telugu"])
+    monkeypatch.setitem(g, "input", lambda *a, **k: next(answers))
+
+    buf = io.StringIO()
+    with contextlib.redirect_stdout(buf):
+        langs = MODULE["_setup_prompt_langs"](
+            "What languages are you trying to learn?",
+            "japanese",
+            "ko,ja,es   korean,japanese,spanish",
+        )
+
+    out = buf.getvalue()
+    assert langs == ["hr", "cs", "fil", "el", "hu", "ms", "ta", "te"]
+    assert "Supported languages" in out
+    assert "fil" in out and "Filipino" in out
+    assert "ta" in out and "Tamil" in out
+
+
 def test_setup_recommendations_print_outcome_groups_and_why():
     import io, contextlib
+    fn = MODULE["_setup_print_recommendations"]
+    g = fn.__globals__
+    saved_yesno = g["_wizard_yesno"]
     choice = MODULE["_SetupChoice"](
         native=["en"], learning=["ja"], content="anime",
         venue="browser", mt="online",
     )
     recs = MODULE["_setup_recommendations"](choice)
-    buf = io.StringIO()
-    with contextlib.redirect_stdout(buf):
-        MODULE["_setup_print_recommendations"](recs)
-    text = buf.getvalue()
-    assert "Getting subtitles" in text
-    assert "Language learning" in text
-    assert "Translation fallback" in text
-    assert "Convenience" in text
-    assert "Why:" in text
-    assert "You selected anime" in text
-    assert "Save your preferences" in text
-    assert "user_settings.toml (recommended)" not in text
+    try:
+        g["_wizard_yesno"] = lambda q, default=True: False
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            fn(recs)
+        text = buf.getvalue()
+        assert "Recommended for you" in text
+        assert "Getting subtitles" in text
+        assert "Language learning" in text
+        assert "Translation fallback" in text
+        assert "Convenience" in text
+        assert "Why:" not in text
+
+        g["_wizard_yesno"] = lambda q, default=True: True
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            fn(recs)
+        text = buf.getvalue()
+        assert "Setup details:" in text
+        assert "Why:" in text
+        assert "You selected anime" in text
+        assert "Save your preferences" in text
+        assert "user_settings.toml (recommended)" not in text
+    finally:
+        g["_wizard_yesno"] = saved_yesno
 
 
 def test_setup_write_config_shows_summary_before_optional_raw_config():
@@ -4006,7 +4097,7 @@ def test_setup_recommendation_loop_bulk_runs_recommended_without_per_item_prompt
     saved_examples = g["_setup_try_examples"]
     calls = []
     questions = []
-    yesnos = iter([False, True, False])  # no optional, set up selected, no quick search
+    yesnos = iter([False, True, False, False])  # no optional, set up selected, no quick search, don't start wizard
     recs = [
         MODULE["_SetupRecommendation"]("jimaku", "Jimaku", "why", "free", "now", selected_by_default=True),
         MODULE["_SetupRecommendation"]("subdl", "SubDL", "why", "free", "now", selected_by_default=False),
@@ -4029,7 +4120,10 @@ def test_setup_recommendation_loop_bulk_runs_recommended_without_per_item_prompt
         assert "Profile:" in text
         assert "Known languages:" in text
         assert "Learning:" in text
-        assert "Show example workflows" in text
+        assert "See help and examples" in text
+        assert "getsubtitle --interactive" in text
+        assert "Do you want to start a guided workflow?" in questions
+        assert "Show example workflows" not in text
         assert "Show example commands" not in text
         assert any("Run a quick subtitle search now?" in q for q in questions)
     finally:
@@ -4244,6 +4338,108 @@ def test_help_merge_topic_focused():
     assert "Merge multiple language subtitle files" in out
     assert "--sync" in out
     assert "--master" in out
+
+
+def test_help_language_topic_lists_supported_codes():
+    rc, out, _ = _capture_main(["--help", "language"])
+    assert rc == 0
+    assert "Language codes and names." in out
+    assert "type `g` at a language prompt" in out
+    assert "fil" in out and "Filipino" in out
+    assert "ta" in out and "Tamil" in out
+    assert "Spanish (Latin America)" in out
+
+    rc, alias_out, _ = _capture_main(["--help", "languages"])
+    assert rc == 0
+    assert alias_out == out
+
+
+def test_main_help_uses_canonical_reading_examples():
+    out = MODULE["build_parser"]().format_help()
+    assert "--reading ja:hiragana --single-line" in out
+    assert "--furigana --single" not in out
+    assert "add reading aids" in out
+
+    rc, compact_out, _ = _capture_main(["--help"])
+    assert rc == 0
+    assert "--furigana --single" not in compact_out
+
+
+def test_help_setup_matches_current_ending():
+    rc, out, _ = _capture_main(["--help", "setup"])
+    assert rc == 0
+    assert "quick subtitle search" in out
+    assert "getsubtitle --interactive" in out
+    assert "Easy / Medium / Hard" not in out
+
+
+def test_help_config_points_to_language_guide():
+    rc, out, _ = _capture_main(["--help", "config"])
+    assert rc == 0
+    assert "getsubtitle --help language" in out
+    assert "Spanish" in out and "Latin America" in out
+    assert "ja, en, ko, es, fr, zh, de, it, pt, ru" not in out
+
+
+def test_help_reading_format_guidance_matches_player_findings():
+    rc, out, _ = _capture_main(["--help", "reading"])
+    assert rc == 0
+    assert "browser/asbplayer" in out
+    assert "Japanese hiragana/katakana" in out
+    assert "Local video-player support varies" in out
+    assert "Renders true furigana / inline reading" not in out
+
+
+def test_example_settings_points_to_language_guide():
+    from pathlib import Path
+    repo = Path(MODULE["__file__"]).parent
+    example = (repo / "user_settings.example.toml").read_text(encoding="utf-8")
+    assert "getsubtitle --help language" in example
+    assert "Spanish" in example and "Vietnamese" in example
+    assert "ja, en, ko, es, fr, zh, de, it, pt, ru" not in example
+
+
+def test_reading_aids_doc_lists_only_shipped_cantonese_mode():
+    from pathlib import Path
+    repo = Path(MODULE["__file__"]).parent
+    text = (repo / "docs" / "reading-aids.md").read_text(encoding="utf-8")
+    assert "| Cantonese (`yue`) | `numbers` |" in text
+    assert "| Cantonese (`yue`) | `numbers`, `marks` |" not in text
+
+
+def test_wizard_ux_generator_help_does_not_write_files():
+    import subprocess
+    import sys
+    from pathlib import Path
+
+    repo = Path(MODULE["__file__"]).parent
+    transcript_doc = repo / "docs" / "ux" / "wizard-representative-transcripts.md"
+    before = transcript_doc.read_text(encoding="utf-8")
+    proc = subprocess.run(
+        [sys.executable, str(repo / "scripts" / "generate_wizard_ux_audit.py"), "--help"],
+        cwd=str(repo),
+        text=True,
+        capture_output=True,
+        check=True,
+    )
+    after = transcript_doc.read_text(encoding="utf-8")
+    assert "Generate UX-audit artifacts" in proc.stdout
+    assert after == before
+
+
+def test_wizard_ux_generated_docs_are_current():
+    import subprocess
+    import sys
+    from pathlib import Path
+
+    repo = Path(MODULE["__file__"]).parent
+    proc = subprocess.run(
+        [sys.executable, str(repo / "scripts" / "generate_wizard_ux_audit.py"), "--check"],
+        cwd=str(repo),
+        text=True,
+        capture_output=True,
+    )
+    assert proc.returncode == 0, proc.stdout + proc.stderr
 
 
 def test_merge_subcommand_help_routes_to_merge_topic():
@@ -4951,6 +5147,63 @@ def test_language_aliases_includes_jp_and_cn_variants():
     assert aliases.get("zh-hans") == "zh"
     assert aliases.get("zh-hant") == "zh"
     assert aliases.get("cantonese") == "yue"
+    assert aliases.get("thai") == "th"
+    assert aliases.get("turkish") == "tr"
+    assert aliases.get("polish") == "pl"
+    assert aliases.get("dutch") == "nl"
+    assert aliases.get("swedish") == "sv"
+    assert aliases.get("norwegian") == "no"
+    assert aliases.get("danish") == "da"
+    assert aliases.get("finnish") == "fi"
+    assert aliases.get("arabic") == "ar"
+    assert aliases.get("hindi") == "hi"
+    assert aliases.get("vietnamese") == "vi"
+    assert aliases.get("romanian") == "ro"
+    assert aliases.get("hebrew") == "he"
+    assert aliases.get("in") == "id"
+    assert aliases.get("indonesian") == "id"
+    assert aliases.get("ukrainian") == "uk"
+    assert aliases.get("croatian") == "hr"
+    assert aliases.get("czech") == "cs"
+    assert aliases.get("filipino") == "fil"
+    assert aliases.get("tagalog") == "fil"
+    assert aliases.get("greek") == "el"
+    assert aliases.get("hungarian") == "hu"
+    assert aliases.get("malay") == "ms"
+    assert aliases.get("tamil") == "ta"
+    assert aliases.get("telugu") == "te"
+
+
+def test_setup_accepts_netflix_style_language_set():
+    parse = MODULE["_setup_parse_langs"]
+    assert parse("ko,jp,es,ru,zh,th,in") == ["ko", "ja", "es", "ru", "zh", "th", "id"]
+    assert parse("Spanish (Spain), Spanish (Latin America), Portuguese (Brazil)") == ["es", "pt"]
+    assert parse("Chinese (Simplified), Chinese (Traditional)") == ["zh"]
+    assert parse("Arabic,Hindi,Vietnamese,Romanian,Hebrew,Indonesian,Ukrainian") == [
+        "ar", "hi", "vi", "ro", "he", "id", "uk",
+    ]
+    assert parse("Croatian,Czech,Filipino,Greek,Hungarian,Malay,Tamil,Telugu") == [
+        "hr", "cs", "fil", "el", "hu", "ms", "ta", "te",
+    ]
+    assert parse("Arabic (Egyptian), Modern Standard Arabic, Tagalog") == ["ar", "fil"]
+
+
+def test_setup_does_not_auto_save_deferred_reading_aids_for_new_languages():
+    choice = MODULE["_SetupChoice"](
+        native=["en"],
+        learning=["th", "ar", "hi", "ru"],
+        content="mixed",
+        venue="browser",
+        mt="none",
+    )
+    assert MODULE["_setup_profile_reading_aids"](choice) == []
+    text = MODULE["_setup_config_text"](choice)
+    assert "[modify]" in text
+    assert "reading =" not in text
+    assert "th:royal-thai" not in text
+    assert "ar:ala-lc" not in text
+    assert "hi:iast" not in text
+    assert "ru:iso-9" not in text
 
 
 def test_lang_matches_recognises_cn_for_zh():
@@ -4977,6 +5230,7 @@ def test_script_specific_chinese_subtitle_suffixes_parse_as_zh():
     assert parse("Show.S01E01.zh-TW.srt") == (1, 1, "zh", False)
     assert parse("Show.S01E01.chs.srt") == (1, 1, "zh", False)
     assert parse("Show.S01E01.cht.srt") == (1, 1, "zh", False)
+    assert parse("Show.S01E01.es-419.srt") == (1, 1, "es", False)
     assert parse("Show.S01E01.pt-BR.srt") == (1, 1, "pt", False)
     assert parse("Show.S01E01.ja-ko.srt") is None
 
@@ -7438,6 +7692,9 @@ def test_language_aliases_full_names_normalize_to_iso():
     assert split("japanese,english", "") == ["ja", "en"]
     assert split("korean,spanish,french,chinese", "") == ["ko", "es", "fr", "zh"]
     assert split("German,Italian,Portuguese,Russian", "") == ["de", "it", "pt", "ru"]
+    assert split("Croatian,Czech,Filipino,Greek,Hungarian,Malay,Tamil,Telugu", "") == [
+        "hr", "cs", "fil", "el", "hu", "ms", "ta", "te",
+    ]
     # Mixed forms work too.
     assert split("ja,english", "") == ["ja", "en"]
 
@@ -11548,6 +11805,32 @@ def test_wizard_read_choice_reprompts_defaults_and_quits(monkeypatch, capsys):
         MODULE["_wizard_read_choice"]("Number", ["1", "2", "3"], "1")
 
 
+def test_wizard_prompt_can_show_inline_guide(monkeypatch, capsys):
+    g = MODULE["_wizard_prompt"].__globals__
+    saved_back_nav = g.get("_WIZARD_BACK_NAV_ACTIVE", False)
+    prompts: list[str] = []
+    answers = iter(["g", "en,ko"])
+
+    def fake_input(prompt=""):
+        prompts.append(prompt)
+        return next(answers)
+
+    monkeypatch.setitem(g, "input", fake_input)
+    monkeypatch.setitem(g, "_WIZARD_BACK_NAV_ACTIVE", True)
+    try:
+        result = MODULE["_wizard_prompt"](
+            "Languages (comma-separated)",
+            "ja,en",
+            guide=lambda: print("    GUIDE BODY"),
+        )
+    finally:
+        monkeypatch.setitem(g, "_WIZARD_BACK_NAV_ACTIVE", saved_back_nav)
+
+    assert result == "en,ko"
+    assert "g=guide | b=back | q=quit" in prompts[0]
+    assert "GUIDE BODY" in capsys.readouterr().out
+
+
 def test_wizard_q1_steps_reprompts_not_aborts(monkeypatch, capsys):
     # Regression: invalid Q1 input must re-prompt, not raise CliError and
     # kill the whole wizard (the bug a beginner hit fat-fingering question 1).
@@ -11650,7 +11933,7 @@ def test_wizard_languages_clarifies_dot_separator_typo():
     saved_yesno = fn_g["_wizard_yesno"]
     questions: list[str] = []
     try:
-        fn_g["_wizard_prompt"] = lambda _q, _d=None: "en.es"
+        fn_g["_wizard_prompt"] = lambda _q, _d=None, **_kwargs: "en.es"
         fn_g["_wizard_yesno"] = lambda q, default=True: questions.append(q) or True
         with contextlib.redirect_stdout(io.StringIO()) as buf:
             MODULE["_wizard_q2_languages"](s)
@@ -11674,7 +11957,7 @@ def test_wizard_languages_reprompts_unknown_code():
     saved_prompt = fn_g["_wizard_prompt"]
     answers = iter(["zz", "en,es"])
     try:
-        fn_g["_wizard_prompt"] = lambda _q, _d=None: next(answers)
+        fn_g["_wizard_prompt"] = lambda _q, _d=None, **_kwargs: next(answers)
         with contextlib.redirect_stdout(io.StringIO()) as buf:
             MODULE["_wizard_q2_languages"](s)
         out = buf.getvalue()
@@ -11695,7 +11978,7 @@ def test_wizard_languages_offer_modify_for_korean_reading_aids():
     saved_prompt = fn_g["_wizard_prompt"]
     saved_yesno = fn_g["_wizard_yesno"]
     try:
-        fn_g["_wizard_prompt"] = lambda _q, _d=None: "ko,en"
+        fn_g["_wizard_prompt"] = lambda _q, _d=None, **_kwargs: "ko,en"
         fn_g["_wizard_yesno"] = lambda _q, default=True: True
         with contextlib.redirect_stdout(io.StringIO()) as buf:
             MODULE["_wizard_q2_languages"](s)
@@ -11715,7 +11998,7 @@ def test_wizard_languages_can_decline_modify_reading_aids():
     saved_prompt = fn_g["_wizard_prompt"]
     saved_yesno = fn_g["_wizard_yesno"]
     try:
-        fn_g["_wizard_prompt"] = lambda _q, _d=None: "ja,en"
+        fn_g["_wizard_prompt"] = lambda _q, _d=None, **_kwargs: "ja,en"
         fn_g["_wizard_yesno"] = lambda _q, default=True: False
         with contextlib.redirect_stdout(io.StringIO()):
             MODULE["_wizard_q2_languages"](s)
@@ -11755,7 +12038,7 @@ def test_wizard_fetch_only_multiple_languages_can_add_merge_for_format_questions
     saved_prompt = fn_g["_wizard_prompt"]
     saved_yesno = fn_g["_wizard_yesno"]
     try:
-        fn_g["_wizard_prompt"] = lambda _q, _d=None: "en,es"
+        fn_g["_wizard_prompt"] = lambda _q, _d=None, **_kwargs: "en,es"
         fn_g["_wizard_yesno"] = lambda _q, default=True: True
         with contextlib.redirect_stdout(io.StringIO()) as buf:
             MODULE["_wizard_q2_languages"](s)
@@ -11779,7 +12062,7 @@ def test_wizard_fetch_only_multiple_languages_can_decline_merge():
     saved_prompt = fn_g["_wizard_prompt"]
     saved_yesno = fn_g["_wizard_yesno"]
     try:
-        fn_g["_wizard_prompt"] = lambda _q, _d=None: "en,es"
+        fn_g["_wizard_prompt"] = lambda _q, _d=None, **_kwargs: "en,es"
         fn_g["_wizard_yesno"] = lambda _q, default=True: False
         with contextlib.redirect_stdout(io.StringIO()) as buf:
             MODULE["_wizard_q2_languages"](s)
@@ -11871,7 +12154,7 @@ def test_wizard_local_missing_languages_can_add_fetch_on_spot():
         saved_yesno = fn_g["_wizard_yesno"]
         answers = iter(["ja,en", "MASHLE: Magic and Muscles"])
         try:
-            fn_g["_wizard_prompt"] = lambda _q, _d=None: next(answers)
+            fn_g["_wizard_prompt"] = lambda _q, _d=None, **_kwargs: next(answers)
             fn_g["_wizard_yesno"] = lambda _q, default=True: True
             with contextlib.redirect_stdout(io.StringIO()) as buf:
                 MODULE["_wizard_q2_languages"](s)
@@ -11912,7 +12195,7 @@ def test_wizard_local_missing_languages_decline_fetch_prints_restart_hint():
         saved_prompt = fn_g["_wizard_prompt"]
         saved_yesno = fn_g["_wizard_yesno"]
         try:
-            fn_g["_wizard_prompt"] = lambda _q, _d=None: "ja,en"
+            fn_g["_wizard_prompt"] = lambda _q, _d=None, **_kwargs: "ja,en"
             fn_g["_wizard_yesno"] = lambda _q, default=True: False
             with contextlib.redirect_stdout(io.StringIO()) as buf:
                 MODULE["_wizard_q2_languages"](s)
@@ -14238,7 +14521,7 @@ def test_european_source_smoke_local_srt_fixture_parses():
 
     result = mod.local_european_check(repo / "tests" / "fixtures" / "european_sample.srt")
     assert result.status == "ok"
-    assert "European SRT" in result.notes
+    assert "multilingual SRT" in result.notes
 
 
 def test_european_source_smoke_subdivx_detects_existing_provider():
@@ -14563,8 +14846,26 @@ def test_source_smoke_scripts_support_json_output():
         check=True,
     )
     data = json.loads(proc.stdout)
-    assert data["name"] == "european"
+    assert data["name"] == "common"
     assert data["results"]
+
+
+def test_common_source_smoke_default_langs_include_expanded_language_set():
+    import importlib.util
+    from pathlib import Path
+
+    repo = Path(MODULE["__file__"]).parent
+    script = repo / "scripts" / "test_european_sources.py"
+    spec = importlib.util.spec_from_file_location("test_common_sources_langs", script)
+    mod = importlib.util.module_from_spec(spec)
+    assert spec.loader is not None
+    spec.loader.exec_module(mod)
+
+    expected = {
+        "sv", "no", "da", "fi", "ar", "hi", "vi", "ro", "he",
+        "id", "uk", "hr", "cs", "fil", "el", "hu", "ms", "ta", "te",
+    }
+    assert expected.issubset(set(mod.DEFAULT_LANGS))
 
 
 # ─── Wizard scenarios (end-to-end transcripts) ───────────────────────────

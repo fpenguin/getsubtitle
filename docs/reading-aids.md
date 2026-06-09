@@ -10,7 +10,7 @@ script. They help you connect sound, writing, and meaning while watching.
 | Japanese (`ja`) | `hiragana`, `katakana`, `romaji` | `pip install -e ".[furigana]"` |
 | Korean (`ko`) | `revised`, `yale` | `pip install -e ".[romanization-ko]"` |
 | Mandarin (`zh`) | `marks`, `numbers`, `letters` | `pip install -e ".[romanization-zh]"` |
-| Cantonese (`yue`) | `numbers`, `marks` | `pip install -e ".[romanization-yue]"` |
+| Cantonese (`yue`) | `numbers` | `pip install -e ".[romanization-yue]"` |
 | Thai / Arabic / Hindi / Russian | Royal Thai / ALA-LC / IAST / ISO-9 | Wired through; backends land per ROADMAP |
 
 Chinese subtitles are treated as written text (`zh`). They may be Simplified or

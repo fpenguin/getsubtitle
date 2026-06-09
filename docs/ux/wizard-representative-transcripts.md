@@ -76,7 +76,7 @@ Q4. Which subtitle languages do you want to collect?                Progress [�
       ko,en,es : Korean on top, then English and Spanish (optional romanization support)
       japanese,korean,english,spanish : 2-letter codes and full language names both work
 
-  Languages (comma-separated) [ja,en | b=back | q=quit] >
+  Languages (comma-separated) [ja,en | g=guide | b=back | q=quit] >
 
     Languages selected:
       ja → Japanese
@@ -155,10 +155,10 @@ Q8. Subtitle text size?                                             Progress [�
 Review your workflow                                                Progress [◼◼◼◼◼◼◼◼◼◼◼◼◻] 99%
 
 Plan
-  • Fetch ja, en for:
+  • Fetch Japanese, English for:
     {TMP}/Foo
   • Clean up cues (single line, strip broadcast noise)
-  • Stack ja, en into one SRT file: *.ja-en.srt
+  • Create one Japanese + English SRT study subtitle file
   • Use subtitle text size: Regular
   • Save to:
     {TMP}/Foo
@@ -179,7 +179,7 @@ What next?
   Number [1 | b=back | q=quit] >
 
 Preflight check — 1 item(s) to know about:
-  • Coverage estimate: 1/1 episode(s) have all requested languages
+  • Local subtitles found for all requested languages
       Why: Heads-up — no action needed before running.
       Fix: Fast scan checked 2 subtitle candidate(s).
 
@@ -270,7 +270,7 @@ Q3. Which subtitle languages do you want to collect?                Progress [�
       ko,en,es : Korean on top, then English and Spanish (optional romanization support)
       japanese,korean,english,spanish : 2-letter codes and full language names both work
 
-  Languages (comma-separated) [ja,en | b=back | q=quit] > ja,en
+  Languages (comma-separated) [ja,en | g=guide | b=back | q=quit] > ja,en
 
     Languages selected:
       ja → Japanese
@@ -352,10 +352,10 @@ Q6. Subtitle text size?                                             Progress [�
 Review your workflow                                                Progress [◼◼◼◼◼◼◼◼◼◼◼◼◻] 99%
 
 Plan
-  • Fetch ja, en for:
+  • Fetch Japanese, English for:
     Mashle  (season 2, episode 13)
   • Clean up cues (single line, strip broadcast noise)
-  • Stack ja, en into one SRT file: *.ja-en.srt
+  • Create one Japanese + English SRT study subtitle file
   • Use subtitle text size: Regular
   • Save to:
     {TMP}/Mashle
@@ -461,7 +461,7 @@ Q3. Which subtitle languages do you want to collect?                Progress [�
       ko,en,es : Korean on top, then English and Spanish (optional romanization support)
       japanese,korean,english,spanish : 2-letter codes and full language names both work
 
-  Languages (comma-separated) [ja,en | b=back | q=quit] > ja,en
+  Languages (comma-separated) [ja,en | g=guide | b=back | q=quit] > ja,en
 
     Languages selected:
       ja → Japanese
@@ -520,10 +520,10 @@ Q5. Final output format.                                            Progress [�
 Review your workflow                                                Progress [◼◼◼◼◼◼◼◼◼◼◼◼◻] 99%
 
 Plan
-  • Use local ja, en files in:
+  • Use local Japanese, English files in:
     {TMP}/Show
-  • Add reading aids: ja:hiragana
-  • Stack ja, en into one VTT file: *.ja-en.vtt
+  • Add pronunciation guides: Japanese hiragana readings
+  • Create one Japanese + English VTT study subtitle file
   • Save to:
     {TMP}/Show
 
@@ -629,7 +629,7 @@ Q3. Which subtitle languages do you want to collect?                Progress [�
       ko,en,es : Korean on top, then English and Spanish (optional romanization support)
       japanese,korean,english,spanish : 2-letter codes and full language names both work
 
-  Languages (comma-separated) [ja,en | b=back | q=quit] > ko,en
+  Languages (comma-separated) [ja,en | g=guide | b=back | q=quit] > ko,en
 
     Languages selected:
       ko → Korean
@@ -682,7 +682,7 @@ Q6. Subtitle text size?                                             Progress [�
     Subtitle text size
     Format: ASS
 
-    This output uses ASS and will usually show 2 lines at once.
+    This output uses ASS and will usually show 3 lines at once.
     These presets are recommended:
 
     1) Regular (58) — recommended
@@ -696,17 +696,18 @@ Q6. Subtitle text size?                                             Progress [�
 Review your workflow                                                Progress [◼◼◼◼◼◼◼◼◼◼◼◼◻] 99%
 
 Plan
-  • Use local ko, en files in:
+  • Use local Korean, English files in:
     {TMP}/Show
-  • Add reading aids: ko:revised
-  • Stack ko, en into one ASS file: *.ko-en.ass
+  • Add pronunciation guides: Korean Revised Romanization
+  • Create one Korean + English ASS study subtitle file
   • Use subtitle text size: Regular
   • Save to:
     {TMP}/Show
 
 Before you run
-  ⚠ ASS reading aids use parenthetical text instead of true ruby above
-    the script.
+  ⚠ ASS shows reading aids as stacked subtitle lines. VTT is recommended
+    for positioned kanji reading support in desktop browser with
+    asbplayer plugin.
 
 Smart defaults
   Display order   ko, en  (top → bottom on screen)
@@ -806,7 +807,7 @@ Q3. Which subtitle languages do you want to collect?                Progress [�
       ko,en,es : Korean on top, then English and Spanish (optional romanization support)
       japanese,korean,english,spanish : 2-letter codes and full language names both work
 
-  Languages (comma-separated) [ja,en | b=back | q=quit] > ja,en
+  Languages (comma-separated) [ja,en | g=guide | b=back | q=quit] > ja,en
 
     Languages selected:
       ja → Japanese
@@ -864,9 +865,9 @@ Q5. Subtitle text size?                                             Progress [�
 Review your workflow                                                Progress [◼◼◼◼◼◼◼◼◼◼◼◼◻] 99%
 
 Plan
-  • Use local ja, en files in:
+  • Use local Japanese, English files in:
     {TMP}/Show
-  • Stack ja, en into one SRT file: *.ja-en.srt
+  • Create one Japanese + English SRT study subtitle file
   • Use subtitle text size: Regular
   • Save to:
     {TMP}/Show
@@ -970,7 +971,7 @@ Q3. Which subtitle languages do you want to collect?                Progress [�
       ko,en,es : Korean on top, then English and Spanish (optional romanization support)
       japanese,korean,english,spanish : 2-letter codes and full language names both work
 
-  Languages (comma-separated) [ja,en | b=back | q=quit] > ja
+  Languages (comma-separated) [ja,en | g=guide | b=back | q=quit] > ja
 
     Languages selected:
       ja → Japanese
@@ -994,9 +995,9 @@ Q4. Reading aids (phonetic guides for the original script).         Progress [�
 Review your workflow                                                Progress [◼◼◼◼◼◼◼◼◼◼◼◼◻] 99%
 
 Plan
-  • Use local ja files in:
+  • Use local Japanese files in:
     {TMP}/Foo.ja.srt
-  • Add reading aids: ja:hiragana
+  • Add pronunciation guides: Japanese hiragana readings
   • Save to:
     {TMP}
 
@@ -1213,7 +1214,7 @@ Q3. Which subtitle languages do you want to collect?                Progress [�
       ko,en,es : Korean on top, then English and Spanish (optional romanization support)
       japanese,korean,english,spanish : 2-letter codes and full language names both work
 
-  Languages (comma-separated) [ja,en | b=back | q=quit] > ja,en
+  Languages (comma-separated) [ja,en | g=guide | b=back | q=quit] > ja,en
 
     Languages selected:
       ja → Japanese
@@ -1292,11 +1293,11 @@ Q7. Subtitle text size?                                             Progress [�
 Review your workflow                                                Progress [◼◼◼◼◼◼◼◼◼◼◼◼◻] 99%
 
 Plan
-  • Use local ja, en files in:
+  • Use local Japanese, English files in:
     {TMP}/Show
   • Fill gaps with Deepl AI translation
   • Clean up cues (single line, strip broadcast noise)
-  • Stack ja, en into one SRT file: *.ja-en.srt
+  • Create one Japanese + English SRT study subtitle file
   • Use subtitle text size: Regular
   • Save to:
     {TMP}/Show
@@ -1317,7 +1318,7 @@ What next?
   Number [1 | b=back | q=quit] > 1
 
 Preflight check — 2 item(s) to know about:
-  • Coverage estimate: 1/1 episode(s) have all requested languages
+  • Local subtitles found for all requested languages
       Why: Heads-up — no action needed before running.
       Fix: Fast scan checked 2 subtitle candidate(s).
   ✗ DeepL API key
@@ -1423,7 +1424,7 @@ Q3. Which subtitle languages do you want to collect?                Progress [�
       ko,en,es : Korean on top, then English and Spanish (optional romanization support)
       japanese,korean,english,spanish : 2-letter codes and full language names both work
 
-  Languages (comma-separated) [ja,en | b=back | q=quit] > ja,en
+  Languages (comma-separated) [ja,en | g=guide | b=back | q=quit] > ja,en
 
     Languages selected:
       ja → Japanese
@@ -1502,11 +1503,11 @@ Q7. Subtitle text size?                                             Progress [�
 Review your workflow                                                Progress [◼◼◼◼◼◼◼◼◼◼◼◼◻] 99%
 
 Plan
-  • Use local ja, en files in:
+  • Use local Japanese, English files in:
     {TMP}/Show
   • Fill gaps with Ollama AI translation
   • Clean up cues (single line, strip broadcast noise)
-  • Stack ja, en into one SRT file: *.ja-en.srt
+  • Create one Japanese + English SRT study subtitle file
   • Use subtitle text size: Regular
   • Save to:
     {TMP}/Show
@@ -1527,7 +1528,7 @@ What next?
   Number [1 | b=back | q=quit] > 1
 
 Preflight check — 2 item(s) to know about:
-  • Coverage estimate: 1/1 episode(s) have all requested languages
+  • Local subtitles found for all requested languages
       Why: Heads-up — no action needed before running.
       Fix: Fast scan checked 2 subtitle candidate(s).
   ✗ Ollama daemon at http://localhost:11434
@@ -1633,7 +1634,7 @@ Q3. Which subtitle languages do you want to collect?                Progress [�
       ko,en,es : Korean on top, then English and Spanish (optional romanization support)
       japanese,korean,english,spanish : 2-letter codes and full language names both work
 
-  Languages (comma-separated) [ja,en | b=back | q=quit] > ja,en
+  Languages (comma-separated) [ja,en | g=guide | b=back | q=quit] > ja,en
 
     Languages selected:
       ja → Japanese
@@ -1711,10 +1712,10 @@ Q6. Subtitle text size?                                             Progress [�
 Review your workflow                                                Progress [◼◼◼◼◼◼◼◼◼◼◼◼◻] 99%
 
 Plan
-  • Use local ja, en files in:
+  • Use local Japanese, English files in:
     {TMP}/Foo
   • Clean up cues (single line, strip broadcast noise)
-  • Stack ja, en into one SRT file: *.ja-en.srt
+  • Create one Japanese + English SRT study subtitle file
   • Use subtitle text size: Regular
   • Save to:
     {TMP}/Foo
@@ -1821,7 +1822,7 @@ Q5. Which subtitle languages do you want to collect?                Progress [�
       ko,en,es : Korean on top, then English and Spanish (optional romanization support)
       japanese,korean,english,spanish : 2-letter codes and full language names both work
 
-  Languages (comma-separated) [ja,en | b=back | q=quit] > ja,en
+  Languages (comma-separated) [ja,en | g=guide | b=back | q=quit] > ja,en
 
     Languages selected:
       ja → Japanese
@@ -1900,10 +1901,10 @@ Q9. Subtitle text size?                                             Progress [�
 Review your workflow                                                Progress [◼◼◼◼◼◼◼◼◼◼◼◼◻] 99%
 
 Plan
-  • Fetch ja, en for:
+  • Fetch Japanese, English for:
     https://www.imdb.com/title/tt28299608/
   • Clean up cues (single line, strip broadcast noise)
-  • Stack ja, en into one SRT file: *.ja-en.srt
+  • Create one Japanese + English SRT study subtitle file
   • Use subtitle text size: Regular
   • Save to:
     ~/Downloads/GetSubtitle
@@ -2058,7 +2059,7 @@ Q6. Which subtitle languages do you want to collect?                Progress [�
       ko,en,es : Korean on top, then English and Spanish (optional romanization support)
       japanese,korean,english,spanish : 2-letter codes and full language names both work
 
-  Languages (comma-separated) [ja,en | b=back | q=quit] > ja,ko
+  Languages (comma-separated) [ja,en | g=guide | b=back | q=quit] > ja,ko
 
     Languages selected:
       ja → Japanese
@@ -2131,10 +2132,10 @@ Q9. Subtitle text size?                                             Progress [�
 Review your workflow                                                Progress [◼◼◼◼◼◼◼◼◼◼◼◼◻] 99%
 
 Plan
-  • Fetch ja, ko for:
+  • Fetch Japanese, Korean for:
     MF GHOST  (season 3, episode 1-13)
   • Clean up cues (single line, strip broadcast noise)
-  • Stack ja, ko into one SRT file: *.ja-ko.srt
+  • Create one Japanese + Korean SRT study subtitle file
   • Use subtitle text size: Regular
   • Save to:
     ~/Downloads/GetSubtitle
@@ -2243,7 +2244,7 @@ Q3. Which subtitle languages do you want to collect?                Progress [�
       ko,en,es : Korean on top, then English and Spanish (optional romanization support)
       japanese,korean,english,spanish : 2-letter codes and full language names both work
 
-  Languages (comma-separated) [ja,en | b=back | q=quit] > ja,en
+  Languages (comma-separated) [ja,en | g=guide | b=back | q=quit] > ja,en
 
     Languages selected:
       ja → Japanese
@@ -2312,10 +2313,10 @@ Q6. Subtitle text size?                                             Progress [�
 Review your workflow                                                Progress [◼◼◼◼◼◼◼◼◼◼◼◼◻] 99%
 
 Plan
-  • Use local ja, en files in:
+  • Use local Japanese, English files in:
     {TMP}/Show
   • Clean up cues (single line, strip broadcast noise)
-  • Stack ja, en into one SRT file: *.ja-en.srt
+  • Create one Japanese + English SRT study subtitle file
   • Use subtitle text size: Regular
   • Save to:
     {TMP}/Show
@@ -2404,7 +2405,7 @@ Q3. Which subtitle languages do you want to collect?                Progress [�
       ko,en,es : Korean on top, then English and Spanish (optional romanization support)
       japanese,korean,english,spanish : 2-letter codes and full language names both work
 
-  Languages (comma-separated) [ja,en | b=back | q=quit] > ja,en
+  Languages (comma-separated) [ja,en | g=guide | b=back | q=quit] > ja,en
 
     Languages selected:
       ja → Japanese
@@ -2473,10 +2474,10 @@ Q6. Subtitle text size?                                             Progress [�
 Review your workflow                                                Progress [◼◼◼◼◼◼◼◼◼◼◼◼◻] 99%
 
 Plan
-  • Use local ja, en files in:
+  • Use local Japanese, English files in:
     {TMP}/Show
   • Clean up cues (single line, strip broadcast noise)
-  • Stack ja, en into one SRT file: *.ja-en.srt
+  • Create one Japanese + English SRT study subtitle file
   • Use subtitle text size: Regular
   • Save to:
     {TMP}/Show
@@ -2497,7 +2498,7 @@ What next?
   Number [1 | b=back | q=quit] > 1
 
 Preflight check — 1 item(s) to know about:
-  • Coverage estimate: 1/1 episode(s) have all requested languages
+  • Local subtitles found for all requested languages
       Why: Heads-up — no action needed before running.
       Fix: Fast scan checked 2 subtitle candidate(s).
 
@@ -2585,7 +2586,7 @@ Q3. Which subtitle languages do you want to collect?                Progress [�
       ko,en,es : Korean on top, then English and Spanish (optional romanization support)
       japanese,korean,english,spanish : 2-letter codes and full language names both work
 
-  Languages (comma-separated) [ja,en | b=back | q=quit] > ja,en
+  Languages (comma-separated) [ja,en | g=guide | b=back | q=quit] > ja,en
 
     Languages selected:
       ja → Japanese
@@ -2654,10 +2655,10 @@ Q6. Subtitle text size?                                             Progress [�
 Review your workflow                                                Progress [◼◼◼◼◼◼◼◼◼◼◼◼◻] 99%
 
 Plan
-  • Use local ja, en files in:
+  • Use local Japanese, English files in:
     {TMP}/Shows/Foo Bar
   • Clean up cues (single line, strip broadcast noise)
-  • Stack ja, en into one SRT file: *.ja-en.srt
+  • Create one Japanese + English SRT study subtitle file
   • Use subtitle text size: Regular
   • Save to:
     {TMP}/Shows/Foo Bar
@@ -2760,7 +2761,7 @@ Q3. Which subtitle languages do you want to collect?                Progress [�
       ko,en,es : Korean on top, then English and Spanish (optional romanization support)
       japanese,korean,english,spanish : 2-letter codes and full language names both work
 
-  Languages (comma-separated) [ja,en | b=back | q=quit] > ja,en
+  Languages (comma-separated) [ja,en | g=guide | b=back | q=quit] > ja,en
 
     Languages selected:
       ja → Japanese
@@ -2829,10 +2830,10 @@ Q6. Subtitle text size?                                             Progress [�
 Review your workflow                                                Progress [◼◼◼◼◼◼◼◼◼◼◼◼◻] 99%
 
 Plan
-  • Use local ja, en files in:
+  • Use local Japanese, English files in:
     {TMP}/Foo Bar
   • Clean up cues (single line, strip broadcast noise)
-  • Stack ja, en into one SRT file: *.ja-en.srt
+  • Create one Japanese + English SRT study subtitle file
   • Use subtitle text size: Regular
   • Save to:
     {TMP}/Foo Bar
@@ -2926,7 +2927,7 @@ Q2. Where should we get subtitles from?                             Progress [�
     1) Re-enter a different title
     2) Use exactly what I typed (advanced; may fail)
 
-  Number [1 | b=back | q=quit] > 2
+  Number, URL, ID, or title [1 | b=back | q=quit] > 2
   Is this a movie? (No = TV show / anime) [y/N | b=back | q=quit] > n
 
 ------------------------------------------------------------------------------------------------
@@ -2952,15 +2953,17 @@ Q4. Which subtitle languages do you want to collect?                Progress [�
       ko,en,es : Korean on top, then English and Spanish (optional romanization support)
       japanese,korean,english,spanish : 2-letter codes and full language names both work
 
-  Languages (comma-separated) [ja,en | b=back | q=quit] > 1
+  Languages (comma-separated) [ja,en | g=guide | b=back | q=quit] > 1
     I don't recognize: 1
     Use 2-letter codes or full names, like ja,en or japanese,korean,english.
+    Type 'g' for the full language guide.
 
-  Languages (comma-separated) [ja,en | b=back | q=quit] > 1
+  Languages (comma-separated) [ja,en | g=guide | b=back | q=quit] > 1
     I don't recognize: 1
     Use 2-letter codes or full names, like ja,en or japanese,korean,english.
+    Type 'g' for the full language guide.
 
-  Languages (comma-separated) [ja,en | b=back | q=quit] > ja,en
+  Languages (comma-separated) [ja,en | g=guide | b=back | q=quit] > ja,en
 
     Languages selected:
       ja → Japanese
@@ -3039,10 +3042,10 @@ Q8. Subtitle text size?                                             Progress [�
 Review your workflow                                                Progress [◼◼◼◼◼◼◼◼◼◼◼◼◻] 99%
 
 Plan
-  • Fetch ja, en for:
+  • Fetch Japanese, English for:
     totoro  (season 1, episode all)
   • Clean up cues (single line, strip broadcast noise)
-  • Stack ja, en into one SRT file: *.ja-en.srt
+  • Create one Japanese + English SRT study subtitle file
   • Use subtitle text size: Regular
   • Save to:
     ~/Downloads/GetSubtitle
@@ -3154,7 +3157,7 @@ Q2. Where should we get subtitles from?                             Progress [�
     1) Re-enter a different title
     2) Use exactly what I typed (advanced; may fail)
 
-  Number [1 | b=back | q=quit] > 2
+  Number, URL, ID, or title [1 | b=back | q=quit] > 2
   Is this a movie? (No = TV show / anime) [y/N | b=back | q=quit] > n
 
 ------------------------------------------------------------------------------------------------
@@ -3179,7 +3182,7 @@ Q4. Which subtitle languages do you want to collect?                Progress [�
       ko,en,es : Korean on top, then English and Spanish (optional romanization support)
       japanese,korean,english,spanish : 2-letter codes and full language names both work
 
-  Languages (comma-separated) [ja,en | b=back | q=quit] > ja,en
+  Languages (comma-separated) [ja,en | g=guide | b=back | q=quit] > ja,en
 
     Languages selected:
       ja → Japanese
@@ -3258,10 +3261,10 @@ Q8. Subtitle text size?                                             Progress [�
 Review your workflow                                                Progress [◼◼◼◼◼◼◼◼◼◼◼◼◻] 99%
 
 Plan
-  • Fetch ja, en for:
+  • Fetch Japanese, English for:
     totoro
   • Clean up cues (single line, strip broadcast noise)
-  • Stack ja, en into one SRT file: *.ja-en.srt
+  • Create one Japanese + English SRT study subtitle file
   • Use subtitle text size: Regular
   • Save to:
     ~/Downloads/GetSubtitle
@@ -3354,7 +3357,7 @@ Q3. Which subtitle languages do you want to collect?                Progress [�
       ko,en,es : Korean on top, then English and Spanish (optional romanization support)
       japanese,korean,english,spanish : 2-letter codes and full language names both work
 
-  Languages (comma-separated) [ja,en | b=back | q=quit] > b
+  Languages (comma-separated) [ja,en | g=guide | b=back | q=quit] > b
     Going back to the previous step.
 
 ------------------------------------------------------------------------------------------------
@@ -3376,7 +3379,7 @@ Q3. Which subtitle languages do you want to collect?                Progress [�
       ko,en,es : Korean on top, then English and Spanish (optional romanization support)
       japanese,korean,english,spanish : 2-letter codes and full language names both work
 
-  Languages (comma-separated) [ja,en | b=back | q=quit] > ja,en
+  Languages (comma-separated) [ja,en | g=guide | b=back | q=quit] > ja,en
 
     Languages selected:
       ja → Japanese
@@ -3445,10 +3448,10 @@ Q6. Subtitle text size?                                             Progress [�
 Review your workflow                                                Progress [◼◼◼◼◼◼◼◼◼◼◼◼◻] 99%
 
 Plan
-  • Use local ja, en files in:
+  • Use local Japanese, English files in:
     {TMP}/Right
   • Clean up cues (single line, strip broadcast noise)
-  • Stack ja, en into one SRT file: *.ja-en.srt
+  • Create one Japanese + English SRT study subtitle file
   • Use subtitle text size: Regular
   • Save to:
     {TMP}/Right
@@ -3551,7 +3554,7 @@ Q3. Which subtitle languages do you want to collect?                Progress [�
       ko,en,es : Korean on top, then English and Spanish (optional romanization support)
       japanese,korean,english,spanish : 2-letter codes and full language names both work
 
-  Languages (comma-separated) [ja,en | b=back | q=quit] > ja,en
+  Languages (comma-separated) [ja,en | g=guide | b=back | q=quit] > ja,en
 
     Languages selected:
       ja → Japanese
@@ -3620,10 +3623,10 @@ Q6. Subtitle text size?                                             Progress [�
 Review your workflow                                                Progress [◼◼◼◼◼◼◼◼◼◼◼◼◻] 99%
 
 Plan
-  • Use local ja, en files in:
+  • Use local Japanese, English files in:
     {TMP}/Show
   • Clean up cues (single line, strip broadcast noise)
-  • Stack ja, en into one SRT file: *.ja-en.srt
+  • Create one Japanese + English SRT study subtitle file
   • Use subtitle text size: Regular
   • Save to:
     {TMP}/Show
@@ -3648,10 +3651,10 @@ What next?
 Review your workflow                                                Progress [◼◼◼◼◼◼◼◼◼◼◼◼◻] 99%
 
 Plan
-  • Use local ja, en files in:
+  • Use local Japanese, English files in:
     {TMP}/Show
   • Clean up cues (single line, strip broadcast noise)
-  • Stack ja, en into one SRT file: *.ja-en.srt
+  • Create one Japanese + English SRT study subtitle file
   • Use subtitle text size: Regular
   • Save to:
     {TMP}/Show
@@ -3740,7 +3743,7 @@ Q3. Which subtitle languages do you want to collect?                Progress [�
       ko,en,es : Korean on top, then English and Spanish (optional romanization support)
       japanese,korean,english,spanish : 2-letter codes and full language names both work
 
-  Languages (comma-separated) [ja,en | b=back | q=quit] > ja,en
+  Languages (comma-separated) [ja,en | g=guide | b=back | q=quit] > ja,en
 
     Languages selected:
       ja → Japanese
@@ -3809,10 +3812,10 @@ Q6. Subtitle text size?                                             Progress [�
 Review your workflow                                                Progress [◼◼◼◼◼◼◼◼◼◼◼◼◻] 99%
 
 Plan
-  • Use local ja, en files in:
+  • Use local Japanese, English files in:
     {TMP}/Show
   • Clean up cues (single line, strip broadcast noise)
-  • Stack ja, en into one SRT file: *.ja-en.srt
+  • Create one Japanese + English SRT study subtitle file
   • Use subtitle text size: Regular
   • Save to:
     {TMP}/Show
@@ -3876,7 +3879,7 @@ Current settings
 Review your workflow                                                Progress [◼◼◼◼◼◼◼◼◼◼◼◼◻] 99%
 
 Plan
-  • Use local ja, en files in:
+  • Use local Japanese, English files in:
     {TMP}/Show
   • Clean up cues (single line, strip broadcast noise)
   • Save to:
@@ -3993,15 +3996,17 @@ Q5. Which subtitle languages do you want to collect?                Progress [�
       ko,en,es : Korean on top, then English and Spanish (optional romanization support)
       japanese,korean,english,spanish : 2-letter codes and full language names both work
 
-  Languages (comma-separated) [ja,en | b=back | q=quit] > 1
+  Languages (comma-separated) [ja,en | g=guide | b=back | q=quit] > 1
     I don't recognize: 1
     Use 2-letter codes or full names, like ja,en or japanese,korean,english.
+    Type 'g' for the full language guide.
 
-  Languages (comma-separated) [ja,en | b=back | q=quit] > 1
+  Languages (comma-separated) [ja,en | g=guide | b=back | q=quit] > 1
     I don't recognize: 1
     Use 2-letter codes or full names, like ja,en or japanese,korean,english.
+    Type 'g' for the full language guide.
 
-  Languages (comma-separated) [ja,en | b=back | q=quit] > ja,en
+  Languages (comma-separated) [ja,en | g=guide | b=back | q=quit] > ja,en
 
     Languages selected:
       ja → Japanese
@@ -4070,10 +4075,10 @@ Q8. Subtitle text size?                                             Progress [�
 Review your workflow                                                Progress [◼◼◼◼◼◼◼◼◼◼◼◼◻] 99%
 
 Plan
-  • Fetch ja, en for:
+  • Fetch Japanese, English for:
     https://www.imdb.com/title/tt28299608/  (season 1, episode all)
   • Clean up cues (single line, strip broadcast noise)
-  • Stack ja, en into one SRT file: *.ja-en.srt
+  • Create one Japanese + English SRT study subtitle file
   • Use subtitle text size: Regular
   • Save to:
     ~/Downloads/GetSubtitle
@@ -4180,7 +4185,7 @@ Q3. Which subtitle languages do you want to collect?                Progress [�
       ko,en,es : Korean on top, then English and Spanish (optional romanization support)
       japanese,korean,english,spanish : 2-letter codes and full language names both work
 
-  Languages (comma-separated) [ja,en | b=back | q=quit] > ja,en
+  Languages (comma-separated) [ja,en | g=guide | b=back | q=quit] > ja,en
 
     Languages selected:
       ja → Japanese
@@ -4249,10 +4254,10 @@ Q6. Subtitle text size?                                             Progress [�
 Review your workflow                                                Progress [◼◼◼◼◼◼◼◼◼◼◼◼◻] 99%
 
 Plan
-  • Use local ja, en files in:
+  • Use local Japanese, English files in:
     {TMP}/Show
   • Clean up cues (single line, strip broadcast noise)
-  • Stack ja, en into one SRT file: *.ja-en.srt
+  • Create one Japanese + English SRT study subtitle file
   • Use subtitle text size: Regular
   • Save to:
     {TMP}/Show
@@ -4396,15 +4401,17 @@ Q5. Which subtitle languages do you want to collect?                Progress [�
       ko,en,es : Korean on top, then English and Spanish (optional romanization support)
       japanese,korean,english,spanish : 2-letter codes and full language names both work
 
-  Languages (comma-separated) [ja,en | b=back | q=quit] > 1
+  Languages (comma-separated) [ja,en | g=guide | b=back | q=quit] > 1
     I don't recognize: 1
     Use 2-letter codes or full names, like ja,en or japanese,korean,english.
+    Type 'g' for the full language guide.
 
-  Languages (comma-separated) [ja,en | b=back | q=quit] > 1
+  Languages (comma-separated) [ja,en | g=guide | b=back | q=quit] > 1
     I don't recognize: 1
     Use 2-letter codes or full names, like ja,en or japanese,korean,english.
+    Type 'g' for the full language guide.
 
-  Languages (comma-separated) [ja,en | b=back | q=quit] > ja,en
+  Languages (comma-separated) [ja,en | g=guide | b=back | q=quit] > ja,en
 
     Languages selected:
       ja → Japanese
@@ -4463,10 +4470,10 @@ Q7. Final output format.                                            Progress [�
 Review your workflow                                                Progress [◼◼◼◼◼◼◼◼◼◼◼◼◻] 99%
 
 Plan
-  • Fetch ja, en for:
+  • Fetch Japanese, English for:
     https://www.imdb.com/title/tt28299608/  (season 1, episode all)
-  • Add reading aids: ja:hiragana
-  • Stack ja, en into one VTT file: *.ja-en.vtt
+  • Add pronunciation guides: Japanese hiragana readings
+  • Create one Japanese + English VTT study subtitle file
   • Save to:
     ~/Downloads/GetSubtitle
 
@@ -4592,7 +4599,7 @@ Q5. Which subtitle languages do you want to collect?                Progress [�
       ko,en,es : Korean on top, then English and Spanish (optional romanization support)
       japanese,korean,english,spanish : 2-letter codes and full language names both work
 
-  Languages (comma-separated) [ja,en | b=back | q=quit] > ja,en
+  Languages (comma-separated) [ja,en | g=guide | b=back | q=quit] > ja,en
 
     Languages selected:
       ja → Japanese
@@ -4671,11 +4678,11 @@ Q9. Subtitle text size?                                             Progress [�
 Review your workflow                                                Progress [◼◼◼◼◼◼◼◼◼◼◼◼◻] 99%
 
 Plan
-  • Fetch ja, en for:
+  • Fetch Japanese, English for:
     https://www.imdb.com/title/tt28299608/
   • Fill gaps with Deepl AI translation
   • Clean up cues (single line, strip broadcast noise)
-  • Stack ja, en into one SRT file: *.ja-en.srt
+  • Create one Japanese + English SRT study subtitle file
   • Use subtitle text size: Regular
   • Save to:
     ~/Downloads/GetSubtitle
@@ -4788,7 +4795,7 @@ Q4. Which subtitle languages do you want to collect?                Progress [�
       ko,en,es : Korean on top, then English and Spanish (optional romanization support)
       japanese,korean,english,spanish : 2-letter codes and full language names both work
 
-  Languages (comma-separated) [ja,en | b=back | q=quit] >
+  Languages (comma-separated) [ja,en | g=guide | b=back | q=quit] >
 
     Languages selected:
       ja → Japanese
@@ -4867,10 +4874,10 @@ Q8. Subtitle text size?                                             Progress [�
 Review your workflow                                                Progress [◼◼◼◼◼◼◼◼◼◼◼◼◻] 99%
 
 Plan
-  • Fetch ja, en for:
+  • Fetch Japanese, English for:
     {TMP}/Foo
   • Clean up cues (single line, strip broadcast noise)
-  • Stack ja, en into one SRT file: *.ja-en.srt
+  • Create one Japanese + English SRT study subtitle file
   • Use subtitle text size: Regular
   • Save to:
     {TMP}/Foo
@@ -4891,7 +4898,7 @@ What next?
   Number [1 | b=back | q=quit] >
 
 Preflight check — 1 item(s) to know about:
-  • Coverage estimate: 1/1 episode(s) have all requested languages
+  • Local subtitles found for all requested languages
       Why: Heads-up — no action needed before running.
       Fix: Fast scan checked 2 subtitle candidate(s).
 
@@ -4979,7 +4986,7 @@ Q3. Which subtitle languages do you want to collect?                Progress [�
       ko,en,es : Korean on top, then English and Spanish (optional romanization support)
       japanese,korean,english,spanish : 2-letter codes and full language names both work
 
-  Languages (comma-separated) [ja,en | b=back | q=quit] > ja,en
+  Languages (comma-separated) [ja,en | g=guide | b=back | q=quit] > ja,en
 
     Languages selected:
       ja → Japanese
@@ -5038,10 +5045,10 @@ Q5. Final output format.                                            Progress [�
 Review your workflow                                                Progress [◼◼◼◼◼◼◼◼◼◼◼◼◻] 99%
 
 Plan
-  • Use local ja, en files in:
+  • Use local Japanese, English files in:
     {TMP}/Show
-  • Add reading aids: ja:hiragana
-  • Stack ja, en into one VTT file: *.ja-en.vtt
+  • Add pronunciation guides: Japanese hiragana readings
+  • Create one Japanese + English VTT study subtitle file
   • Save to:
     {TMP}/Show
 
@@ -5147,7 +5154,7 @@ Q3. Which subtitle languages do you want to collect?                Progress [�
       ko,en,es : Korean on top, then English and Spanish (optional romanization support)
       japanese,korean,english,spanish : 2-letter codes and full language names both work
 
-  Languages (comma-separated) [ja,en | b=back | q=quit] > ja,en
+  Languages (comma-separated) [ja,en | g=guide | b=back | q=quit] > ja,en
 
     Languages selected:
       ja → Japanese
@@ -5216,10 +5223,10 @@ Q6. Subtitle text size?                                             Progress [�
 Review your workflow                                                Progress [◼◼◼◼◼◼◼◼◼◼◼◼◻] 99%
 
 Plan
-  • Use local ja, en files in:
+  • Use local Japanese, English files in:
     {TMP}/Show
   • Clean up cues (single line, strip broadcast noise)
-  • Stack ja, en into one SRT file: *.ja-en.srt
+  • Create one Japanese + English SRT study subtitle file
   • Use subtitle text size: Regular
   • Save to:
     {TMP}/Show
@@ -5308,7 +5315,7 @@ Q3. Which subtitle languages do you want to collect?                Progress [�
       ko,en,es : Korean on top, then English and Spanish (optional romanization support)
       japanese,korean,english,spanish : 2-letter codes and full language names both work
 
-  Languages (comma-separated) [ja,en | b=back | q=quit] > ja,en
+  Languages (comma-separated) [ja,en | g=guide | b=back | q=quit] > ja,en
 
     Languages selected:
       ja → Japanese
@@ -5366,9 +5373,9 @@ Q5. Subtitle text size?                                             Progress [�
 Review your workflow                                                Progress [◼◼◼◼◼◼◼◼◼◼◼◼◻] 99%
 
 Plan
-  • Use local ja, en files in:
+  • Use local Japanese, English files in:
     {TMP}/Totoro
-  • Stack ja, en into one SRT file: *.ja-en.srt
+  • Create one Japanese + English SRT study subtitle file
   • Use subtitle text size: Regular
   • Save to:
     {TMP}/Totoro
@@ -5471,7 +5478,7 @@ Q3. Which subtitle languages do you want to collect?                Progress [�
       ko,en,es : Korean on top, then English and Spanish (optional romanization support)
       japanese,korean,english,spanish : 2-letter codes and full language names both work
 
-  Languages (comma-separated) [ja,en | b=back | q=quit] > ja,en
+  Languages (comma-separated) [ja,en | g=guide | b=back | q=quit] > ja,en
 
     Languages selected:
       ja → Japanese
@@ -5540,10 +5547,10 @@ Q6. Subtitle text size?                                             Progress [�
 Review your workflow                                                Progress [◼◼◼◼◼◼◼◼◼◼◼◼◻] 99%
 
 Plan
-  • Use local ja, en files in:
+  • Use local Japanese, English files in:
     {TMP}/Show
   • Clean up cues (single line, strip broadcast noise)
-  • Stack ja, en into one SRT file: *.ja-en.srt
+  • Create one Japanese + English SRT study subtitle file
   • Use subtitle text size: Regular
   • Save to:
     {TMP}/Show
@@ -5564,7 +5571,7 @@ What next?
   Number [1 | b=back | q=quit] > 1
 
 Preflight check — 2 item(s) to know about:
-  • Coverage estimate: 1/1 episode(s) have all requested languages
+  • Local subtitles found for all requested languages
       Why: Heads-up — no action needed before running.
       Fix: Fast scan checked 3 subtitle candidate(s).
   • Existing output files detected for 1/1 selected episode(s)
@@ -5655,7 +5662,7 @@ Q3. Which subtitle languages do you want to collect?                Progress [�
       ko,en,es : Korean on top, then English and Spanish (optional romanization support)
       japanese,korean,english,spanish : 2-letter codes and full language names both work
 
-  Languages (comma-separated) [ja,en | b=back | q=quit] > ja,en
+  Languages (comma-separated) [ja,en | g=guide | b=back | q=quit] > ja,en
 
     Languages selected:
       ja → Japanese
@@ -5724,10 +5731,10 @@ Q6. Subtitle text size?                                             Progress [�
 Review your workflow                                                Progress [◼◼◼◼◼◼◼◼◼◼◼◼◻] 99%
 
 Plan
-  • Use local ja, en files in:
+  • Use local Japanese, English files in:
     {TMP}/Show
   • Clean up cues (single line, strip broadcast noise)
-  • Stack ja, en into one SRT file: *.ja-en.srt
+  • Create one Japanese + English SRT study subtitle file
   • Use subtitle text size: Regular
   • Save to:
     {TMP}/Show
@@ -5748,9 +5755,9 @@ What next?
   Number [1 | b=back | q=quit] > 1
 
 Preflight check — 1 item(s) to know about:
-  • Coverage estimate: 1/2 episode(s) already have all requested languages
+  • Some requested subtitles are not in this folder yet
       Why: Optional — the run works, but may fail or look worse without it.
-      Fix: S01E02 missing en
+      Fix: Local subtitles found: Japanese, English; S01E02 missing en
 
 ------------------------------------------------------------------------------------------------
 Running:
@@ -5836,7 +5843,7 @@ Q3. Which subtitle languages do you want to collect?                Progress [�
       ko,en,es : Korean on top, then English and Spanish (optional romanization support)
       japanese,korean,english,spanish : 2-letter codes and full language names both work
 
-  Languages (comma-separated) [ja,en | b=back | q=quit] > ja,en
+  Languages (comma-separated) [ja,en | g=guide | b=back | q=quit] > ja,en
 
     Languages selected:
       ja → Japanese
@@ -5894,9 +5901,9 @@ Q5. Subtitle text size?                                             Progress [�
 Review your workflow                                                Progress [◼◼◼◼◼◼◼◼◼◼◼◼◻] 99%
 
 Plan
-  • Use local ja, en files in:
+  • Use local Japanese, English files in:
     {TMP}/Show
-  • Stack ja, en into one SRT file: *.ja-en.srt
+  • Create one Japanese + English SRT study subtitle file
   • Use subtitle text size: Regular
   • Save to:
     {TMP}/Show
@@ -5917,7 +5924,7 @@ What next?
   Number [1 | b=back | q=quit] > 1
 
 Preflight check — 1 item(s) to know about:
-  • Coverage estimate: no local subtitle files found
+  • No local subtitle files found
       Why: Optional — the run works, but may fail or look worse without it.
       Fix: Check the folder path, extract MKV subtitles, or fetch/download subtitles first.
 

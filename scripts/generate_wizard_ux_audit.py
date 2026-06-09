@@ -14,6 +14,8 @@ can audit wording without reverse-engineering the wizard code.
 
 from __future__ import annotations
 
+import argparse
+import difflib
 import json
 from pathlib import Path
 from textwrap import dedent
@@ -395,15 +397,15 @@ def _question_map() -> str:
           -> If Rename only: rename source -> variation picker -> change planner -> preview -> apply/copy
           -> Otherwise:
                source selection
-               languages
                fetch scope when Fetch is selected
+               languages
                translation engine when Translate is selected
                reading aids when Modify is selected and language supports them
                output format when Merge or converted reading-aid output needs it
                subtitle text size when selected format supports useful size control
                output folder
-               plan preview
-               final action: Run / Save / Edit / Restart / Quit / Show exact command
+               review workflow
+               final action: Run / Change a setting / Show exact command / Save / Start over / Quit
                preflight: blockers + warnings + info
                run summary or saved-workflow instructions
         ```
@@ -531,19 +533,60 @@ def _metadata() -> dict[str, object]:
     }
 
 
-def main() -> None:
+def _outputs() -> dict[Path, str]:
+    return {
+        OUT_DIR / "wizard-structure.md": _question_map(),
+        OUT_DIR / "wizard-representative-transcripts.md": _transcripts_markdown(),
+        OUT_DIR / "wizard-ux-metadata.json": json.dumps(_metadata(), ensure_ascii=False, indent=2) + "\n",
+    }
+
+
+def _check_outputs(outputs: dict[Path, str]) -> bool:
+    ok = True
+    for path, expected in outputs.items():
+        if not path.exists():
+            print(f"missing generated artifact: {path.relative_to(ROOT)}")
+            ok = False
+            continue
+        current = path.read_text(encoding="utf-8")
+        if current != expected:
+            print(f"stale generated artifact: {path.relative_to(ROOT)}")
+            diff = difflib.unified_diff(
+                current.splitlines(),
+                expected.splitlines(),
+                fromfile=str(path.relative_to(ROOT)),
+                tofile=str(path.relative_to(ROOT)) + " (expected)",
+                lineterm="",
+            )
+            for idx, line in enumerate(diff):
+                if idx >= 80:
+                    print("... diff truncated; rerun without --check to regenerate")
+                    break
+                print(line)
+            ok = False
+    return ok
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(
+        description="Generate UX-audit artifacts for the interactive wizard.",
+    )
+    parser.add_argument(
+        "--check",
+        action="store_true",
+        help="Verify generated UX audit artifacts are current without rewriting files.",
+    )
+    args = parser.parse_args(argv)
+    outputs = _outputs()
+    if args.check:
+        return 0 if _check_outputs(outputs) else 1
+
     OUT_DIR.mkdir(parents=True, exist_ok=True)
-    (OUT_DIR / "wizard-structure.md").write_text(_question_map(), encoding="utf-8")
-    (OUT_DIR / "wizard-representative-transcripts.md").write_text(
-        _transcripts_markdown(),
-        encoding="utf-8",
-    )
-    (OUT_DIR / "wizard-ux-metadata.json").write_text(
-        json.dumps(_metadata(), ensure_ascii=False, indent=2) + "\n",
-        encoding="utf-8",
-    )
+    for path, text in outputs.items():
+        path.write_text(text, encoding="utf-8")
     print(f"Wrote UX audit artifacts to {OUT_DIR}")
+    return 0
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())

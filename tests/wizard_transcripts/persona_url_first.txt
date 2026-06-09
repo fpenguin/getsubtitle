@@ -70,15 +70,17 @@ Q5. Which subtitle languages do you want to collect?                Progress [â—
       ko,en,es : Korean on top, then English and Spanish (optional romanization support)
       japanese,korean,english,spanish : 2-letter codes and full language names both work
 
-  Languages (comma-separated) [ja,en | b=back | q=quit] > 1
+  Languages (comma-separated) [ja,en | g=guide | b=back | q=quit] > 1
     I don't recognize: 1
     Use 2-letter codes or full names, like ja,en or japanese,korean,english.
+    Type 'g' for the full language guide.
 
-  Languages (comma-separated) [ja,en | b=back | q=quit] > 1
+  Languages (comma-separated) [ja,en | g=guide | b=back | q=quit] > 1
     I don't recognize: 1
     Use 2-letter codes or full names, like ja,en or japanese,korean,english.
+    Type 'g' for the full language guide.
 
-  Languages (comma-separated) [ja,en | b=back | q=quit] > ja,en
+  Languages (comma-separated) [ja,en | g=guide | b=back | q=quit] > ja,en
 
     Languages selected:
       ja â†’ Japanese
