@@ -98,6 +98,25 @@ final multi-language subtitle is readable enough to use for study.
 - v1.0 should not require users to understand provider internals, subtitle
   formats, or TOML before getting one useful multi-language subtitle file.
 
+## v0.9.8 — what's new
+
+- **Safer subtitle fetching.** Provider results now get stronger title,
+  episode, and language checks before saving. Obvious mismatches are rejected
+  instead of silently producing the wrong subtitle file.
+- **Bad-download guardrails.** HTML error pages, heavily corrupted text, and
+  malformed local subtitles are detected earlier so they do not flow into
+  cleanup, translation, or merge.
+- **Local-source-first polish.** Local video workflows check existing sidecar
+  subtitles and embedded text tracks before falling back to online subtitle
+  search. Embedded extraction writes via temporary files so failed extraction
+  cannot damage existing sidecars.
+- **Safer workflow writes.** Saved workflows and subtitle outputs now use
+  overwrite checks or atomic writes in more places, reducing partial-file and
+  accidental-overwrite risk.
+- **QA coverage.** Added focused tests around provider mismatch handling,
+  corrupt subtitle parsing, local embedded/sidecar subtitle handling, and
+  optional reading-aid backends.
+
 ## v0.9.7 — what's new
 
 - **Beginner-facing wording pass.** Public help, README, docs, setup text,
@@ -348,8 +367,10 @@ vs original-file rename.
   machine-translation fallback, and the merge command to run afterwards.
 - **Embedded subtitle extraction.** `getsubtitle modify PATH
   --extract-mkv-subs` uses local `ffprobe` + `ffmpeg` to extract embedded
-  text subtitle streams from MKV/video files. Image subtitle streams such
-  as PGS are reported and skipped.
+  text subtitle streams from MKV/video files. Newer `fetch PATH` workflows
+  check embedded tracks automatically before online search; the modify flag
+  remains a manual utility. Image subtitle streams such as PGS are reported
+  and skipped.
 - **Cantonese Jyutping reading aids.** `--reading yue:numbers` now ships
   via the optional `romanization-yue` extra (`pycantonese`).
 - **Interactive wizard streamlined to ≤7 questions.** Five answers are

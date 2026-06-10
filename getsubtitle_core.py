@@ -15,6 +15,7 @@ import shlex
 import shutil
 import subprocess
 import sys
+import tempfile
 import textwrap
 import time
 import unicodedata
@@ -404,6 +405,38 @@ def lang_matches(target: str, *fields: str | None) -> bool:
             if variant in text:
                 return True
     return False
+
+
+def language_codes_in_text(text: str | None) -> set[str]:
+    """Return canonical language codes explicitly named by a short tag/string.
+
+    This is intentionally conservative: it is used for provider metadata such
+    as "Norwegian" or "eng", not for guessing a subtitle's spoken language.
+    """
+    if not text:
+        return set()
+    lowered = str(text).strip().lower()
+    if not lowered:
+        return set()
+    tokens = [token for token in re.split(r"[^a-z0-9]+", lowered) if token]
+    token_set = set(tokens)
+    phrase = " ".join(tokens)
+    found: set[str] = set()
+    for code, variants in LANGUAGE_TAG_VARIANTS.items():
+        for variant in variants:
+            raw = variant.strip().lower()
+            if not raw:
+                continue
+            variant_tokens = [token for token in re.split(r"[^a-z0-9]+", raw) if token]
+            if not variant_tokens:
+                continue
+            if len(variant_tokens) == 1:
+                token = variant_tokens[0]
+                if token in token_set:
+                    found.add(code)
+            elif " ".join(variant_tokens) in phrase:
+                found.add(code)
+    return found
 
 
 @dataclass
@@ -1031,6 +1064,27 @@ def open_folder(path: Path) -> None:
     result = subprocess.run(cmd, check=False, capture_output=True, text=True)
     if result.returncode != 0:
         raise CliError(f"Could not open folder: {result.stderr.strip()}")
+
+
+def atomic_write_bytes(path: Path, data: bytes) -> None:
+    """Write `data` to `path` via a same-directory temp file and replace."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp_path: Path | None = None
+    fd, tmp_name = tempfile.mkstemp(prefix=f".{path.name}.", suffix=".tmp", dir=str(path.parent))
+    tmp_path = Path(tmp_name)
+    try:
+        with os.fdopen(fd, "wb") as f:
+            f.write(data)
+        os.replace(tmp_path, path)
+    except Exception:
+        with contextlib.suppress(OSError):
+            if tmp_path is not None:
+                tmp_path.unlink()
+        raise
+
+
+def atomic_write_text(path: Path, text: str, *, encoding: str = "utf-8") -> None:
+    atomic_write_bytes(path, text.encode(encoding))
 
 
 def get_jimaku_api_key() -> str | None:
@@ -4002,7 +4056,7 @@ def translate_srt_file(
             cue.text_lines = [ln for ln in out.split(sentinel) if ln]
         else:
             cue.text_lines = [out] if out else cue.text_lines
-    target_path.write_text(serialize_srt(cues), encoding="utf-8")
+    atomic_write_text(target_path, serialize_srt(cues))
     return len(cues)
 
 
@@ -4390,7 +4444,10 @@ def release_source_from_host(host: str) -> str | None:
 def safe_filename(text: str) -> str:
     text = re.sub(r'[\\/:*?"<>|]+', " ", text)
     text = re.sub(r"\s+", " ", text)
-    return text.strip() or "Unknown"
+    text = text.strip()
+    if not text or text in {".", ".."} or not text.strip(". "):
+        return "Unknown"
+    return text
 
 
 def output_dir(base: Path, media: MediaInfo, season: str, layout: str) -> Path:
@@ -4472,6 +4529,7 @@ def subtitle_title_match_score(file: SubtitleFile, media: MediaInfo | None = Non
         str(part)
         for part in [
             file.name,
+            file.media_title or "",
             file.release or "",
             file.origin or "",
         ]
@@ -4495,6 +4553,21 @@ def subtitle_candidate_title(file: SubtitleFile) -> str:
     return file.name
 
 
+def subtitle_language_conflict_reason(file: SubtitleFile) -> str | None:
+    """Return a reason when provider metadata explicitly names another language."""
+    requested = LANGUAGE_ALIASES.get((file.language or "").strip().lower(), (file.language or "").strip().lower())
+    if not requested:
+        return None
+    provider_codes = language_codes_in_text(file.provider_language)
+    if not provider_codes or requested in provider_codes:
+        return None
+    provider_labels = ", ".join(_display_lang(code) for code in sorted(provider_codes))
+    return (
+        "language mismatch: requested "
+        f"{_display_lang(requested)}; provider tagged result as {provider_labels}"
+    )
+
+
 def low_confidence_subtitle_reason(file: SubtitleFile, media: MediaInfo | None) -> str | None:
     """Return a user-facing reason when a provider result looks unrelated.
 
@@ -4502,6 +4575,9 @@ def low_confidence_subtitle_reason(file: SubtitleFile, media: MediaInfo | None) 
     overlap the requested title/aliases. Score 8 is intentionally not blocked:
     some APIs return opaque filenames under an otherwise useful ID.
     """
+    language_reason = subtitle_language_conflict_reason(file)
+    if language_reason:
+        return language_reason
     if media is None or not media.title:
         return None
     score = subtitle_title_match_score(file, media)
@@ -4518,8 +4594,29 @@ def low_confidence_subtitle_candidate(
     media: MediaInfo | None = None,
     episode: str | None = None,
 ) -> SubtitleFile | None:
-    """Return the least-bad candidate only when every candidate is a title mismatch."""
-    if not files or media is None or not media.title:
+    """Return the least-bad candidate only when every candidate looks unsafe."""
+    if not files:
+        return None
+    rejected = [
+        file for file in files
+        if low_confidence_subtitle_reason(file, media) is not None
+    ]
+    if rejected and len(rejected) == len(files):
+        non_episode_mismatches = [
+            file for file in rejected
+            if subtitle_episode_match_score(file, media, episode) < 8
+        ]
+        if not non_episode_mismatches:
+            return None
+        return sorted(
+            non_episode_mismatches,
+            key=lambda file: (
+                subtitle_title_match_score(file, media),
+                subtitle_episode_match_score(file, media, episode),
+                subtitle_candidate_title(file).lower(),
+            ),
+        )[0]
+    if media is None or not media.title:
         return None
     scored = [(subtitle_title_match_score(file, media), file) for file in files]
     if not scored or min(score for score, _file in scored) < 9:
@@ -4578,6 +4675,15 @@ def choose_best(
         return None
     preferred = [".srt", ".ass", ".vtt", ".ssa", ".zip"]
     source = preferred_source.lower() if preferred_source else None
+    rejection_reasons = {
+        id(file): low_confidence_subtitle_reason(file, media)
+        for file in files
+    }
+    non_rejected = [file for file in files if not rejection_reasons[id(file)]]
+    if non_rejected:
+        files = non_rejected
+    elif rejection_reasons and all(rejection_reasons.values()):
+        return None
     title_scores = {id(file): subtitle_title_match_score(file, media) for file in files}
     if media is not None:
         matched = [file for file in files if title_scores[id(file)] == 0]
@@ -4635,7 +4741,13 @@ def subtitle_display_name(file: SubtitleFile) -> str:
     return f"{file.name} [{label}]"
 
 
-def download_alternates(files: list[SubtitleFile], best: SubtitleFile | None) -> list[SubtitleFile]:
+def download_alternates(
+    files: list[SubtitleFile],
+    best: SubtitleFile | None,
+    *,
+    media: MediaInfo | None = None,
+    episode: str | None = None,
+) -> list[SubtitleFile]:
     """Candidates to try when the chosen subtitle download fails.
 
     Prefer a different backing source/provider first, then same-source
@@ -4649,6 +4761,10 @@ def download_alternates(files: list[SubtitleFile], best: SubtitleFile | None) ->
     out: list[SubtitleFile] = []
     for file in files:
         if file.url in seen:
+            continue
+        if low_confidence_subtitle_reason(file, media):
+            continue
+        if subtitle_episode_match_score(file, media, episode) >= 8:
             continue
         seen.add(file.url)
         out.append(file)
@@ -4804,6 +4920,16 @@ def prepare_downloaded_subtitle_bytes(raw: bytes, ext: str, name: str) -> bytes:
         text = raw.decode("utf-8", errors="replace")
         used_encoding = "utf-8"
 
+    stripped = text.lstrip().lower()
+    if (
+        (stripped.startswith("<!doctype html") or stripped.startswith("<html") or "<html" in stripped[:250])
+        and not stripped.startswith("<sami")
+    ):
+        raise CliError(
+            f"downloaded subtitle looks like an HTML page, not a subtitle: {name}. "
+            "Trying another result is safer."
+        )
+
     replacement_count = text.count("\ufffd")
     if replacement_count >= 3:
         raise CliError(
@@ -4834,13 +4960,13 @@ def save_subtitle(
 
     if ext == ".zip":
         archive_path = dest_dir / safe_filename(sub.name)
-        archive_path.write_bytes(raw)
+        atomic_write_bytes(archive_path, raw)
         with zipfile.ZipFile(archive_path) as zf:
             for member in zf.namelist():
                 if Path(member).suffix.lower() not in SUB_EXTENSIONS:
                     continue
                 out = dest_dir / safe_filename(Path(member).name)
-                out.write_bytes(zf.read(member))
+                atomic_write_bytes(out, zf.read(member))
                 saved.append(out)
         if not saved:
             saved.append(archive_path)
@@ -4858,7 +4984,7 @@ def save_subtitle(
         ss = "01" if season == "all" else "00" if season == "auto" else f"{int(season):02d}"
         filename = f"{show} - S{ss}E{ep}.{sub.language}{ext}"
     out = dest_dir / filename
-    out.write_bytes(raw)
+    atomic_write_bytes(out, raw)
     saved.append(out)
     return saved
 
@@ -5248,6 +5374,42 @@ def strip_cc_noise_text(text: str) -> str:
     return cleaned
 
 
+def clean_merge_text_line(text: str, *, preserve_ruby: bool = False) -> list[str]:
+    """Clean one cue text line for merged study output.
+
+    This removes styling wrappers and broadcast-caption noise, but does not
+    rewrite language content or timings.
+    """
+    if not text:
+        return []
+    cleaned = strip_subtitle_markup(str(text))
+    cleaned = re.sub(r"(?i)<br\s*/?>", "\n", cleaned)
+    cleaned = _strip_vtt_markup(cleaned, preserve_ruby=preserve_ruby)
+    cleaned = unescape(cleaned)
+    cleaned = cleaned.replace("\xa0", " ")
+    cleaned = strip_cc_noise_text(cleaned)
+    out: list[str] = []
+    for part in cleaned.splitlines():
+        part = re.sub(r"[\t\f\v]+", " ", part)
+        part = re.sub(r" {2,}", " ", part).strip()
+        if part:
+            out.append(part)
+    return out
+
+
+def clean_merge_text_lines(lines: list[str], *, preserve_ruby: bool = False) -> list[str]:
+    cleaned: list[str] = []
+    seen: set[str] = set()
+    for line in lines:
+        for part in clean_merge_text_line(line, preserve_ruby=preserve_ruby):
+            key = re.sub(r"\s+", " ", part).casefold()
+            if key in seen:
+                continue
+            seen.add(key)
+            cleaned.append(part)
+    return cleaned
+
+
 @dataclass
 class SrtCue:
     index: str        # original index string ("1", "2", ...) preserved verbatim
@@ -5530,6 +5692,29 @@ def parse_smi_for_lang(path: Path, lang: str) -> list[SrtCue]:
     return _sami_cues_to_srt_cues(by_lang[lang])
 
 
+def _read_local_text_subtitle(path: Path) -> str:
+    raw = path.read_bytes()
+    if b"\x00" in raw[:4096] and not raw.startswith((b"\xff\xfe", b"\xfe\xff")):
+        raise CliError(f"{path.name}: subtitle file looks binary or corrupt (NUL bytes found).")
+    if raw.startswith((b"\xff\xfe", b"\xfe\xff")):
+        text = raw.decode("utf-16", errors="replace")
+    else:
+        text = raw.decode("utf-8-sig", errors="replace")
+    replacement_count = text.count("\ufffd")
+    if replacement_count >= 3:
+        raise CliError(
+            f"{path.name}: subtitle text looks corrupted "
+            f"({replacement_count} replacement characters)."
+        )
+    return text
+
+
+def _ensure_parsed_cues(path: Path, text: str, cues: list[SrtCue]) -> list[SrtCue]:
+    if text.strip() and not cues:
+        raise CliError(f"{path.name}: no subtitle timing cues found.")
+    return cues
+
+
 def read_cues_from_file(
     path: Path,
     *,
@@ -5548,14 +5733,14 @@ def read_cues_from_file(
     """
     suffix = path.suffix.lower()
     if suffix == ".srt":
-        return parse_srt(path.read_text(encoding="utf-8-sig", errors="replace"))
+        text = _read_local_text_subtitle(path)
+        return _ensure_parsed_cues(path, text, parse_srt(text))
     if suffix == ".vtt":
-        return parse_vtt(
-            path.read_text(encoding="utf-8-sig", errors="replace"),
-            preserve_ruby=preserve_vtt_ruby,
-        )
+        text = _read_local_text_subtitle(path)
+        return _ensure_parsed_cues(path, text, parse_vtt(text, preserve_ruby=preserve_vtt_ruby))
     if suffix in (".ass", ".ssa"):
-        return parse_ass(path.read_text(encoding="utf-8-sig", errors="replace"))
+        text = _read_local_text_subtitle(path)
+        return _ensure_parsed_cues(path, text, parse_ass(text))
     if suffix in (".smi", ".sami"):
         if not lang_hint:
             raise CliError(
@@ -5836,7 +6021,7 @@ def strip_cc_noise_in_place(path: Path) -> None:
     text = text.replace("\r\n", "\n").replace("\r", "\n")
     cleaned = strip_cc_noise_text(text)
     if cleaned != text:
-        path.write_text(cleaned, encoding="utf-8")
+        atomic_write_text(path, cleaned)
 
 
 def flatten_srt_in_place(path: Path, separator: str = " ") -> None:
@@ -5873,15 +6058,42 @@ def flatten_srt_in_place(path: Path, separator: str = " ") -> None:
             out_blocks.append("\n".join(header))
             continue
         out_blocks.append("\n".join(header + [flat]))
-    path.write_text("\n\n".join(out_blocks) + "\n", encoding="utf-8")
+    atomic_write_text(path, "\n\n".join(out_blocks) + "\n")
 
 
-def flatten_separator_for(path: Path) -> str:
+def flatten_separator_for(path: Path, lang: str | None = None) -> str:
     """Pick a join separator suited to the SRT's language.
 
     Full-width space '　' for Japanese (matches CJK rendering width); regular
     space for everything else."""
-    return "　" if ".ja" in path.name else " "
+    return "　" if lang == "ja" or ".ja" in path.name else " "
+
+
+def scan_direct_srt_files_for_modify(paths: list[Path]) -> list[tuple[Path, int, int, str, bool]]:
+    """Return directly-passed SRT files that strict filename parsing cannot read.
+
+    Folder scans stay strict so we do not accidentally process combined outputs
+    or unrelated release files. A user explicitly naming one .srt file is a
+    stronger signal: cleanup operations should still work even when the filename
+    lacks a `.ja`/`.en` language token.
+    """
+    out: list[tuple[Path, int, int, str, bool]] = []
+    for path in paths:
+        if not path.is_file() or path.suffix.lower() != ".srt":
+            continue
+        if is_filesystem_metadata_name(path.name):
+            continue
+        if is_combined_output_name(path.name) or is_furigana_output_name(path.name):
+            continue
+        if parse_srt_filename(path.name) is not None:
+            continue
+        season_episode = parse_episode_marker(path.name)
+        if season_episode is None:
+            release_episode = infer_release_episode_number(path.name)
+            season_episode = (0, release_episode) if release_episode is not None else (0, 0)
+        lang = infer_subtitle_language_from_script(path, {"ja", "ko", "zh"}) or "und"
+        out.append((path, season_episode[0], season_episode[1], lang, False))
+    return out
 
 
 # ---------------------------------------------------------------------------
@@ -6180,7 +6392,7 @@ def convert_smi_file(
         if out_path.exists() and not force:
             skipped.append(out_path)
             continue
-        out_path.write_text(sami_cues_to_srt(cues), encoding="utf-8")
+        atomic_write_text(out_path, sami_cues_to_srt(cues))
         written.append(out_path)
     if only_langs is not None and not written and not skipped:
         wanted = ",".join(sorted(only_langs))
@@ -6215,7 +6427,7 @@ def srt_to_asbplayer_readings(src: Path, mode: str, single_line: bool = False) -
         output_blocks.append("\n".join(prefix + converted))
 
     out = src.with_suffix("").with_name(src.with_suffix("").name + furigana_suffix(mode, "asb.srt", single_line))
-    out.write_text("\n\n".join(output_blocks) + "\n", encoding="utf-8")
+    atomic_write_text(out, "\n\n".join(output_blocks) + "\n")
     return out
 
 
@@ -6242,7 +6454,7 @@ def srt_to_ruby_vtt(src: Path, mode: str, single_line: bool = False) -> Path:
         output_blocks.append("\n".join([time_line] + converted))
 
     out = src.with_suffix("").with_name(src.with_suffix("").name + furigana_suffix(mode, "ruby.vtt", single_line))
-    out.write_text("\n\n".join(output_blocks) + "\n", encoding="utf-8")
+    atomic_write_text(out, "\n\n".join(output_blocks) + "\n")
     return out
 
 
@@ -6540,7 +6752,7 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
         dialogues.append(f"Dialogue: 0,{start},{end},Default,,0,0,0,,{text_body}")
 
     out = src.with_suffix("").with_name(src.with_suffix("").name + furigana_suffix(mode, "lines.ass", single_line))
-    out.write_text(header + "\n".join(dialogues) + "\n", encoding="utf-8")
+    atomic_write_text(out, header + "\n".join(dialogues) + "\n")
     return out
 
 
@@ -6842,7 +7054,7 @@ def srt_to_korean_readings(src: Path, mode: str, single_line: bool = False) -> P
     out = src.with_suffix("").with_name(
         src.with_suffix("").name + romanization_suffix("ko", mode, "asb.srt", single_line)
     )
-    out.write_text("\n\n".join(output_blocks) + "\n", encoding="utf-8")
+    atomic_write_text(out, "\n\n".join(output_blocks) + "\n")
     return out
 
 
@@ -6873,7 +7085,7 @@ def srt_to_korean_ruby_vtt(src: Path, mode: str, single_line: bool = False) -> P
     out = src.with_suffix("").with_name(
         src.with_suffix("").name + romanization_suffix("ko", mode, "ruby.vtt", single_line)
     )
-    out.write_text("\n\n".join(output_blocks) + "\n", encoding="utf-8")
+    atomic_write_text(out, "\n\n".join(output_blocks) + "\n")
     return out
 
 
@@ -6928,7 +7140,7 @@ Format: Layer, Start, End, Style, Text
     out = src.with_suffix("").with_name(
         src.with_suffix("").name + romanization_suffix("ko", mode, "stacked.ass", single_line)
     )
-    out.write_text(header + "\n".join(events) + "\n", encoding="utf-8")
+    atomic_write_text(out, header + "\n".join(events) + "\n")
     return out
 
 
@@ -7187,7 +7399,7 @@ def srt_to_chinese_readings(src: Path, mode: str, single_line: bool = False) -> 
     out = src.with_suffix("").with_name(
         _chinese_output_stem(src) + romanization_suffix("zh", mode, "asb.srt", single_line)
     )
-    out.write_text("\n\n".join(output_blocks) + "\n", encoding="utf-8")
+    atomic_write_text(out, "\n\n".join(output_blocks) + "\n")
     return out
 
 
@@ -7217,7 +7429,7 @@ def srt_to_chinese_ruby_vtt(src: Path, mode: str, single_line: bool = False) -> 
     out = src.with_suffix("").with_name(
         _chinese_output_stem(src) + romanization_suffix("zh", mode, "ruby.vtt", single_line)
     )
-    out.write_text("\n\n".join(output_blocks) + "\n", encoding="utf-8")
+    atomic_write_text(out, "\n\n".join(output_blocks) + "\n")
     return out
 
 
@@ -7272,7 +7484,7 @@ Format: Layer, Start, End, Style, Text
     out = src.with_suffix("").with_name(
         _chinese_output_stem(src) + romanization_suffix("zh", mode, "stacked.ass", single_line)
     )
-    out.write_text(header + "\n".join(events) + "\n", encoding="utf-8")
+    atomic_write_text(out, header + "\n".join(events) + "\n")
     return out
 
 
@@ -7491,7 +7703,7 @@ def srt_to_cantonese_readings(src: Path, mode: str, single_line: bool = False) -
     out = src.with_suffix("").with_name(
         _cantonese_output_stem(src) + romanization_suffix("yue", mode, "asb.srt", single_line)
     )
-    out.write_text("\n\n".join(output_blocks) + "\n", encoding="utf-8")
+    atomic_write_text(out, "\n\n".join(output_blocks) + "\n")
     return out
 
 
@@ -7519,7 +7731,7 @@ def srt_to_cantonese_ruby_vtt(src: Path, mode: str, single_line: bool = False) -
     out = src.with_suffix("").with_name(
         _cantonese_output_stem(src) + romanization_suffix("yue", mode, "ruby.vtt", single_line)
     )
-    out.write_text("\n\n".join(output_blocks) + "\n", encoding="utf-8")
+    atomic_write_text(out, "\n\n".join(output_blocks) + "\n")
     return out
 
 
@@ -7569,7 +7781,7 @@ Format: Layer, Start, End, Style, Text
     out = src.with_suffix("").with_name(
         _cantonese_output_stem(src) + romanization_suffix("yue", mode, "stacked.ass", single_line)
     )
-    out.write_text(header + "\n".join(events) + "\n", encoding="utf-8")
+    atomic_write_text(out, header + "\n".join(events) + "\n")
     return out
 
 
@@ -8342,10 +8554,15 @@ def estimate_timing_offset_ms(
     return int(best_offset)
 
 
-def _format_cue_text_for_lang(lines: list[str], preserve_lines: bool) -> list[str]:
+def _format_cue_text_for_lang(
+    lines: list[str],
+    preserve_lines: bool,
+    *,
+    preserve_ruby: bool = False,
+) -> list[str]:
     """Format one language's contribution to a combined cue. Returns the
     physical text lines that should appear in the SRT for this language."""
-    cleaned = [strip_subtitle_markup(ln).strip() for ln in lines if ln.strip()]
+    cleaned = clean_merge_text_lines(lines, preserve_ruby=preserve_ruby)
     if not cleaned:
         return []
     if preserve_lines:
@@ -8390,6 +8607,7 @@ def combine_cues(
     preserve_lines: bool = False,
     japanese_furigana_mode: str | None = None,
     label_langs: bool = False,
+    preserve_ruby: bool = False,
 ) -> tuple[list[SrtCue], dict[str, float]]:
     """Combine `master_cues` with overlapping cues from each target language.
 
@@ -8430,6 +8648,7 @@ def combine_cues(
     for i, master_cue in enumerate(master_cues):
         m_start, m_end = master_times[i]
         per_lang_text: dict[str, list[str]] = {}
+        matched_intervals: list[tuple[int, int]] = []
         for lang, cues in target_cues.items():
             best_idx = None
             best_overlap = 0.0
@@ -8449,11 +8668,12 @@ def combine_cues(
                     )
                 else:
                     per_lang_text[lang] = _format_cue_text_for_lang(
-                        cues[best_idx].text_lines, preserve_lines
+                        cues[best_idx].text_lines, preserve_lines, preserve_ruby=preserve_ruby
                     )
                 if per_lang_text[lang]:
                     match_counts[lang] += 1
                     used_target_indices[lang].add(best_idx)
+                    matched_intervals.append(target_times[lang][best_idx])
             # else: leave lang out of this cue.
 
         body: list[str] = []
@@ -8464,17 +8684,34 @@ def combine_cues(
                         master_cue.text_lines, japanese_furigana_mode, preserve_lines
                     )
                 else:
-                    lines = _format_cue_text_for_lang(master_cue.text_lines, preserve_lines)
+                    lines = _format_cue_text_for_lang(
+                        master_cue.text_lines,
+                        preserve_lines,
+                        preserve_ruby=preserve_ruby,
+                    )
             else:
                 lines = list(per_lang_text.get(lang, []))
             if label_langs and lines:
                 lines = [f"[{lang.upper()}] {lines[0]}", *lines[1:]]
             body.extend(lines)
 
+        out_end = m_end
+        if matched_intervals:
+            out_end = max(out_end, max(end for _start, end in matched_intervals))
+            if i + 1 < len(master_times):
+                next_start = master_times[i + 1][0]
+                if next_start > m_start:
+                    out_end = min(out_end, next_start - 1)
+            if out_end <= m_start:
+                out_end = m_end
+
         combined.append(
             SrtCue(
                 index=str(i + 1),
-                time_line=master_cue.time_line,
+                time_line=(
+                    _srt_time_line_from_ms(m_start, out_end)
+                    if out_end != m_end else master_cue.time_line
+                ),
                 text_lines=body if body else [""],
             )
         )
@@ -8977,6 +9214,7 @@ def combine_main(argv: list[str]) -> int:
                 preserve_lines=args.preserve_lines,
                 japanese_furigana_mode=args.ja_reading if args.format in ("srt", "smi", "ass", "txt") else None,
                 label_langs=getattr(args, "label_langs", False),
+                preserve_ruby=args.format == "vtt",
             )
         except CliError as e:
             skipped.append((key, f"furigana failed: {e}"))
@@ -9060,7 +9298,7 @@ def combine_main(argv: list[str]) -> int:
             body = serialize_txt(combined)
         else:
             body = serialize_srt(combined, font_size=font_size)
-        dest.write_text(body, encoding="utf-8")
+        atomic_write_text(dest, body)
         written.append(dest)
         print(f"  {dest}")
 
@@ -9463,7 +9701,8 @@ def build_modify_parser() -> argparse.ArgumentParser:
               getsubtitle modify FOLDER --reading "ja:hiragana|romaji"
               getsubtitle modify FOLDER -s 1 -e 3 --reading ko:revised
               getsubtitle modify FOLDER --convert smi-to-srt
-              getsubtitle modify FOLDER --extract-mkv-subs
+              getsubtitle fetch ./Movie.mkv -l ja,en --run      # checks embedded/local subs first
+              getsubtitle modify FOLDER --extract-mkv-subs      # manual extraction utility
               getsubtitle modify FOLDER --convert smi-to-srt --force
               getsubtitle modify FOLDER --strip-cc-noise --single-line --reading ja:hiragana --dry-run
             """
@@ -9478,7 +9717,7 @@ def build_modify_parser() -> argparse.ArgumentParser:
     p.add_argument("--no-reading", dest="reading", action="store_const", const="", help="Disable reading-aid generation for this run, overriding [modify].reading from user_settings.toml.")
     p.add_argument("--reading-format", "--format", dest="reading_format", metavar="CODES", help="Reading-aid output format(s) — comma list of srt, ass, vtt, or 'all'. Default: srt. Overrides [modify].reading_format from user_settings.toml.")
     p.add_argument("--convert", metavar="SPEC", help="Convert subtitle file format. Supports smi-to-srt (all SAMI language streams) or LANG:smi-to-srt, e.g. ko:smi-to-srt, for one language.")
-    p.add_argument("--extract-mkv-subs", action="store_true", help="Extract embedded text subtitles from MKV/video files using ffprobe + ffmpeg when available. Image subtitles such as PGS are reported and skipped.")
+    p.add_argument("--extract-mkv-subs", action="store_true", help="Manual utility: extract embedded text subtitles from MKV/video files using ffprobe + ffmpeg when available. For normal local-video workflows, prefer `getsubtitle fetch PATH -l LANGS --run`, which checks embedded tracks before online search. Image subtitles such as PGS are reported and skipped.")
     p.add_argument("-s", "--season", default="all", help="Only process files matching this season/range when scanning a folder (default: all).")
     p.add_argument("-e", "--episode", default="all", help="Only process files matching this episode/range when scanning a folder (default: all).")
     p.add_argument("--force", action="store_true", help="With --convert: overwrite existing sibling .srt files. Without --force, conversion skips targets that already exist.")
@@ -9602,15 +9841,30 @@ def extract_mkv_subtitle_plan(
         if dest.exists() and not force:
             skipped.append(dest)
             continue
-        cmd = ["ffmpeg", "-hide_banner", "-loglevel", "error"]
-        cmd.append("-y" if force else "-n")
-        cmd.extend(["-i", str(video), "-map", f"0:{stream_index}", str(dest)])
-        proc = subprocess.run(cmd, text=True, capture_output=True)
-        if proc.returncode == 0 and dest.exists():
-            written.append(dest)
-        else:
-            msg = (proc.stderr or proc.stdout or "ffmpeg failed").strip()
-            errors.append(f"{video.name} stream {stream_index}: {msg}")
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        fd, tmp_name = tempfile.mkstemp(prefix=f".{dest.name}.", suffix=dest.suffix, dir=str(dest.parent))
+        os.close(fd)
+        tmp_dest = Path(tmp_name)
+        with contextlib.suppress(OSError):
+            tmp_dest.unlink()
+        cmd = ["ffmpeg", "-hide_banner", "-loglevel", "error", "-y"]
+        cmd.extend(["-i", str(video), "-map", f"0:{stream_index}", str(tmp_dest)])
+        try:
+            proc = subprocess.run(cmd, text=True, capture_output=True)
+            if proc.returncode == 0 and tmp_dest.exists():
+                if dest.exists() and not force:
+                    skipped.append(dest)
+                    with contextlib.suppress(OSError):
+                        tmp_dest.unlink()
+                    continue
+                os.replace(tmp_dest, dest)
+                written.append(dest)
+            else:
+                msg = (proc.stderr or proc.stdout or "ffmpeg failed").strip()
+                errors.append(f"{video.name} stream {stream_index}: {msg}")
+        finally:
+            with contextlib.suppress(OSError):
+                tmp_dest.unlink()
     return written, skipped, errors
 
 
@@ -9634,7 +9888,7 @@ def convert_text_subtitle_to_srt_file(path: Path, *, force: bool = False) -> tup
         return None, False
     if not cues:
         return None, False
-    out_path.write_text(serialize_srt(renumber_cues(cues)), encoding="utf-8")
+    atomic_write_text(out_path, serialize_srt(renumber_cues(cues)))
     return out_path, True
 
 
@@ -9891,7 +10145,9 @@ def maybe_extract_embedded_subtitles_after_fetch_miss(
             print("Embedded subtitle extraction skipped.")
             return False
     else:
-        print("\nRun this to extract embedded subtitles manually:")
+        print("\nLocal-video workflow:")
+        print("  getsubtitle fetch PATH -l LANGS --run checks embedded tracks before online search.")
+        print("Manual extraction utility:")
         print(f"  getsubtitle modify {shlex.quote(str(target))} --extract-mkv-subs")
         return False
 
@@ -10007,6 +10263,12 @@ def modify_main(argv: list[str]) -> int:
     scanned: list[tuple[Path, int, int, str, bool]] = (
         scan_srt_files(paths) if inplace_ops else []
     )
+    if inplace_ops:
+        seen_scanned_paths = {row[0] for row in scanned}
+        scanned.extend(
+            row for row in scan_direct_srt_files_for_modify(paths)
+            if row[0] not in seen_scanned_paths
+        )
     convert_files: list[Path] = (
         scan_smi_files(paths) if convert_op == "smi-to-srt" else []
     )
@@ -10182,7 +10444,7 @@ def modify_main(argv: list[str]) -> int:
                 if args.strip_cc_noise:
                     strip_cc_noise_in_place(path)
                 if args.single_line:
-                    flatten_srt_in_place(path, separator=flatten_separator_for(path))
+                    flatten_srt_in_place(path, separator=flatten_separator_for(path, lang))
                 if args.ja_reading and lang == "ja":
                     for mode in (getattr(args, "ja_readings", None) or [args.ja_reading]):
                         furigana_generated.extend(
@@ -12141,6 +12403,7 @@ def run_main(argv: list[str]) -> int:
     by short name so you don't have to remember its path.
 
         getsubtitle run --save anime path/to/workflow.toml
+        getsubtitle run --save anime path/to/workflow.toml --force
         getsubtitle run anime                       # run it
         getsubtitle run anime --source URL --output DIR   # with overrides
         getsubtitle run --list
@@ -12166,12 +12429,21 @@ def run_main(argv: list[str]) -> int:
         if len(argv) < 3:
             raise CliError("Usage: getsubtitle run --save NAME path/to/workflow.toml")
         name, src = argv[1], argv[2]
+        extra = argv[3:]
+        force = False
+        if extra:
+            if extra == ["--force"]:
+                force = True
+            else:
+                raise CliError("Usage: getsubtitle run --save NAME path/to/workflow.toml [--force]")
         src_path = Path(src).expanduser()
         if not src_path.is_file():
             raise CliError(f"Workflow file not found: {src}")
         dest = _pipeline_registry_path(name)
+        if dest.exists() and not force:
+            raise CliError(f"Saved workflow {name!r} already exists. Re-run with --force to overwrite it.")
         dest.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copy2(src_path, dest)
+        atomic_write_bytes(dest, src_path.read_bytes())
         print(f"Saved pipeline {name!r}.")
         print(f"Run it with:  getsubtitle run {name}")
         return 0
@@ -14403,7 +14675,7 @@ def config_main(argv: list[str]) -> int:
         if path.exists() and not args.force:
             raise CliError(f"{path} already exists. Re-run with --force to overwrite.")
         path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(_example_template_text(), encoding="utf-8")
+        atomic_write_text(path, _example_template_text())
         print(f"Created {path}")
         print("Edit this file to set your defaults; CLI flags still override anything you set here.")
         return 0
@@ -15158,14 +15430,14 @@ def _setup_write_config_status(choice: _SetupChoice) -> str:
             return "not_changed"
         try:
             backup = path.with_suffix(path.suffix + ".bak")
-            backup.write_text(existing, encoding="utf-8")
+            atomic_write_text(backup, existing)
             print(f"  Backup: {backup}")
         except OSError as e:
             print(f"  Backup failed ({e}); aborting write.")
             return "skipped"
 
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(new_text, encoding="utf-8")
+    atomic_write_text(path, new_text)
     print(f"  Created {path}")
     if _wizard_yesno("  View configuration file?", default=False):
         print("  " + "─" * 60)
@@ -15408,7 +15680,7 @@ def _setup_save_profile(choice: _SetupChoice) -> None:
             f'output_format = "{choice.output_format}"',
             "",
         ]
-        path.write_text("\n".join(lines), encoding="utf-8")
+        atomic_write_text(path, "\n".join(lines))
     except OSError:
         pass
 
@@ -16202,7 +16474,7 @@ Layered config (lowest → highest priority):
   built-in defaults  <  user_settings.toml  <  --config FILE.toml  <  CLI flags
 
 Topic help:
-  getsubtitle --help fetch | translate | modify | merge | pipeline
+  getsubtitle --help fetch | translate | modify | merge | workflow
   getsubtitle --help setup | interactive | config | keys | language | reading | sources | advanced
 
 New here? Try `getsubtitle setup` first, then `getsubtitle -i`.
@@ -16564,8 +16836,10 @@ Usage:
   getsubtitle modify PATH [PATH ...] [options]
 
 The same cleanup operations that run after a download — but applied to
-files you already have. It can also convert legacy subtitle files or
-manually extract embedded text tracks when you need that utility directly.
+files you already have. It can also convert legacy subtitle files. For
+local videos, `getsubtitle fetch PATH -l LANGS --run` checks embedded
+tracks before online search. `--extract-mkv-subs` remains available as
+a manual extraction utility.
 Pick any combination of flags; they run in the same order the download
 flow uses.
 
@@ -16580,7 +16854,8 @@ Examples:
   getsubtitle modify FOLDER --convert smi-to-srt
   getsubtitle modify FOLDER --convert ko:smi-to-srt        # Korean only
   getsubtitle modify FOLDER --convert ko,en:smi-to-srt     # Korean + English
-  getsubtitle modify FOLDER --extract-mkv-subs             # embedded text subs
+  getsubtitle fetch ./Movie.mkv -l ja,en --run             # embedded/local first
+  getsubtitle modify FOLDER --extract-mkv-subs             # manual extraction utility
   getsubtitle modify FOLDER --convert smi-to-srt --force
   getsubtitle modify FOLDER --strip-cc-noise --single-line --reading ja:hiragana --dry-run
 
@@ -16593,9 +16868,12 @@ Operations (run in this order; pick at least one):
                              Encoding is auto-detected (UTF-8/UTF-16/CP949).
   --strip-cc-noise         Remove broadcast CC noise (➡ arrows, 《...》 wrappers)
                            in place. Idempotent.
-  --extract-mkv-subs       Extract embedded text subtitles from MKV/video
-                           files with local ffprobe + ffmpeg. Image subtitle
-                           streams such as PGS are reported and skipped.
+  --extract-mkv-subs       Manual utility: extract embedded text subtitles from
+                           MKV/video files with local ffprobe + ffmpeg. Normal
+                           local-video workflows should use `fetch PATH` so
+                           embedded tracks, sidecar files, and online search
+                           are handled in one flow. Image subtitle streams such
+                           as PGS are reported and skipped.
   --single-line, --single  Flatten each cue to one text line in place.
                            Idempotent. Useful for asbplayer.
   --reading SPEC      Generate per-language reading aids. SPEC is a
@@ -16719,6 +16997,7 @@ workflow TOML under a short name, then run it without typing the path.
 
 Usage:
   getsubtitle run --save NAME path/to/workflow.toml   # register it
+  getsubtitle run --save NAME path/to/workflow.toml --force  # replace saved copy
   getsubtitle run NAME                                 # run it
   getsubtitle run NAME --source URL --output DIR       # run with overrides
   getsubtitle run --list                               # list saved names
@@ -16732,7 +17011,7 @@ Notes:
     (--source, --output, --format, --season, --episode, -l, --dry-run,
     --force). CLI flags win over the saved file.
   - The TOML is copied into the registry, so editing the original later
-    does not change the saved pipeline. Re-save to update it.
+    does not change the saved pipeline. Re-save with --force to update it.
 """,
     "fetch": """\
 Fetch subtitles from a URL, folder, video file, embedded text tracks,
@@ -17270,6 +17549,8 @@ HELP_TOPIC_ALIASES: dict[str, str] = {
     "languages": "language",
     "langs": "language",
     "lang": "language",
+    "workflow": "pipeline",
+    "workflows": "pipeline",
 }
 
 
@@ -17317,7 +17598,7 @@ def _show_topic_help(argv: list[str]) -> int:
     if argv and argv[0] == "fetch":
         sys.stdout.write(HELP_TOPICS["fetch"])
         return 0
-    if argv and argv[0] in ("--config", "pipeline"):
+    if argv and argv[0] in ("--config", "pipeline", "workflow", "workflows"):
         sys.stdout.write(HELP_TOPICS["pipeline"])
         return 0
     if argv and argv[0] == "config":
@@ -17425,7 +17706,7 @@ def doctor_main(argv: list[str]) -> int:
     if missing_keys:
         print("  - Add useful provider keys with `getsubtitle --set-key PROVIDER`.")
     if not ffmpeg or not ffprobe:
-        print("  - Install ffmpeg to enable `getsubtitle modify PATH --extract-mkv-subs`.")
+        print("  - Install ffmpeg so `getsubtitle fetch PATH -l LANGS --run` can extract embedded text subtitles.")
     if not _setup_module_exists("pycantonese"):
         print('  - Install Cantonese support with `pip install -e ".[romanization-yue]"`.')
     if args.verbose:
@@ -17640,7 +17921,7 @@ def _wizard_save_draft(state: "_WizardState") -> None:
     try:
         path = _wizard_draft_path()
         path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(state.to_toml(), encoding="utf-8")
+        atomic_write_text(path, state.to_toml())
     except OSError:
         pass
 
@@ -18553,20 +18834,42 @@ def _rename_apply_plan(plan: list[tuple[Path, Path]]) -> None:
             idx += 1
             tmp = src.with_name(f"{src.name}{token}-{idx}.tmp")
         temporary.append((src, tmp, dst))
+    moved_to_temp: list[tuple[Path, Path, Path]] = []
+    moved_to_dest: list[tuple[Path, Path]] = []
     try:
-        for src, tmp, _dst in temporary:
+        for src, tmp, dst in temporary:
             src.rename(tmp)
-        for _src, tmp, dst in temporary:
+            moved_to_temp.append((src, tmp, dst))
+        for src, tmp, dst in temporary:
             tmp.rename(dst)
-    finally:
-        # If the second phase partially failed, do not leave obvious temp
-        # names behind when their original source name is still available.
-        for src, tmp, _dst in temporary:
-            if tmp.exists() and not src.exists():
-                try:
-                    tmp.rename(src)
-                except OSError:
-                    pass
+            moved_to_dest.append((src, dst))
+    except OSError as e:
+        restore_errors: list[str] = []
+        for src, dst in reversed(moved_to_dest):
+            if not dst.exists():
+                restore_errors.append(f"{dst.name} was already missing during rollback")
+                continue
+            if src.exists():
+                restore_errors.append(f"could not restore {src.name}: source path already exists")
+                continue
+            try:
+                dst.rename(src)
+            except OSError as restore_error:
+                restore_errors.append(f"could not restore {src.name}: {restore_error}")
+        for src, tmp, _dst in reversed(moved_to_temp):
+            if not tmp.exists():
+                continue
+            if src.exists():
+                restore_errors.append(f"could not restore {src.name}: temp file still at {tmp.name}")
+                continue
+            try:
+                tmp.rename(src)
+            except OSError as restore_error:
+                restore_errors.append(f"could not restore {src.name}: {restore_error}")
+        if restore_errors:
+            details = "; ".join(restore_errors)
+            raise CliError(f"Rename failed and rollback was incomplete: {details}") from e
+        raise CliError(f"Rename failed; original files were restored: {e}") from e
 
 
 def _rename_copy_plan(plan: list[tuple[Path, Path]]) -> None:
@@ -21848,7 +22151,7 @@ def interactive_main(argv: list[str] | None = None) -> int:
                         continue
                 break
             path.parent.mkdir(parents=True, exist_ok=True)
-            path.write_text(toml_str, encoding="utf-8")
+            atomic_write_text(path, toml_str)
             _wizard_saved_workflow_menu(path_raw, path, cli_string)
             _wizard_clear_draft()
             return 0
@@ -22260,7 +22563,7 @@ def main(argv: list[str] | None = None) -> int:
             if not media.title and best.media_title:
                 media.title = best.media_title
             planned.append((lang, ep, best))
-            download_alternatives[(lang, ep)] = download_alternates(files, best)
+            download_alternatives[(lang, ep)] = download_alternates(files, best, media=media, episode=ep)
             search_results.append(SearchResult(lang, ep, provider.name, "found", file=best))
         else:
             low = low_confidence_subtitle_candidate(files, media=media, episode=ep)
@@ -22274,7 +22577,7 @@ def main(argv: list[str] | None = None) -> int:
                 interactive=bool(sys.stdin.isatty() and not args.dry_run),
             ):
                 planned.append((lang, ep, low))
-                download_alternatives[(lang, ep)] = download_alternates(files, low)
+                download_alternatives[(lang, ep)] = download_alternates(files, low, media=media, episode=ep)
                 search_results.append(SearchResult(lang, ep, provider.name, "found", file=low, confidence="low"))
             elif low:
                 search_results.append(SearchResult(
@@ -22353,7 +22656,7 @@ def main(argv: list[str] | None = None) -> int:
             if not replaced:
                 search_results.append(SearchResult(lang, ep, "subdl", "found", file=best))
             planned.append((lang, ep, best))
-            download_alternatives[(lang, ep)] = download_alternates(sd_files, best)
+            download_alternatives[(lang, ep)] = download_alternates(sd_files, best, media=media, episode=ep)
     elif (media.imdb_id or media.tmdb_id) and any(
         r.status != "found" and r.language != "ja" for r in search_results
     ):
@@ -22432,7 +22735,7 @@ def main(argv: list[str] | None = None) -> int:
                 if not replaced:
                     search_results.append(SearchResult("es", ep, "subdivx", "found", file=best))
                 planned.append(("es", ep, best))
-                download_alternatives[("es", ep)] = download_alternates(sd_files, best)
+                download_alternatives[("es", ep)] = download_alternates(sd_files, best, media=media, episode=ep)
         elif missing_es_episodes and not media.title:
             warnings.append("es: Subdivx fallback skipped — title is unknown, cannot search.")
 
@@ -22507,7 +22810,7 @@ def main(argv: list[str] | None = None) -> int:
                 if not replaced:
                     search_results.append(SearchResult("ko", ep, "addic7ed", "found", file=best))
                 planned.append(("ko", ep, best))
-                download_alternatives[("ko", ep)] = download_alternates(a7_files, best)
+                download_alternatives[("ko", ep)] = download_alternates(a7_files, best, media=media, episode=ep)
         elif missing_ko_episodes and not media.title:
             warnings.append("ko: Addic7ed fallback skipped — title is unknown, cannot search.")
 

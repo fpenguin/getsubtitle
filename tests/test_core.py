@@ -365,6 +365,111 @@ def test_choose_best_allows_opaque_provider_filenames_under_metadata_id():
     assert MODULE["choose_best"](files, media=media, episode="auto") is files[0]
 
 
+def test_choose_best_rejects_conflicting_provider_language_tag():
+    subtitle = MODULE["SubtitleFile"]
+    media = MODULE["MediaInfo"](
+        source_url="https://www.themoviedb.org/movie/999",
+        provider="tmdb",
+        title="The Super Mario Galaxy Movie",
+        tmdb_id="999",
+        is_movie=True,
+    )
+    files = [
+        subtitle(
+            "wyzie",
+            "en",
+            "The.Super.Mario.Galaxy.Movie.2026.1080p.WEB-DL.en.srt",
+            "u",
+            provider_language="Norwegian",
+            media_title="The Super Mario Galaxy Movie",
+        )
+    ]
+
+    assert MODULE["choose_best"](files, media=media, episode="auto") is None
+    low = MODULE["low_confidence_subtitle_candidate"](files, media=media, episode="auto")
+    assert low is files[0]
+    reason = MODULE["low_confidence_subtitle_reason"](low, media)
+    assert "language mismatch" in reason
+    assert "English" in reason
+    assert "Norwegian" in reason
+
+
+def test_choose_best_prefers_plausible_file_over_conflicting_language_tag():
+    subtitle = MODULE["SubtitleFile"]
+    media = MODULE["MediaInfo"](
+        source_url="https://www.themoviedb.org/movie/999",
+        provider="tmdb",
+        title="The Super Mario Galaxy Movie",
+        tmdb_id="999",
+        is_movie=True,
+    )
+    bad = subtitle(
+        "wyzie",
+        "en",
+        "The.Super.Mario.Galaxy.Movie.2026.1080p.WEB-DL.en.srt",
+        "bad",
+        provider_language="Norwegian",
+        media_title="The Super Mario Galaxy Movie",
+    )
+    good = subtitle(
+        "subdl",
+        "en",
+        "The.Super.Mario.Galaxy.Movie.2026.1080p.WEB-DL.en.srt",
+        "good",
+        media_title="The Super Mario Galaxy Movie",
+    )
+
+    assert MODULE["choose_best"]([bad, good], media=media, episode="auto") is good
+
+
+def test_download_alternates_filters_low_confidence_candidates():
+    subtitle = MODULE["SubtitleFile"]
+    media = MODULE["MediaInfo"](
+        source_url="https://www.themoviedb.org/movie/35",
+        provider="tmdb",
+        title="The Simpsons Movie",
+        tmdb_id="35",
+        is_movie=True,
+    )
+    best = subtitle(
+        "wyzie",
+        "en",
+        "The.Simpsons.Movie.2007.en.srt",
+        "best",
+        media_title="The Simpsons Movie",
+    )
+    wrong_title = subtitle(
+        "wyzie",
+        "en",
+        "Cracker (UK) - 01x02 - The Mad Woman in the Attic (2).srt",
+        "wrong-title",
+        media_title="Cracker (UK)",
+    )
+    wrong_language = subtitle(
+        "wyzie",
+        "en",
+        "The.Simpsons.Movie.2007.en.srt",
+        "wrong-lang",
+        provider_language="Norwegian",
+        media_title="The Simpsons Movie",
+    )
+    good_alt = subtitle(
+        "subdl",
+        "en",
+        "The.Simpsons.Movie.2007.BluRay.en.srt",
+        "good-alt",
+        media_title="The Simpsons Movie",
+    )
+
+    alternates = MODULE["download_alternates"](
+        [best, wrong_title, wrong_language, good_alt],
+        best,
+        media=media,
+        episode="auto",
+    )
+    assert alternates == [good_alt]
+
+
 def test_subtitle_search_outcome_leads_with_human_no_found_summary(capsys, tmp_path):
     media = MODULE["MediaInfo"](
         source_url="title://Fena",
@@ -2281,6 +2386,27 @@ def test_run_registry_save_list_remove(tmp_path, monkeypatch, capsys):
     assert not (tmp_path / "pipelines" / "myflow.toml").exists()
 
 
+def test_run_registry_save_refuses_overwrite_without_force(tmp_path, monkeypatch):
+    import pytest
+
+    monkeypatch.setenv("GETSUBTITLE_CONFIG_PATH", str(tmp_path / "user_settings.toml"))
+    wf1 = tmp_path / "one.toml"
+    wf2 = tmp_path / "two.toml"
+    wf1.write_text('[fetch]\nsource = "one"\n', encoding="utf-8")
+    wf2.write_text('[fetch]\nsource = "two"\n', encoding="utf-8")
+
+    assert MODULE["run_main"](["--save", "myflow", str(wf1)]) == 0
+    with pytest.raises(MODULE["CliError"]) as exc:
+        MODULE["run_main"](["--save", "myflow", str(wf2)])
+
+    saved = tmp_path / "pipelines" / "myflow.toml"
+    assert "already exists" in str(exc.value)
+    assert 'source = "one"' in saved.read_text(encoding="utf-8")
+
+    assert MODULE["run_main"](["--save", "myflow", str(wf2), "--force"]) == 0
+    assert 'source = "two"' in saved.read_text(encoding="utf-8")
+
+
 def test_run_registry_rejects_unsafe_name(tmp_path, monkeypatch):
     import pytest
     monkeypatch.setenv("GETSUBTITLE_CONFIG_PATH", str(tmp_path / "user_settings.toml"))
@@ -2369,6 +2495,52 @@ def test_rename_value_safety_and_plan_guard(tmp_path):
     part.title = "Bad/Title"
     with pytest.raises(MODULE["CliError"]):
         MODULE["_rename_plan_for_parts"]([part])
+
+
+def test_atomic_write_text_preserves_existing_when_replace_fails(tmp_path, monkeypatch):
+    import pytest
+
+    path = tmp_path / "existing.srt"
+    path.write_text("old\n", encoding="utf-8")
+
+    def fail_replace(_src, _dst):
+        raise OSError("simulated replace failure")
+
+    monkeypatch.setattr(MODULE["os"], "replace", fail_replace)
+    with pytest.raises(OSError):
+        MODULE["atomic_write_text"](path, "new\n")
+
+    assert path.read_text(encoding="utf-8") == "old\n"
+    assert list(tmp_path.glob(".existing.srt.*.tmp")) == []
+
+
+def test_rename_apply_plan_rolls_back_second_phase_failure(tmp_path, monkeypatch):
+    import pytest
+    from pathlib import Path
+
+    one = tmp_path / "Show - S01E01.ja.srt"
+    two = tmp_path / "Show - S01E02.ja.srt"
+    one.write_text("one", encoding="utf-8")
+    two.write_text("two", encoding="utf-8")
+    dst_one = tmp_path / "Show - S01E11.ja.srt"
+    dst_two = tmp_path / "Show - S01E12.ja.srt"
+    original_rename = Path.rename
+
+    def fail_second_dest(self, target):
+        target_path = Path(target)
+        if self.name.endswith(".tmp") and target_path.name == dst_two.name:
+            raise OSError("simulated phase-two failure")
+        return original_rename(self, target)
+
+    monkeypatch.setattr(Path, "rename", fail_second_dest)
+    with pytest.raises(MODULE["CliError"]) as exc:
+        MODULE["_rename_apply_plan"]([(one, dst_one), (two, dst_two)])
+
+    assert "original files were restored" in str(exc.value)
+    assert one.read_text(encoding="utf-8") == "one"
+    assert two.read_text(encoding="utf-8") == "two"
+    assert not dst_one.exists()
+    assert not dst_two.exists()
 
 
 def test_no_label_langs_overrides_user_settings(tmp_path, monkeypatch):
@@ -2555,6 +2727,92 @@ def test_combine_cues_stacks_japanese_furigana_without_flattening_other_langs():
 
     assert rates["en"] == 1.0
     assert combined[0].text_lines == ["かたぎり", "片桐 君", "line one line two"]
+
+
+def test_clean_merge_text_lines_removes_markup_noise_and_duplicates():
+    clean = MODULE["clean_merge_text_lines"]
+    assert clean([
+        '<font color="#ffff00">《こんにちは➡》</font>',
+        "<i>Hello&nbsp;there</i><br>Hello&nbsp;there",
+        "{\\an8}Hello&nbsp;there",
+    ]) == ["こんにちは", "Hello there"]
+
+
+def test_clean_merge_text_lines_preserves_ruby_only_when_requested():
+    clean = MODULE["clean_merge_text_lines"]
+    ruby = "<ruby>片桐<rt>かたぎり</rt></ruby> 君"
+    assert clean([ruby]) == ["片桐（かたぎり） 君"]
+    assert clean([ruby], preserve_ruby=True) == [ruby]
+
+
+def test_combine_cues_cleans_markup_before_merging():
+    SrtCue = MODULE["SrtCue"]
+    master = [
+        SrtCue(
+            "1",
+            "00:00:01,000 --> 00:00:03,000",
+            ['<font color="#ffff00">《こんにちは➡》</font>'],
+        ),
+    ]
+    target = [
+        SrtCue(
+            "1",
+            "00:00:01,000 --> 00:00:03,000",
+            ["{\\an8}Hello&nbsp;there", "Hello&nbsp;there"],
+        ),
+    ]
+    combined, rates = MODULE["combine_cues"](
+        master,
+        {"en": target},
+        ["ja", "en"],
+        "ja",
+        MODULE["SYNC_PRESETS"]["auto"],
+    )
+    assert rates["en"] == 1.0
+    assert combined[0].text_lines == ["こんにちは", "Hello there"]
+
+
+def test_combine_cues_extends_output_until_matched_support_cue_finishes():
+    SrtCue = MODULE["SrtCue"]
+    master = [
+        SrtCue("1", "00:00:01,000 --> 00:00:02,000", ["短い"]),
+        SrtCue("2", "00:00:04,000 --> 00:00:05,000", ["次"]),
+    ]
+    target = [
+        SrtCue("1", "00:00:01,000 --> 00:00:03,500", ["Long enough to read"]),
+        SrtCue("2", "00:00:04,000 --> 00:00:05,000", ["Next"]),
+    ]
+    combined, rates = MODULE["combine_cues"](
+        master,
+        {"en": target},
+        ["ja", "en"],
+        "ja",
+        MODULE["SYNC_PRESETS"]["auto"],
+    )
+    assert rates["en"] == 1.0
+    assert combined[0].time_line == "00:00:01,000 --> 00:00:03,500"
+    assert combined[0].text_lines == ["短い", "Long enough to read"]
+
+
+def test_combine_cues_caps_extended_output_before_next_master_cue():
+    SrtCue = MODULE["SrtCue"]
+    master = [
+        SrtCue("1", "00:00:01,000 --> 00:00:02,000", ["短い"]),
+        SrtCue("2", "00:00:03,000 --> 00:00:04,000", ["次"]),
+    ]
+    target = [
+        SrtCue("1", "00:00:01,000 --> 00:00:03,500", ["Long enough to read"]),
+        SrtCue("2", "00:00:03,000 --> 00:00:04,000", ["Next"]),
+    ]
+    combined, rates = MODULE["combine_cues"](
+        master,
+        {"en": target},
+        ["ja", "en"],
+        "ja",
+        MODULE["SYNC_PRESETS"]["auto"],
+    )
+    assert rates["en"] == 1.0
+    assert combined[0].time_line == "00:00:01,000 --> 00:00:02,999"
 
 
 def test_kanji_reading_pair_lines_aligns_rows_to_same_display_width():
@@ -3264,6 +3522,31 @@ def test_combine_main_force_overwrites_existing():
         MODULE["combine_main"]([str(root), "-l", "ja,ko", "--force"])
         assert out.read_text(encoding="utf-8") != "EXISTING"
         assert "안녕" in out.read_text(encoding="utf-8")
+
+
+def test_combine_main_force_preserves_existing_output_when_write_fails(tmp_path, monkeypatch):
+    import pytest
+
+    (tmp_path / "Show.S01E07.ja.srt").write_text(
+        "1\n00:00:01,000 --> 00:00:02,000\nhi\n", encoding="utf-8"
+    )
+    (tmp_path / "Show.S01E07.ko.srt").write_text(
+        "1\n00:00:01,000 --> 00:00:02,000\n안녕\n", encoding="utf-8"
+    )
+    out = tmp_path / "Show.S01E07.ja-ko.srt"
+    out.write_text("EXISTING", encoding="utf-8")
+    real_atomic_write_text = MODULE["atomic_write_text"]
+
+    def fail_for_combined(path, text, *, encoding="utf-8"):
+        if Path(path) == out:
+            raise OSError("simulated disk full")
+        return real_atomic_write_text(path, text, encoding=encoding)
+
+    monkeypatch.setitem(MODULE["combine_main"].__globals__, "atomic_write_text", fail_for_combined)
+    with pytest.raises(OSError):
+        MODULE["combine_main"]([str(tmp_path), "-l", "ja,ko", "--force"])
+
+    assert out.read_text(encoding="utf-8") == "EXISTING"
 
 
 def test_combine_main_master_override_changes_timings():
@@ -4723,6 +5006,29 @@ def test_translate_srt_file_respects_strip_furigana_false_flag():
     assert seen[0] == ["特（とく）に"]
 
 
+def test_translate_srt_file_failure_preserves_existing_target(tmp_path):
+    import pytest
+
+    class _FailingTranslator(MODULE["_BaseTranslator"]):
+        name = "failing"
+        def is_available(self): return True
+        def translate_batch(self, texts, source, target, on_progress=None):
+            raise RuntimeError("translator died")
+
+    src = tmp_path / "Show.S01E01.ja.srt"
+    src.write_text(
+        "1\n00:00:01,000 --> 00:00:02,000\nこんにちは\n",
+        encoding="utf-8",
+    )
+    dst = tmp_path / "Show.S01E01.ko.mt.srt"
+    dst.write_text("EXISTING\n", encoding="utf-8")
+
+    with pytest.raises(RuntimeError):
+        MODULE["translate_srt_file"](src, dst, _FailingTranslator(), "ja", "ko")
+
+    assert dst.read_text(encoding="utf-8") == "EXISTING\n"
+
+
 def test_translate_main_strip_before_mt_config_false_passes_through():
     # When [furigana].strip_before_mt = false, the ja source should reach
     # the translator with readings intact.
@@ -5576,6 +5882,27 @@ def test_modify_main_flattens_single_line_in_place():
     assert "Line A\nLine B" not in body
 
 
+def test_modify_main_processes_direct_unlabeled_srt_file():
+    import tempfile
+    from pathlib import Path
+    with _isolated_config(None):
+        with tempfile.TemporaryDirectory() as d:
+            target = Path(d) / "[Ohys-Raws] NieR Automata Ver1.1a - 02 (BS11 1280x720 x264 AAC).srt"
+            target.write_text(
+                "1\n00:00:01,000 --> 00:00:02,000\n"
+                "ここからセクター２へ進みます。これは日本語字幕のテストです。➡\n"
+                "次の台詞も日本語です。\n",
+                encoding="utf-8",
+            )
+            rc = MODULE["modify_main"]([
+                str(target), "--strip-cc-noise", "--single-line",
+            ])
+            assert rc == 0
+            body = target.read_text(encoding="utf-8")
+    assert "➡" not in body
+    assert "ここからセクター２へ進みます。これは日本語字幕のテストです。　次の台詞も日本語です。" in body
+
+
 def test_modify_main_combines_strip_and_flatten():
     import tempfile
     from pathlib import Path
@@ -5742,6 +6069,22 @@ def test_fetch_topic_help_renders_with_expected_content():
     # The three profile names should be documented.
     for tag in ("ja", "ko", "en"):
         assert tag in text
+
+
+def test_workflow_topic_help_alias_is_beginner_facing():
+    import io, contextlib
+    out = io.StringIO()
+    with contextlib.redirect_stdout(out), _isolated_config(None):
+        rc = MODULE["main"](["--help", "workflow"])
+    text = out.getvalue()
+    assert rc == 0
+    assert "One-command workflow" in text
+
+    out2 = io.StringIO()
+    with contextlib.redirect_stdout(out2), _isolated_config(None):
+        rc = MODULE["main"](["--help"])
+    assert rc == 0
+    assert "--help fetch | translate | modify | merge | workflow" in out2.getvalue()
 
 
 def test_merge_topic_help_renders_with_expected_content():
@@ -7023,6 +7366,42 @@ def test_pipeline_from_config_file_runs_full_pipeline():
         scope["combine_main"] = saved_combine
 
 
+def test_minimal_toml_parse_matches_tomllib_for_supported_schema():
+    import tomllib
+
+    text = """
+    [fetch]
+    languages = "ja,en"
+    manual_search = true
+
+    [modify]
+    reading = ["ja:hiragana", "ko:revised"]
+
+    [translate.mt_model_pair]
+    "ja:ko" = "qwen3:4b"
+    """
+
+    assert MODULE["_minimal_toml_parse"](text) == tomllib.loads(text)
+
+
+def test_prepare_downloaded_subtitle_bytes_rejects_html_error_page():
+    import pytest
+
+    html = b"<!doctype html><html><body>login required</body></html>"
+    with pytest.raises(MODULE["CliError"]) as exc:
+        MODULE["prepare_downloaded_subtitle_bytes"](html, ".srt", "provider-result.srt")
+
+    assert "HTML page" in str(exc.value)
+
+
+def test_prepare_downloaded_subtitle_bytes_allows_sami_markup():
+    raw = _SAMI_BASIC_KO.encode("cp949")
+
+    out = MODULE["prepare_downloaded_subtitle_bytes"](raw, ".smi", "korean.smi")
+
+    assert "안녕하세요".encode("utf-8") in out
+
+
 def test_pipeline_config_translate_inherits_fetch_languages_and_disables_inline_mt():
     import tempfile, io, contextlib
     from pathlib import Path
@@ -7602,6 +7981,54 @@ def test_read_cues_from_file_dispatches_by_extension():
             raise AssertionError("expected CliError for unknown extension")
 
 
+def test_read_cues_from_file_rejects_corrupted_replacement_text(tmp_path):
+    import pytest
+
+    bad = tmp_path / "bad.srt"
+    bad.write_text("1\n00:00:01,000 --> 00:00:02,000\n���\n", encoding="utf-8")
+
+    with pytest.raises(MODULE["CliError"]) as exc:
+        MODULE["read_cues_from_file"](bad)
+
+    assert "looks corrupted" in str(exc.value)
+
+
+def test_read_cues_from_file_rejects_text_without_timing_cues(tmp_path):
+    import pytest
+
+    bad = tmp_path / "notes.srt"
+    bad.write_text("This is not a subtitle file.\nJust notes.\n", encoding="utf-8")
+
+    with pytest.raises(MODULE["CliError"]) as exc:
+        MODULE["read_cues_from_file"](bad)
+
+    assert "no subtitle timing cues" in str(exc.value)
+
+
+def test_read_cues_from_file_decodes_utf16_srt(tmp_path):
+    srt = tmp_path / "utf16.srt"
+    srt.write_bytes("1\n00:00:01,000 --> 00:00:02,000\n안녕하세요\n".encode("utf-16"))
+
+    cues = MODULE["read_cues_from_file"](srt)
+
+    assert cues[0].text_lines == ["안녕하세요"]
+
+
+def test_subtitle_parsers_tolerate_malformed_inputs():
+    malformed = [
+        "",
+        "not a subtitle",
+        "1\nnot a timestamp\nhello",
+        "WEBVTT\n\nNOTE unfinished",
+        "[Events]\nDialogue: 0,bad,bad,Default,,0,0,0,,text",
+        "\x00\x01\x02",
+    ]
+    for text in malformed:
+        assert isinstance(MODULE["parse_srt"](text), list)
+        assert isinstance(MODULE["parse_vtt"](text), list)
+        assert isinstance(MODULE["parse_ass"](text), list)
+
+
 def test_normalize_merge_langs_strips_format_hints():
     f = MODULE["_normalize_merge_langs"]
     # String form
@@ -8152,6 +8579,17 @@ def test_convert_smi_file_skips_existing_output_without_force():
         assert skipped == []
         assert written == [target]
         assert "안녕하세요" in target.read_text(encoding="utf-8")
+
+
+def test_convert_smi_file_decodes_utf16_bom_input(tmp_path):
+    smi = tmp_path / "Show.S01E03.smi"
+    smi.write_bytes(_SAMI_BASIC_KO.encode("utf-16"))
+
+    written, skipped = MODULE["convert_smi_file"](smi)
+
+    assert skipped == []
+    assert len(written) == 1
+    assert "안녕하세요" in written[0].read_text(encoding="utf-8")
 
 
 def test_convert_smi_file_raises_on_unparseable_sami():
@@ -9639,6 +10077,21 @@ def test_wizard_emit_toml_uses_canonical_keys():
     assert indices == sorted(indices)
 
 
+def test_wizard_emit_cli_and_toml_do_not_include_api_keys(monkeypatch):
+    secret = "sk-live-super-secret"
+    monkeypatch.setenv("DEEPL_API_KEY", secret)
+    monkeypatch.setenv("TMDB_API_KEY", secret)
+    state = _wizard_state(mt_engine="deepl")
+
+    cli = MODULE["_wizard_emit_cli_string"](state)
+    toml = MODULE["_wizard_emit_toml"](state)
+
+    assert secret not in cli
+    assert secret not in toml
+    assert "DEEPL_API_KEY" not in cli
+    assert "TMDB_API_KEY" not in toml
+
+
 def test_wizard_emit_cli_and_toml_include_episode_filename_start():
     state = _wizard_state(
         source="https://www.crunchyroll.com/series/GEXH3W2W7/mf-ghost",
@@ -10512,6 +10965,16 @@ def test_wizard_state_to_toml_round_trip_safe():
     assert text.endswith("\n")
 
 
+def test_wizard_save_draft_ignores_unwritable_cache(monkeypatch):
+    def fail_write(_path, _text, *, encoding="utf-8"):
+        raise OSError("cache unavailable")
+
+    g = MODULE["_wizard_save_draft"].__globals__
+    monkeypatch.setitem(g, "atomic_write_text", fail_write)
+
+    MODULE["_wizard_save_draft"](_wizard_state())
+
+
 # ─── v0.6 wizard UX touch-ups ───────────────────────────────────────
 
 
@@ -11345,6 +11808,14 @@ def test_mediainfo_movie_skips_season_subdir():
         "/tmp/Subs/Breaking Bad/Season 01"
     assert str(MODULE["output_dir"](Path("/tmp/Subs"), show, "auto", "archive")) == \
         "/tmp/Subs/Breaking Bad/Season Unknown"
+
+
+def test_output_dir_does_not_escape_base_for_dotdot_title():
+    base = Path("/tmp/Subs")
+    media = MODULE["MediaInfo"](source_url="x", provider="title", title="..", is_movie=True)
+
+    assert MODULE["safe_filename"]("..") == "Unknown"
+    assert MODULE["output_dir"](base, media, "auto", "archive") == base / "Unknown"
 
 
 def test_infer_from_catalog_url_sets_is_movie_for_tmdb_movie():
@@ -13444,6 +13915,62 @@ def test_text_with_cantonese_readings_and_ruby():
         restore()
 
 
+def test_optional_backend_japanese_sudachi_smoke(monkeypatch):
+    import pytest
+
+    pytest.importorskip("sudachipy")
+    pytest.importorskip("sudachidict_core")
+    g = MODULE["text_with_readings"].__globals__
+    monkeypatch.setitem(g, "_SUDACHI_TOKENIZER", None)
+    monkeypatch.setitem(g, "_SUDACHI_SPLIT_MODE", None)
+
+    out = MODULE["text_with_readings"]("君の日本語", "hiragana")
+
+    assert out != "君の日本語"
+    assert "（" in out and "）" in out
+
+
+def test_optional_backend_korean_revised_smoke(monkeypatch):
+    import pytest
+
+    pytest.importorskip("korean_romanizer")
+    g = MODULE["text_with_korean_readings"].__globals__
+    monkeypatch.setitem(g, "_KOREAN_ROMANIZER_CLS", None)
+    monkeypatch.setitem(g, "_KOREAN_G2P_CACHE", None)
+    monkeypatch.setitem(g, "_KOREAN_G2P_TRIED", False)
+
+    out = MODULE["text_with_korean_readings"]("한국어 공부", "revised")
+
+    assert out != "한국어 공부"
+    assert "（" in out and "）" in out
+
+
+def test_optional_backend_mandarin_pypinyin_smoke(monkeypatch):
+    import pytest
+
+    pytest.importorskip("pypinyin")
+    g = MODULE["text_with_chinese_readings"].__globals__
+    monkeypatch.setitem(g, "_PYPINYIN_MODULE", None)
+
+    out = MODULE["text_with_chinese_readings"]("中文", "marks")
+
+    assert out != "中文"
+    assert "（" in out and "）" in out
+
+
+def test_optional_backend_cantonese_pycantonese_smoke(monkeypatch):
+    import pytest
+
+    pytest.importorskip("pycantonese")
+    g = MODULE["text_with_cantonese_readings"].__globals__
+    monkeypatch.setitem(g, "_PYCANTONESE_MODULE", None)
+
+    out = MODULE["text_with_cantonese_readings"]("香港", "numbers")
+
+    assert out != "香港"
+    assert "（" in out and "）" in out
+
+
 def test_generate_cantonese_romanization_accepts_yue_or_zh_srt():
     import tempfile
     from pathlib import Path
@@ -13563,6 +14090,66 @@ def test_plan_mkv_subtitle_extraction_skips_image_streams_and_names_text_outputs
             assert any("image subtitle" in note for note in notes)
     finally:
         g["_ffprobe_subtitle_streams"] = saved_probe
+
+
+def test_extract_mkv_subtitle_plan_writes_sidecar_atomically(tmp_path, monkeypatch):
+    video = tmp_path / "Movie.mkv"
+    video.write_bytes(b"video")
+    dest = tmp_path / "Movie.en.srt"
+    calls: list[list[str]] = []
+
+    class Result:
+        returncode = 0
+        stdout = ""
+        stderr = ""
+
+    def fake_run(cmd, text=True, capture_output=True):
+        calls.append(list(cmd))
+        output = Path(cmd[-1])
+        assert output.name.startswith(".Movie.en.srt.")
+        assert output.suffix == ".srt"
+        output.write_text("1\n00:00:01,000 --> 00:00:02,000\nhello\n", encoding="utf-8")
+        return Result()
+
+    g = MODULE["extract_mkv_subtitle_plan"].__globals__
+    monkeypatch.setitem(g["shutil"].__dict__, "which", lambda name: "/usr/bin/ffmpeg" if name == "ffmpeg" else None)
+    monkeypatch.setitem(g["subprocess"].__dict__, "run", fake_run)
+
+    written, skipped, errors = MODULE["extract_mkv_subtitle_plan"]([(video, 2, "en", "subrip", dest)])
+
+    assert written == [dest]
+    assert skipped == []
+    assert errors == []
+    assert "hello" in dest.read_text(encoding="utf-8")
+    assert not list(tmp_path.glob(".Movie.en.srt.*"))
+    assert calls and calls[0][-1] != str(dest)
+
+
+def test_extract_mkv_subtitle_plan_preserves_existing_on_ffmpeg_failure(tmp_path, monkeypatch):
+    video = tmp_path / "Movie.mkv"
+    video.write_bytes(b"video")
+    dest = tmp_path / "Movie.en.srt"
+    dest.write_text("EXISTING\n", encoding="utf-8")
+
+    class Result:
+        returncode = 2
+        stdout = ""
+        stderr = "boom"
+
+    g = MODULE["extract_mkv_subtitle_plan"].__globals__
+    monkeypatch.setitem(g["shutil"].__dict__, "which", lambda name: "/usr/bin/ffmpeg" if name == "ffmpeg" else None)
+    monkeypatch.setitem(g["subprocess"].__dict__, "run", lambda *a, **k: Result())
+
+    written, skipped, errors = MODULE["extract_mkv_subtitle_plan"](
+        [(video, 2, "en", "subrip", dest)],
+        force=True,
+    )
+
+    assert written == []
+    assert skipped == []
+    assert errors and "boom" in errors[0]
+    assert dest.read_text(encoding="utf-8") == "EXISTING\n"
+    assert not list(tmp_path.glob(".Movie.en.srt.*"))
 
 
 def test_scan_video_files_ignores_macos_appledouble_sidecars(tmp_path):
