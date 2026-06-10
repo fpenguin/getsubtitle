@@ -3,8 +3,8 @@
 #
 # What this file does:
 #   This is your personal settings file. Every time you run getsubtitle, it
-#   reads this file first to figure out what defaults to use (which language
-#   to download, where to save files, which MT engine to use, etc.).
+#   reads this file first to figure out what defaults to use (which languages
+#   to download, where to save files, which AI translation engine to use, etc.).
 #
 #   You don't have to set every value — leave anything alone and you'll get
 #   the built-in default. Only override what you actually want different.
@@ -21,11 +21,11 @@
 # Override precedence (lowest → highest):
 #   1. Built-in defaults
 #   2. This file (user_settings.toml)
-#   3. --config FILE.toml (per-workflow config you specify on the CLI)
+#   3. --config FILE.toml (a saved workflow file you specify on the CLI)
 #   4. CLI flags like --source, --output, --format, -l, ...
 #
-# Sections — same names as the pipeline TOML schema, listed in execution
-# order: fetch → translate → modify → merge → output → experimental.
+# Sections — same names as saved workflow files, listed in the order
+# getsubtitle uses them: fetch → translate → modify → merge → output.
 #
 # DO NOT put API keys here. Keys live in macOS Keychain or in environment
 # variables (JIMAKU_API_KEY, WYZIE_API_KEY, SUBDL_API_KEY, DEEPL_API_KEY,
@@ -66,7 +66,7 @@
 #       strip_cc_noise = false
 #       # (omit `reading` entirely — no side files generated)
 #       [translate]
-#       engine = ""                  # disable MT fallback
+#       engine = ""                  # disable AI translation
 # ───────────────────────────────────────────────────────────────────────
 
 
@@ -85,16 +85,17 @@
 # Default: "ja"
 languages = "ja"
 
-# Which "rip" to prefer when the provider returns multiple matches.
+# Which streaming/source release to prefer when a subtitle source returns
+# multiple matches.
 # auto    — figure out from the URL host (Hulu URL prefers HULU rips,
 #           max.com prefers HMAX/MAX, etc.). Best for most users.
-# any     — disable preference; provider picks whatever's first.
+# any     — disable preference; getsubtitle uses whatever appears first.
 # <name>  — pin to one source: netflix | crunchyroll | amazon | hulu |
 #           hbo | disney | apple | paramount | peacock
 # Default: "auto"
 release_source = "auto"
 
-# When automatic providers miss Japanese/Korean/Chinese subtitles, print
+# When automatic subtitle sources miss Japanese/Korean/Chinese subtitles, print
 # likely community search links (Jimaku/Kitsunekko for Japanese,
 # GOM/Cineaste for Korean; ASSRT/SubHD/Zimuku for Chinese) and optionally
 # open them in your browser.
@@ -105,14 +106,14 @@ manual_search = "on-missing"
 manual_search_open = "ask"
 
 
-# ─── [translate] ─── machine translation defaults ─────────────────────
-# These apply both when MT runs as a fallback after fetch (--engine)
+# ─── [translate] ─── AI translation defaults ──────────────────────────
+# These apply both when AI translation runs after fetch (--engine)
 # and when you run the standalone translate subcommand.
 
 [translate]
 
-# Which MT engine to use. Choices:
-#   ""          — disable MT entirely (download-only)
+# Which AI translation engine to use. Choices:
+#   ""          — disable AI translation entirely (download-only)
 #   "argos"     — offline, free. Requires `pip install argostranslate`.
 #                 Quality: gist-level (good enough for context, not perfect).
 #   "ollama"    — offline LLM. Requires the Ollama desktop app running.
@@ -134,19 +135,19 @@ engine = "argos"
 # Default: "qwen3:4b"
 model = "qwen3:4b"
 
-# Per-target source language. Avoids wasteful pairs like en→ja when the
-# ja source is already on disk. Two forms:
+# Translation source language. This avoids weak pairs like English → Japanese
+# when a better Japanese source subtitle is already on disk. Two forms:
 #   string: "auto" (default — pick the best available source per target)
 #           or "ja" (force all targets to translate from Japanese)
 #           or "ko:ja,es:en" (per-target as a comma-list)
-#   dict:   { ko = "ja", es = "en" } (per-target as a TOML table)
-#           { es = ["fr", "en"] } (fallback list — first available wins)
+#   dict:   { ko = "ja", es = "en" } (per-target as a settings table)
+#           { es = ["fr", "en"] } (try French first, then English)
 # Default: "auto"
-# (`mt_source_lang` accepted as a back-compat alias)
+# (`mt_source_lang` is still accepted as an old compatibility name)
 mt_source = "auto"
 
 # Strip inline reading annotations (e.g. 漢字（かんじ） for ja,
-# 한국어（hangugeo） for ko) from source cues before sending to the
+# 한국어（hangugeo） for ko) from source subtitle lines before sending to the
 # translator. Without this, the engine sees the readings as duplicate
 # content and re-translates them. Default: true.
 strip_reading_before_mt = true
@@ -159,7 +160,7 @@ strip_reading_before_mt = true
 # `ollama pull`. Useful on metered connections. Default: true.
 auto_load = true
 
-# Free the Ollama model from RAM/VRAM as soon as the MT pass finishes
+# Free the Ollama model from RAM/VRAM as soon as the AI translation pass finishes
 # (sends keep_alive=0 to Ollama). Turn off if you run getsubtitle
 # back-to-back and want the model warm between calls. Default: true.
 auto_unload = true
@@ -181,11 +182,11 @@ auto_unload = true
 # ─── [modify] ─── cleanup applied when Modify runs ────────────────────
 # These apply when a workflow includes Modify — for example
 # `getsubtitle modify`, `getsubtitle -i` with Modify selected, or a
-# pipeline that includes `--modify`.
+# one-command workflow that includes `--modify`.
 
 [modify]
 
-# Flatten multi-line cues into single-line cues. asbplayer renders them
+# Turn multi-line subtitles into one-line subtitles. asbplayer renders them
 # cleaner this way. mpv users may prefer multi-line — set to false then.
 # Default: true.
 single_line = true
@@ -211,10 +212,10 @@ strip_cc_noise = true
 
 # Which file formats to generate for the reading-aid side files. One of:
 #   "srt"    — broadly compatible, inline parenthetical readings.
-#              Safest fallback. One file per episode.
-#   "vtt"    — ruby <ruby><rt> markup. Best for browser/asbplayer Japanese
-#              ruby when Settings > Misc > Subtitles > Subtitle HTML =
-#              Render. Local video-player support varies.
+#              Safest option. One file per episode.
+#   "vtt"    — WebVTT markup for Japanese readings above kanji. Best for
+#              browser/asbplayer when Settings > Misc > Subtitles >
+#              Subtitle HTML = Render. Local video-player support varies.
 #   "ass"    — stacked-line ASS. Best local-player choice for Korean,
 #              Mandarin, and Cantonese readings above the original script.
 #   "all"    — generate all three (srt + ass + vtt) — useful when you
@@ -225,21 +226,21 @@ strip_cc_noise = true
 reading_format = "srt"
 
 
-# ─── [merge] ─── stacking multiple language tracks into one file ───────
-# Settings for `getsubtitle merge` (stacks 2+ language SRTs into one
-# study file with both languages on each cue).
+# ─── [merge] ─── multiple language tracks into one file ─────────────────
+# Settings for `getsubtitle merge` (creates one learner-friendly
+# multi-language subtitle file).
 
 [merge]
 
-# Default language order for merge output. First language is the timing
-# master unless --master or [merge].priority overrides.
+# Default language order for merge output. The first language is also the
+# timing language unless --master or [merge].priority overrides it.
 # Default: "ja,en" — target language on top, English (likely native) below.
 # Common picks: "ja,en", "es,en", "fr,en", "ko,en", "ja,ko"
 languages = "ja,en"
 
 # How strict the time-overlap match between languages should be:
 #   "auto"    — default-tolerant window; handles most timing drift
-#   "strict"  — require near-exact overlap; cleaner stacks, more skipped cues
+#   "strict"  — require near-exact overlap; cleaner output, more skipped lines
 #   "loose"   — most permissive; best when timings drift across releases
 # Default: "auto"
 sync = "auto"
@@ -259,13 +260,12 @@ label_langs = false
 # mostly controlled by the player, so font-size hints may be ignored.
 font_size = "auto"
 
-# Master-language priority list. When merging cues from multiple
-# languages, ONE language is the "timing master" — its cue boundaries
-# define when each combined cue starts/ends; the others align to it via
-# time-overlap matching. First match in this list wins (overrides the
-# first-language-in-`-l` default).
+# Timing-language priority list. When merging multiple languages, ONE
+# language controls when each combined subtitle line starts and ends.
+# The others align to it by timestamp overlap. First match in this list
+# wins (overrides the first-language-in-`-l` default).
 #
-# Example: prefer ja master when present (broadcast SRTs are well-timed),
+# Example: prefer Japanese timing when present (broadcast subtitles are often well-timed),
 # fall back to en (Netflix / Crunchyroll, also well-timed) otherwise:
 #   priority = ["ja", "en", "es", "fr", "ko"]
 # Default: [] (use first language in -l)
@@ -277,7 +277,7 @@ priority = []
 # don't want readings in the stacked file. Default: true.
 reading = true
 
-# Add a short GetSubtitle credit/disclaimer cue at the beginning and end of
+# Add a short GetSubtitle credit/disclaimer subtitle line at the beginning and end of
 # merged study files. Default: true. Use --no-watermark per run to skip it.
 watermark = true
 
@@ -294,7 +294,7 @@ target = "~/Downloads/GetSubtitle"
 # Folder layout for output files:
 #   "archive"  — Title/Season 01/files (organized by show + season)
 #   "flat"     — all files in one folder, no per-season subdir
-#   "plex"     — Plex-style; preserves Show/Season XX/ for in-place library use
+#   "plex"     — Plex-style; preserves Show/Season XX/ for editing beside your media library
 # Default: "archive"
 layout = "archive"
 
@@ -307,19 +307,19 @@ open_folder = false
 # Default: false.
 force = false
 
-# Show raw provider counts and language tags from each provider call.
+# Show raw subtitle-source counts and language tags from each source call.
 # Useful when debugging why a subtitle wasn't found. Default: false.
 debug_providers = false
 
 
-# ─── [experimental] ─── opt-in providers and features ──────────────────
+# ─── [experimental] ─── opt-in subtitle sources and features ───────────
 
 [experimental]
 
-# Enable Spanish Subdivx provider as a fallback. Web-scraped — may break
+# Enable Spanish Subdivx subtitle source as an optional backup. Web-scraped — may break
 # without notice. Default: false.
 subdivx = false
 
-# Enable Korean Addic7ed provider as a fallback. Web-scraped; may rate-limit
+# Enable Korean Addic7ed subtitle source as an optional backup. Web-scraped; may rate-limit
 # on repeated calls. Default: false.
 addic7ed = false

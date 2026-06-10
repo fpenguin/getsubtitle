@@ -12,7 +12,7 @@ getsubtitle "https://www.themoviedb.org/movie/8392" -l ja,en
 
 ## Medium
 
-Series with Japanese furigana for asbplayer/browser ruby.
+Series with Japanese furigana for browser/asbplayer readings above kanji.
 
 ```sh
 getsubtitle "https://www.imdb.com/title/tt6150576/" \
@@ -41,8 +41,8 @@ getsubtitle translate ~/Downloads/GetSubtitle/Friends -s 4 -e 3-5 -l es \
 getsubtitle merge ~/Downloads/GetSubtitle/Friends -s 4 -e 3-5 -l fr,en,es
 ```
 
-For machine translation, `--mt-source "es:fr|en"` means "make Spanish from
-French first, English as fallback." Ollama users can pin a per-pair model:
+For AI translation, `--mt-source "es:fr|en"` means "make Spanish from
+French first, then try English if French is not available." Ollama users can pin a per-pair model:
 
 ```sh
 --mt-model-pair ja:ko=qwen3:4b

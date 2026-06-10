@@ -19,7 +19,7 @@ Q1. What would you like to do?
 
     1) Fetch      Download subtitles from a URL or title
     2) Translate  Fill missing languages with AI
-    3) Modify     Clean up cues, add reading aids (furigana, hangul, pinyin, ...)
+    3) Modify     Clean up subtitle lines, add reading aids (furigana, hangul, pinyin, ...)
     4) Merge      Create one multi-language subtitle file
     5) Rename     Batch rename subtitle files
 
@@ -133,17 +133,17 @@ Plan
   • Use local Japanese, English files in:
     {TMP}/Show
   • Fill gaps with Deepl AI translation
-  • Clean up cues (single line, strip broadcast noise)
+  • Clean up subtitle lines (single line, strip broadcast noise)
   • Create one Japanese + English SRT study subtitle file
   • Use subtitle text size: Regular
   • Save to:
     {TMP}/Show
 
 Smart defaults
-  Display order   ja, en  (top → bottom on screen)
-  Timing master   ja  (first language)
-  Cleanup preset  on  (single-line cues + strip broadcast noise)
-  Output folder   beside source
+  Display order    ja, en  (top → bottom on screen)
+  Timing language  ja  (first language)
+  Cleanup preset   on  (one-line subtitles + strip broadcast noise)
+  Output folder    beside source
 
 What next?
   1) Run it now
@@ -176,7 +176,7 @@ Still blocked — the run would fail before it starts:
   Why:  Required for this workflow.
   How:  getsubtitle --set-key deepl
   Save a reusable workflow file to run after setup? [y/N] > y
-  Saving a TOML workflow now. You can run it later with `getsubtitle --config FILE.toml`.
+  Saving a workflow file now. You can run it later with `getsubtitle --config FILE.toml`.
 
 
   Save to (relative paths OK) [getsubtitle-workflow.toml] > {TMP}/deepl-later.toml

@@ -98,6 +98,25 @@ final multi-language subtitle is readable enough to use for study.
 - v1.0 should not require users to understand provider internals, subtitle
   formats, or TOML before getting one useful multi-language subtitle file.
 
+## v0.9.7 — what's new
+
+- **Beginner-facing wording pass.** Public help, README, docs, setup text,
+  wizard transcripts, and `user_settings.example.toml` now say "AI
+  translation," "workflow," "subtitle source," "timing language," and
+  "subtitle lines" instead of developer shorthand such as MT, pipeline,
+  provider, master, and cues.
+- **Broader language and Chinese-variant UX.** The v0.9.6.5/6 local work is
+  now part of the public release: Netflix-style language names, simplified /
+  traditional Chinese aliases, Mandarin pinyin vs Cantonese Jyutping guidance,
+  and `g=guide` language help.
+- **Setup and recovery polish.** First-time setup is more personalized, source
+  recovery points streaming users toward proven subtitle download tools, and
+  source diagnostics cover the wider language set.
+- **Documentation hygiene.** Generated UX audit artifacts, wizard transcripts,
+  source docs, reading-aid docs, and API-key docs are synced with current
+  behavior. `.gitignore` now covers common local Python/test artifacts and
+  scratch release files.
+
 ## v0.9.6.6 — local follow-up
 
 - **Docs and example audit cleanup.** README hero copy now matches the current

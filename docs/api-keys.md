@@ -1,7 +1,7 @@
-# API Keys And Providers
+# API Keys And Subtitle Sources
 
-API keys are optional, but they improve source coverage and enable online
-machine translation.
+API keys are optional, but they improve subtitle coverage and enable online
+AI translation.
 
 Set keys once:
 
@@ -14,13 +14,13 @@ getsubtitle --set-key deepl
 getsubtitle --set-key tmdb
 ```
 
-## Providers
+## Subtitle Sources And Services
 
-| Provider | Use |
+| Source/service | Use |
 |---|---|
 | Jimaku | Japanese anime subtitles |
 | Wyzie | Movies and TV |
-| SubDL | Fallback when Wyzie misses |
+| SubDL | Backup subtitle source when Wyzie misses |
 | DeepL | Online AI translation |
 | TMDB | Title matching and `-e all` for live-action TV |
 
@@ -35,7 +35,7 @@ DEEPL_API_KEY
 TMDB_API_KEY
 ```
 
-## Machine Translation Engines
+## AI Translation Engines
 
 | Engine | Local? | Setup | Quality |
 |---|---|---|---|

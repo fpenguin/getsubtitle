@@ -90,14 +90,14 @@ KEY_PROVIDERS = {
         "env": "SUBDL_API_KEY",
         "account": KEYCHAIN_SUBDL_ACCOUNT,
         "url": "https://subdl.com/panel",
-        "use": "direct SubDL subtitle fallback by IMDb/TMDB ID",
+        "use": "extra subtitle source by IMDb/TMDB ID",
     },
     "deepl": {
         "label": "DeepL",
         "env": "DEEPL_API_KEY",
         "account": "deepl",
         "url": "https://www.deepl.com/your-account/keys",
-        "use": "machine translation for --engine deepl (free tier: 500K chars/mo)",
+        "use": "AI translation with DeepL (free tier: 500K chars/mo)",
     },
     "tmdb": {
         "label": "TMDB",
@@ -1092,18 +1092,18 @@ def provider_choices(value: str | None) -> list[str]:
     providers = [part.strip().lower().lstrip("-") for part in value.split(",") if part.strip()]
     invalid = [provider for provider in providers if provider not in KEY_PROVIDERS]
     if invalid:
-        raise CliError(f"Unknown key provider: {', '.join(invalid)}. Use one of: {', '.join(KEY_PROVIDERS)}, all.")
+        raise CliError(f"Unknown API key source: {', '.join(invalid)}. Use one of: {', '.join(KEY_PROVIDERS)}, all.")
     return providers
 
 
 def prompt_for_key_provider(action: str) -> list[str]:
     if not sys.stdin.isatty():
-        raise CliError(f"--{action}-key needs a provider in non-interactive mode. Example: --{action}-key jimaku")
-    print("Available API key providers:")
+        raise CliError(f"--{action}-key needs an API key source in non-interactive mode. Example: --{action}-key jimaku")
+    print("Available API key sources:")
     for idx, (provider, info) in enumerate(KEY_PROVIDERS.items(), start=1):
         print(f"  {idx}. {provider} - {info['use']}")
     print(f"  {len(KEY_PROVIDERS) + 1}. all")
-    choice = input(f"Choose provider to {action} [1]: ").strip() or "1"
+    choice = input(f"Choose API key source to {action} [1]: ").strip() or "1"
     if choice.isdigit():
         idx = int(choice)
         if 1 <= idx <= len(KEY_PROVIDERS):
@@ -1188,7 +1188,7 @@ def build_sources_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(
         prog="getsubtitle sources",
         formatter_class=argparse.RawDescriptionHelpFormatter,
-        description="Check subtitle provider/source availability for configured API keys.",
+        description="Check subtitle-source availability for configured API keys.",
         epilog=textwrap.dedent(
             """
             Examples:
@@ -1197,14 +1197,14 @@ def build_sources_parser() -> argparse.ArgumentParser:
 
             Notes:
               Wyzie source access can vary by key/tier. This command asks
-              Wyzie which internal sources your current key can use, so you
+              Wyzie which subtitle sites your current key can use, so you
               can see whether SubDL/OpenSubtitles/etc. are available before
-              adding direct provider integrations.
+              adding direct source integrations.
             """
         ),
     )
-    p.add_argument("--check", action="store_true", help="Check configured provider/source access.")
-    p.add_argument("--provider", choices=["wyzie", "all"], default="all", help="Provider to check. Default: all.")
+    p.add_argument("--check", action="store_true", help="Check configured subtitle-source access.")
+    p.add_argument("--provider", choices=["wyzie", "all"], default="all", help="Subtitle source to check. Default: all.")
     return p
 
 
@@ -3536,7 +3536,7 @@ def _supported_language_guide_text(*, indent: str = "    ") -> str:
     rows = [
         f"{indent}Supported languages",
         f"{indent}  Codes can be mixed with full names, e.g. ko,ja,es or korean,japanese,spanish.",
-        f"{indent}  Regional labels are accepted when providers expose them, but GetSubtitle",
+        f"{indent}  Regional labels are accepted when subtitle sources expose them, but GetSubtitle",
         f"{indent}  currently searches broad buckets for Spanish, Portuguese, Chinese, and Arabic.",
         "",
         f"{indent}  Code   Language                 Also accepts",
@@ -4912,7 +4912,7 @@ def download_planned_subtitles(
                     continue
                 if action == "alternate":
                     if not alternates:
-                        print("    No alternate provider/result is available for this subtitle.")
+                        print("    No alternate subtitle source/result is available for this subtitle.")
                         continue
                     current = alternates.pop(0)
                     print(f"    Trying alternate: {subtitle_display_name(current)}")
@@ -4938,11 +4938,11 @@ def prompt_download_recovery(
     print(f"  {subtitle_display_name(sub)}")
     print(f"Reason: {error}")
     print()
-    print(f"    1) Retry the same provider/result ({subtitle_source_label(sub)})")
+    print(f"    1) Retry the same subtitle source/result ({subtitle_source_label(sub)})")
     if alternates:
-        print(f"    2) Retry with an alternate provider/result ({subtitle_display_name(alternates[0])})")
+        print(f"    2) Retry with an alternate subtitle source/result ({subtitle_display_name(alternates[0])})")
     else:
-        print("    2) Retry with an alternate provider/result (none available)")
+        print("    2) Retry with an alternate subtitle source/result (none available)")
     print(f"    3) Skip {sub.name}")
     print("    4) Cancel")
     pick = _wizard_read_choice("Number", ["1", "2", "3", "4"], "1")
@@ -8638,9 +8638,10 @@ def build_combine_parser() -> argparse.ArgumentParser:
         prog="getsubtitle combine",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         description=(
-            "Combine multiple language SRT files into one study-friendly cue stack "
-            "per episode. Group files by season/episode, match cues by time overlap, "
-            "and write <name>.<lang1>-<lang2>.srt files alongside (or to -o)."
+            "Combine multiple language subtitle files into one study-friendly "
+            "file per episode. Group files by season/episode, match subtitle "
+            "timing by overlap, and write one multi-language file alongside "
+            "(or to -o)."
         ),
         epilog=textwrap.dedent(
             """
@@ -8656,30 +8657,30 @@ def build_combine_parser() -> argparse.ArgumentParser:
             """
         ),
     )
-    p.add_argument("paths", nargs="+", metavar="PATH", help="One or more SRT files or directories to scan (recursive).")
-    p.add_argument("-l", "--languages", "--langs", "--lang", dest="langs", default="ja,en", metavar="CODES", help="Language order for the output cue stack. First language is the timing master unless --master is set. Accepts ISO codes (ja,en) or full names (japanese,english). Default: ja,en.")
+    p.add_argument("paths", nargs="+", metavar="PATH", help="One or more subtitle files or directories to scan, including subfolders.")
+    p.add_argument("-l", "--languages", "--langs", "--lang", dest="langs", default="ja,en", metavar="CODES", help="Language order in the output file. First language controls timing unless --master is set. Accepts ISO codes (ja,en) or full names (japanese,english). Default: ja,en.")
     p.add_argument("-s", "--season", default="all", metavar="N|all", help="Season filter. Default: all detected seasons.")
     p.add_argument("-e", "--episode", default="all", metavar="N|N-M|all", help="Episode filter. Accepts one episode, a range, a comma list, or all. Default: all detected episodes.")
-    p.add_argument("-o", "--output", metavar="DIR", help="Output directory. Default: beside each episode's master SRT.")
-    p.add_argument("--format", choices=["srt", "vtt", "smi", "ass", "txt"], default="srt", help="Combined output format. srt = broad compatibility; vtt = WebVTT with ruby markup when --reading is used; smi = SAMI; ass = styled script; txt = plain text without timestamps. Default: srt.")
-    p.add_argument("--no-watermark", action="store_true", help="Do not add the short GetSubtitle credit/disclaimer cues to merged outputs.")
+    p.add_argument("-o", "--output", metavar="DIR", help="Output directory. Default: beside each episode's timing-language subtitle file.")
+    p.add_argument("--format", choices=["srt", "vtt", "smi", "ass", "txt"], default="srt", help="Combined output format. srt = broad compatibility; vtt = WebVTT with positioned Japanese readings when --reading is used; smi = SAMI; ass = styled script; txt = plain text without timestamps. Default: srt.")
+    p.add_argument("--no-watermark", action="store_true", help="Do not add the short GetSubtitle credit/disclaimer subtitle lines to merged outputs.")
     p.add_argument("--subdirectory", action="store_true", help="Bulk mode: treat each immediate subdirectory of PATH as its own show and run combine once per subdir. Useful for whole-library passes.")
-    p.add_argument("--dry-run", action="store_true", help="Show the plan without writing files.")
+    p.add_argument("--dry-run", action="store_true", help="Preview the plan without writing files.")
     p.add_argument("--force", action="store_true", help="Overwrite existing combined outputs and bypass the episode-level match-rate threshold.")
     p.add_argument("--open-folder", action="store_true", help="Open the output folder after writing.")
     p.add_argument("--no-open-folder-prompt", action="store_true", help="Do not ask whether to open the output folder after writing.")
     p.add_argument("--sync", choices=list(SYNC_PRESETS), default="auto", help="Time-overlap strictness preset. Default: auto.")
-    p.add_argument("--master", metavar="LANG", help="Override the timing master language (default: first language in -l).")
-    p.add_argument("--label-langs", dest="label_langs", action="store_true", default=None, help="Prefix each language's line in a stacked cue with [JA]/[KO]/… so tracks are easy to tell apart.")
+    p.add_argument("--master", metavar="LANG", help="Override the timing language (default: first language in -l).")
+    p.add_argument("--label-langs", dest="label_langs", action="store_true", default=None, help="Prefix each language's line with [JA]/[KO]/… so tracks are easy to tell apart.")
     p.add_argument("--no-label-langs", dest="label_langs", action="store_false", help="Never label languages, even when [merge] label_langs = true is set in user_settings.toml.")
     p.add_argument("--font-size", metavar="SIZE", help="Subtitle text size for merged outputs. Use auto, regular/recommended, smaller, larger, or a number like 30. SRT and ASS have calibrated presets from player tests: SRT smaller/regular/larger = 12/16/20px; ASS = 46/58/70. VTT and SMI are mostly player-controlled.")
-    p.add_argument("--single-line", "--single", dest="preserve_lines", action="store_false", default=argparse.SUPPRESS, help="Flatten each language to one line per cue. This is the default; kept as an explicit readability flag.")
+    p.add_argument("--single-line", "--single", dest="preserve_lines", action="store_false", default=argparse.SUPPRESS, help="Flatten each language to one line per subtitle. This is the default; kept as an explicit readability flag.")
     p.add_argument("--preserve-lines", action="store_true", default=argparse.SUPPRESS, help="Keep each source language's original line breaks. Default: flatten each language to a single line.")
     # Hidden compat aliases for the pre-reading --furigana flag; kept so old
     # scripts and the [merge].furigana TOML key still work. New code should
     # use --reading (added below), which generalises to non-Japanese
     # languages and routes Japanese entries through the same code path.
-    p.add_argument("--reading", dest="reading", metavar="SPEC", help="Inline reading aids onto the matching language line in the merged cue stack. SPEC is a comma list of LANG:MODE pairs, e.g. 'ja:hiragana', 'ja:katakana', 'ja:romaji', 'ko:revised', 'zh:marks'.")
+    p.add_argument("--reading", dest="reading", metavar="SPEC", help="Inline reading aids onto the matching language line in the merged subtitle file. SPEC is a comma list of LANG:MODE pairs, e.g. 'ja:hiragana', 'ja:katakana', 'ja:romaji', 'ko:revised', 'zh:marks'.")
     p.add_argument("--no-reading", dest="reading", action="store_const", const="", help="Disable inline reading aids for this run, overriding [merge].reading from user_settings.toml.")
     p.set_defaults(preserve_lines=False)
     _apply_combine_config_defaults(p)
@@ -8865,7 +8866,7 @@ def combine_main(argv: list[str]) -> int:
             print(f"Episodes selected: {len(episode_keys)} ({_episode_label_se(*episode_keys[0])}-{_episode_label_se(*episode_keys[-1])})")
         else:
             print("Episodes selected: 0")
-    print(f"Languages requested: {', '.join(langs)}  (master: {master_lang})")
+    print(f"Languages requested: {', '.join(langs)}  (timing language: {master_lang})")
 
     plan: list[tuple[tuple[int, int], Path, Path, dict[str, float]]] = []
     skipped: list[tuple[tuple[int, int], str]] = []
@@ -9018,8 +9019,8 @@ def combine_main(argv: list[str]) -> int:
         for _key, _src, _dest, rates in plan
     )
     if show_alignment_details:
-        print("  Alignment compares support-language cues against the timing master.")
-        print("  Lower percentages usually mean missing lines or different cue timing, not translation quality.")
+        print("  Alignment compares support-language subtitle timing against the timing language.")
+        print("  Lower percentages usually mean missing lines or different timing, not translation quality.")
     for key, _src, dest, rates in plan:
         rate_suffix = f"  [{_format_alignment_rates(rates)}]" if rates and show_alignment_details else ""
         print(f"  {_episode_label_se(*key)} -> {dest.name}{rate_suffix}")
@@ -9122,10 +9123,10 @@ def build_translate_parser() -> argparse.ArgumentParser:
         prog="getsubtitle translate",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         description=(
-            "Machine-translate missing subtitle languages from existing files on "
-            "disk. Scans PATH(s) for *.srt files, groups by season/episode, and "
+            "Use AI translation to fill missing subtitle languages from existing files on "
+            "disk. Scans PATH(s) for subtitle files, groups by season/episode, and "
             "for each requested language that's missing, translates from the best "
-            "available source SRT. No URL needed and nothing is re-downloaded."
+            "available source subtitle. No URL needed and nothing is re-downloaded."
         ),
         epilog=textwrap.dedent(
             """
@@ -9136,18 +9137,18 @@ def build_translate_parser() -> argparse.ArgumentParser:
             """
         ),
     )
-    p.add_argument("paths", nargs="+", metavar="PATH", help="One or more SRT files or directories to scan (recursive).")
-    p.add_argument("-l", "--languages", "--langs", "--lang", dest="langs", required=True, metavar="CODES", help="Target languages to ensure exist (e.g. ja,en). Missing ones get MT'd from the best available source SRT.")
+    p.add_argument("paths", nargs="+", metavar="PATH", help="One or more subtitle files or directories to scan, including subfolders.")
+    p.add_argument("-l", "--languages", "--langs", "--lang", dest="langs", required=True, metavar="CODES", help="Target languages to make sure exist (e.g. ja,en). Missing ones are AI-translated from the best available source subtitle.")
     p.add_argument("-s", "--season", default="all", metavar="N|all", help="Season filter. Default: all detected seasons.")
     p.add_argument("-e", "--episode", default="all", metavar="N|N-M|all", help="Episode filter. Accepts one episode, a range, a comma list, or all. Default: all detected episodes.")
     p.add_argument("--engine", "--mt-engine", dest="mt_engine", choices=["argos", "ollama", "deepl"], help="Translation engine. Default: argos (via [translate].engine in user_settings.toml). --mt-engine still accepted as alias.")
-    p.add_argument("--no-mt-engine", dest="mt_engine", action="store_const", const="", help="Disable machine translation for this run even when [translate].engine is set in user_settings.toml.")
+    p.add_argument("--no-mt-engine", dest="mt_engine", action="store_const", const="", help="Disable AI translation for this run even when [translate].engine is set in user_settings.toml.")
     p.add_argument("--model", "--mt-model", dest="mt_model", metavar="NAME", help=f"Ollama model when --engine ollama. Default: {DEFAULT_OLLAMA_MODEL}. --mt-model still accepted as alias.")
     p.add_argument("--mt-model-pair", metavar="PAIRS", help="Per-pair Ollama model overrides for this run, e.g. ja:ko=qwen3:4b,en:es=llama3.2:3b. Ignored unless --engine ollama.")
-    p.add_argument("--mt-source", "--mt-source-lang", dest="mt_source_lang", metavar="CODES", help="Force the source language(s). Single code (ja) applies to all targets; target:source pairs (ko:ja,es:en) map per target. Default: auto-pick. --mt-source-lang still accepted as alias.")
-    p.add_argument("-o", "--output", metavar="DIR", help="Output directory. Default: beside each episode's source SRT.")
+    p.add_argument("--mt-source", "--mt-source-lang", dest="mt_source_lang", metavar="CODES", help="Force the AI translation source language(s). Single code (ja) applies to all targets; target:source pairs (ko:ja,es:en) map per target. Default: auto-pick. --mt-source-lang still accepted as alias.")
+    p.add_argument("-o", "--output", metavar="DIR", help="Output directory. Default: beside each episode's source subtitle.")
     p.add_argument("--subdirectory", action="store_true", help="Bulk mode: treat each immediate subdirectory of PATH as its own show and run translate once per subdir.")
-    p.add_argument("--dry-run", action="store_true", help="Show the translation plan without writing files.")
+    p.add_argument("--dry-run", action="store_true", help="Preview the translation plan without writing files.")
     p.add_argument("--force", action="store_true", help="Overwrite existing .mt.srt outputs.")
     _apply_translate_config_defaults(p)
     return p
@@ -9468,9 +9469,9 @@ def build_modify_parser() -> argparse.ArgumentParser:
             """
         ),
     )
-    p.add_argument("paths", nargs="+", metavar="PATH", help="One or more subtitle files or directories to scan (recursive).")
+    p.add_argument("paths", nargs="+", metavar="PATH", help="One or more subtitle files or directories to scan, including subfolders.")
     p.add_argument("--strip-cc-noise", action="store_true", help="Remove broadcast closed-caption noise (Japanese ➡ continuation arrows and decorative wrappers like 《...》) in place.")
-    p.add_argument("--single-line", "--single", action="store_true", help="Flatten each SRT cue to one text line in place. Useful for asbplayer.")
+    p.add_argument("--single-line", "--single", action="store_true", help="Turn each subtitle into one text line. Useful for asbplayer.")
     # Hidden compat alias for the pre-reading --furigana flag. Internally
     # equivalent to `--reading ja:MODE`.
     p.add_argument("--reading", dest="reading", metavar="SPEC", help="Generate per-language reading aids. SPEC is a comma list of LANG:MODE pairs, e.g. 'ja:hiragana', 'ko:revised', 'zh:marks', 'yue:numbers'. Pipe shorthand 'ja:hiragana|romaji' generates both side files. MODE 'true' picks the language's sensible default. Japanese / Korean / Mandarin / Cantonese ship now; Thai / Arabic / Hindi / Russian land per the roadmap.")
@@ -9482,7 +9483,7 @@ def build_modify_parser() -> argparse.ArgumentParser:
     p.add_argument("-e", "--episode", default="all", help="Only process files matching this episode/range when scanning a folder (default: all).")
     p.add_argument("--force", action="store_true", help="With --convert: overwrite existing sibling .srt files. Without --force, conversion skips targets that already exist.")
     p.add_argument("--subdirectory", action="store_true", help="Bulk mode: treat each immediate subdirectory of PATH as its own show and run modify once per subdir.")
-    p.add_argument("--dry-run", action="store_true", help="Show what would be processed without writing anything.")
+    p.add_argument("--dry-run", action="store_true", help="Preview what would be processed without writing anything.")
     _apply_modify_config_defaults(p)
     return p
 
@@ -9792,7 +9793,7 @@ def prepare_local_subtitle_sources_for_fetch(
     if smi_plan:
         smi_langs = sorted({lang for _path, langs in smi_plan for lang in langs})
         action = "Would convert" if dry_run else "Converting"
-        print(f"  {action} SMI sidecar subtitles: {', '.join(smi_langs)}")
+        print(f"  {action} SMI subtitle files: {', '.join(smi_langs)}")
         for smi, langs in smi_plan[:8]:
             print(f"    - {smi.name} ({', '.join(sorted(langs))})")
         if len(smi_plan) > 8:
@@ -10524,18 +10525,18 @@ def build_fetch_parser() -> argparse.ArgumentParser:
 
     `fetch` accepts either a URL (resolves IDs from the URL and fetches
     matching subtitles — equivalent to typing `getsubtitle URL ...`) or
-    a PATH. With a PATH, it checks local sidecars / embedded text subtitle
-    streams first, then runs online search only for missing languages. Add
-    --subdirectory to walk one level of subdirs and treat each as its own
-    show."""
+    a PATH. With a PATH, it checks embedded text subtitle streams and
+    subtitle files next to your videos first, then runs online search only for
+    missing languages. Add --subdirectory to walk one level of subdirs and
+    treat each as its own show."""
     p = argparse.ArgumentParser(
         prog="getsubtitle fetch",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         description=(
             "Find subtitles for a URL or folder(s) on disk. "
             "For local PATH targets, fetch checks embedded video subtitles "
-            "and sidecar files first, then searches online only for missing "
-            "languages."
+            "and subtitle files next to your videos first, then searches "
+            "online only for missing languages."
         ),
         epilog=textwrap.dedent(
             """
@@ -10546,7 +10547,7 @@ def build_fetch_parser() -> argparse.ArgumentParser:
               # PATH single show
               getsubtitle fetch ~/Downloads/GetSubtitle/MF\\ Ghost
 
-              # PATH movie/video — use embedded/sidecar subtitles first,
+              # PATH movie/video — use embedded/local subtitle files first,
               # then search online only for missing languages
               getsubtitle fetch ./Movie.mkv -l en,es,fr --run
 
@@ -10554,9 +10555,9 @@ def build_fetch_parser() -> argparse.ArgumentParser:
               getsubtitle fetch ~/Downloads/GetSubtitle --subdirectory --run
 
             Profiles (auto-detected from TMDB original_language; override with --profile):
-              ja  Japanese-origin → fetch ko; MT ja→ko fallback
-              ko  Korean-origin   → fetch ja; MT ko→ja fallback
-              en  English / other → fetch es+ko; MT from en fallback
+              ja  Japanese-origin → fetch ko; AI translation ja→ko fallback
+              ko  Korean-origin   → fetch ja; AI translation ko→ja fallback
+              en  English / other → fetch es+ko; AI translation from en fallback
             """
         ),
         add_help=False,
@@ -10717,8 +10718,8 @@ def _batch_fetch_one(target: "Path", show_folder: "Path", season: int | None,
                      movie_override: bool = False) -> int:
     """Run fetch for one disk target (folder or bare file).
 
-    Fetch-only — does NOT auto-translate. Users wanting MT to fill missing
-    languages chain it via the pipeline form:
+    Fetch-only — does NOT auto-translate. Users wanting AI translation to fill missing
+    languages chain it via the one-command workflow form:
       getsubtitle --fetch PATH --subdirectory --translate ollama
     """
     _batch_heading(_batch_describe_target(target, show_folder, season, profile))
@@ -12269,7 +12270,7 @@ def build_parser() -> argparse.ArgumentParser:
         description=(
             "Find and prepare subtitles for language learning. Download multiple "
             "languages, add reading aids (furigana, romanization, pinyin), clean "
-            "captions, and optionally machine-translate missing languages."
+            "captions, and optionally fill missing languages with AI translation."
         ),
         epilog=textwrap.dedent(
             """
@@ -12302,15 +12303,15 @@ def build_parser() -> argparse.ArgumentParser:
               getsubtitle "https://www.netflix.com/browse/genre/34399?jbv=60023642" \\
                 -l ja,ko,en,es --dry-run
 
-            Examples (MT fallback for missing languages):
-              # Translate missing ko/es from the best available downloaded SRT
+            Examples (AI translation for missing languages):
+              # Translate missing ko/es from the best available downloaded subtitles
               # (e.g. ja -> ko, en -> es). Output saved as Show.lang.mt.srt.
               getsubtitle "https://www.imdb.com/title/tt0245429/" \\
                 -l ja,ko,en,es --engine argos
 
             Subcommands:
-              combine PATH ...        Stack downloaded SRTs into one file per episode.
-                                      See: getsubtitle combine --help
+              merge PATH ...          Create one multi-language file per episode.
+                                      See: getsubtitle merge --help
             """
         ),
     )
@@ -12332,8 +12333,8 @@ def build_parser() -> argparse.ArgumentParser:
     search.add_argument("--anilist", type=int, metavar="ID", help="AniList ID override for anime.")
     search.add_argument("--movie", action="store_true", help=argparse.SUPPRESS)
     search.add_argument("--browser", action="store_true", help="Open the URL in your browser first, useful for login/Cloudflare pages.")
-    search.add_argument("--manual-search", nargs="?", const="on-missing", choices=["off", "on-missing", "always"], default="on-missing", metavar="{off,on-missing,always}", help="After automatic providers miss Japanese/Korean/Chinese subtitles, show community search links and offer to open them. Default: on-missing.")
-    search.add_argument("--no-manual-search", "--no-manual-download", dest="manual_search", action="store_const", const="off", help="Disable community search suggestions after provider misses.")
+    search.add_argument("--manual-search", nargs="?", const="on-missing", choices=["off", "on-missing", "always"], default="on-missing", metavar="{off,on-missing,always}", help="After automatic subtitle sources miss Japanese/Korean/Chinese subtitles, show community search links and offer to open them. Default: on-missing.")
+    search.add_argument("--no-manual-search", "--no-manual-download", dest="manual_search", action="store_const", const="off", help="Disable community search suggestions after subtitle-source misses.")
     search.add_argument("--manual-search-open", choices=["ask", "always", "never"], default="ask", metavar="{ask,always,never}", help="Whether to open manual-search links in your browser. Default: ask.")
     search.add_argument("--no-manual-search-open", dest="manual_search_open", action="store_const", const="never", help="Print manual-search links but never open browser tabs.")
     search.add_argument(
@@ -12352,20 +12353,20 @@ def build_parser() -> argparse.ArgumentParser:
     output = p.add_argument_group("Output")
     output.add_argument("-o", "--output", default=str(DEFAULT_OUTPUT), metavar="DIR", help=f"Base output folder. Default: {DEFAULT_OUTPUT_TEXT}")
     output.add_argument("--layout", choices=["archive", "flat", "plex"], default="archive", help="Folder layout. Default: archive (Title/Season 01/files).")
-    output.add_argument("--dry-run", action="store_true", help="Search and show availability without downloading.")
+    output.add_argument("--dry-run", action="store_true", help="Preview search availability without downloading.")
     output.add_argument("-y", "--yes", action="store_true", help="Skip bulk download confirmation.")
     output.add_argument("--open-folder", action="store_true", help="Open the output folder after saving.")
     output.add_argument("--no-open-folder-prompt", action="store_true", help="Never ask to open the output folder after saving.")
 
     learning = p.add_argument_group("Learning Helpers")
     learning.add_argument("--reading-format", "--format", dest="reading_format", metavar="CODES", help="Reading-aid output format(s) — comma list of srt, ass, vtt, or 'all'. Default: srt. Overrides [modify].reading_format from user_settings.toml.")
-    learning.add_argument("--reading", dest="reading", metavar="SPEC", help="Generate per-language reading aids from downloaded SRTs. SPEC is a comma list of LANG:MODE pairs, e.g. 'ja:hiragana', 'ko:revised', 'zh:marks', 'yue:numbers'. Pipe shorthand 'ja:hiragana|romaji' generates both side files. Japanese / Korean / Mandarin / Cantonese ship now; Thai / Arabic / Hindi / Russian land per the roadmap.")
+    learning.add_argument("--reading", dest="reading", metavar="SPEC", help="Generate per-language reading aids from downloaded subtitle files. SPEC is a comma list of LANG:MODE pairs, e.g. 'ja:hiragana', 'ko:revised', 'zh:marks', 'yue:numbers'. Pipe shorthand 'ja:hiragana|romaji' generates both side files. Japanese / Korean / Mandarin / Cantonese ship now; Thai / Arabic / Hindi / Russian land per the roadmap.")
     learning.add_argument("--no-reading", dest="reading", action="store_const", const="", help="Disable reading-aid side-file generation for this run.")
-    learning.add_argument("--single-line", "--single", action="store_true", default=False, help="Flatten SRT cues to one text line for cleaner asbplayer display. On by default; this flag is kept as an explicit readability marker.")
-    learning.add_argument("--no-single-line", "--preserve-lines", dest="single_line", action="store_false", help="Keep each downloaded SRT's original line breaks (disables the default single-line flattening).")
+    learning.add_argument("--single-line", "--single", action="store_true", default=False, help="Turn subtitles into one text line for cleaner asbplayer display. On by default; this flag is kept as an explicit readability marker.")
+    learning.add_argument("--no-single-line", "--preserve-lines", dest="single_line", action="store_false", help="Keep each downloaded subtitle's original line breaks (disables the default one-line cleanup).")
     learning.add_argument("-single-line", "-single", dest="single_line", action="store_true", help=argparse.SUPPRESS)
-    learning.add_argument("--strip-cc-noise", action="store_true", default=False, help="Remove broadcast closed-caption noise from downloaded SRTs (Japanese ➡ continuation arrows and decorative wrappers like 《...》). On by default; this flag is kept as an explicit readability marker.")
-    learning.add_argument("--no-strip-cc-noise", dest="strip_cc_noise", action="store_false", help="Keep broadcast closed-caption noise in downloaded SRTs (disables the default ➡ stripping).")
+    learning.add_argument("--strip-cc-noise", action="store_true", default=False, help="Remove broadcast closed-caption noise from downloaded subtitles (Japanese ➡ continuation arrows and decorative wrappers like 《...》). On by default; this flag is kept as an explicit readability marker.")
+    learning.add_argument("--no-strip-cc-noise", dest="strip_cc_noise", action="store_false", help="Keep broadcast closed-caption noise in downloaded subtitles (disables the default ➡ stripping).")
     # Deprecated aliases — kept silently so existing scripts keep working.
     learning.add_argument("--strip-cc-arrows", "--strip-arrows", "-strip-cc-noise", "-strip-cc-arrows", "-strip-arrows", dest="strip_cc_noise", action="store_true", help=argparse.SUPPRESS)
 
@@ -12375,12 +12376,12 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--reset-jimaku-key", action="store_true", help=argparse.SUPPRESS)
     p.add_argument("--set-jimaku-key", action="store_true", help=argparse.SUPPRESS)
 
-    translation = p.add_argument_group("Machine Translation", description="Runs AFTER download. Requires at least one other requested language to download successfully so MT has a source SRT to translate from. Output saved as <name>.<lang>.mt.srt.")
-    translation.add_argument("--engine", "--mt-engine", dest="mt_engine", choices=["argos", "ollama", "deepl"], help="Translate missing requested languages from the best available SRT. Engines: argos (offline; pip install argostranslate), ollama (offline LLM; needs Ollama daemon), deepl (online; free tier, needs DEEPL_API_KEY). Default: argos (via [translate].engine).")
-    translation.add_argument("--no-engine", "--no-mt-engine", dest="mt_engine", action="store_const", const="", help="Disable machine translation for this run even when [translate].engine is set in user_settings.toml.")
+    translation = p.add_argument_group("AI Translation", description="Runs AFTER download. Requires at least one other requested language to download successfully so AI translation has a source subtitle to translate from. Output saved as <name>.<lang>.mt.srt.")
+    translation.add_argument("--engine", "--mt-engine", dest="mt_engine", choices=["argos", "ollama", "deepl"], help="Translate missing requested languages from the best available subtitle. Engines: argos (offline; pip install argostranslate), ollama (local; needs Ollama daemon), deepl (online; free tier, needs DEEPL_API_KEY). Default: argos (via [translate].engine).")
+    translation.add_argument("--no-engine", "--no-mt-engine", dest="mt_engine", action="store_const", const="", help="Disable AI translation for this run even when [translate].engine is set in user_settings.toml.")
     translation.add_argument("--model", "--mt-model", dest="mt_model", metavar="NAME", help=f"Ollama model for --engine ollama. Default: {DEFAULT_OLLAMA_MODEL}")
     translation.add_argument("--mt-model-pair", metavar="PAIRS", help="Per-pair Ollama model overrides for this run, e.g. ja:ko=qwen3:4b,en:es=llama3.2:3b. Ignored unless --engine ollama.")
-    translation.add_argument("--mt-source", "--mt-source-lang", dest="mt_source_lang", metavar="CODES", help="Force the source language(s) for MT. Single code (ja) applies to all targets; target:source pairs (ko:ja,es:en) map per target.")
+    translation.add_argument("--mt-source", "--mt-source-lang", dest="mt_source_lang", metavar="CODES", help="Force the AI translation source language(s). Single code (ja) applies to all targets; target:source pairs (ko:ja,es:en) map per target.")
 
     advanced = p.add_argument_group("Advanced / Experimental")
     advanced.add_argument("--debug-providers", action="store_true", help="Show raw provider counts and language tags for missing-subtitle debugging.")
@@ -13160,7 +13161,7 @@ def _wizard_print_run_summary(summary: _WizardRunSummary | None, rc: int) -> Non
     if not show_details and output_exists_only:
         print("The merged subtitle already exists, so GetSubtitle did not overwrite it.")
     elif not show_details and (rc != 0 or missing_any):
-        print("Some subtitles were missing, or a provider reported an issue.")
+        print("Some subtitles were missing, or a subtitle source reported an issue.")
         print("Use the messages above to retry, search manually, or merge again.")
 
     if show_details and output_exists_only:
@@ -14253,11 +14254,11 @@ manual_search_open = "ask"        # ask | always | never
 engine = "argos"                  # "" | argos | ollama[:model] | deepl
 model = "qwen3:4b"                # default Ollama model
 mt_source = "auto"                # "auto" | "ja" | "ko:ja,es:en" | { ko = "ja" }
-strip_reading_before_mt = true   # strip 漢字（かんじ） readings before MT
+strip_reading_before_mt = true   # strip 漢字（かんじ） readings before AI translation
 
 [translate.ollama_models]
 auto_load = true                  # pull missing models on demand
-auto_unload = true                # free model from RAM/VRAM after MT
+auto_unload = true                # free model from RAM/VRAM after AI translation
 # Per-pair Ollama model overrides (uncomment to use):
 # "ja:ko" = "qwen3:4b"
 # "ja:en" = "qwen3:8b"
@@ -14779,8 +14780,8 @@ def _setup_recommendations(choice: _SetupChoice) -> list[_SetupRecommendation]:
         if shutil.which("ollama") and _wizard_ollama_reachable():
             recs.append(_SetupRecommendation(
                 key="ollama",
-                title="Ollama (offline LLM MT)",
-                reason="Offline machine translation via the Ollama daemon. Much higher quality than Argos on CJK pairs.",
+                title="Ollama (offline AI translation)",
+                reason="Offline AI translation via the Ollama daemon. Much higher quality than Argos on CJK pairs.",
                 cost="Free, but RAM/VRAM hungry — see the system summary above.",
                 setup_time=f"Default model is {DEFAULT_OLLAMA_MODEL}; auto-pulled on first use.",
                 selected_by_default=True,
@@ -14789,7 +14790,7 @@ def _setup_recommendations(choice: _SetupChoice) -> list[_SetupRecommendation]:
             recs.append(_SetupRecommendation(
                 key="argos",
                 title="Argos Translate",
-                reason="Free offline machine translation fallback.",
+                reason="Free offline AI translation fallback.",
                 cost="Free.",
                 setup_time="0-5 minutes depending on language packages.",
                 selected_by_default=True,
@@ -14798,7 +14799,7 @@ def _setup_recommendations(choice: _SetupChoice) -> list[_SetupRecommendation]:
         recs.append(_SetupRecommendation(
             key="argos",
             title="Argos Translate",
-            reason="You asked for local basic-quality machine translation when subtitles are missing.",
+            reason="You asked for local basic-quality AI translation when subtitles are missing.",
             cost="Free.",
             setup_time="0-5 minutes depending on language packages.",
             selected_by_default=True,
@@ -14806,8 +14807,8 @@ def _setup_recommendations(choice: _SetupChoice) -> list[_SetupRecommendation]:
     if mt == "ollama":
         recs.append(_SetupRecommendation(
             key="ollama",
-            title="Ollama (offline LLM MT)",
-            reason="You asked for local good-quality machine translation when subtitles are missing.",
+            title="Ollama (offline AI translation)",
+            reason="You asked for local good-quality AI translation when subtitles are missing.",
             cost="Free, but RAM/VRAM hungry — see the system summary above.",
             setup_time=f"Default model is {DEFAULT_OLLAMA_MODEL}; auto-pulled on first use.",
             selected_by_default=True,
@@ -14816,7 +14817,7 @@ def _setup_recommendations(choice: _SetupChoice) -> list[_SetupRecommendation]:
         recs.append(_SetupRecommendation(
             key="deepl",
             title="DeepL",
-            reason="You asked for online machine translation when subtitles are missing.",
+            reason="You asked for online AI translation when subtitles are missing.",
             cost="Free API tier includes 500,000 characters/month; paid tiers available. Roughly 50-80 anime episodes depending on subtitle length.",
             setup_time="About 2 minutes.",
             url=KEY_PROVIDERS["deepl"]["url"],
@@ -15005,7 +15006,7 @@ def _setup_config_summary(choice: _SetupChoice) -> list[str]:
     elif choice.mt == "offline":
         mt = "offline translation fallback"
     else:
-        mt = "no machine translation fallback"
+        mt = "no AI translation fallback"
 
     rows = [
         "Languages: " + ", ".join(_display_lang(lang) for lang in fetch_langs),
@@ -15341,7 +15342,7 @@ def _setup_smoke_test(choice: _SetupChoice) -> None:
         if m:
             result_rows.append((m.group(1), int(m.group(2)), int(m.group(3))))
     if rc == 0:
-        print("  ✓ Subtitle providers reachable.")
+        print("  ✓ Subtitle sources reachable.")
         if result_rows:
             for label, found, total in result_rows[:6]:
                 if found:
@@ -15614,7 +15615,7 @@ def _setup_try_examples() -> None:
     print("Medium: Series, IMDb link — Midnight Diner: Tokyo Stories, Japanese + Korean, with Japanese pronunciation guide.")
     print('  getsubtitle "https://www.imdb.com/title/tt6150576/" -s 1 -e all -l ja,ko --reading ja:hiragana --format vtt')
     print()
-    print("Hard: Series + machine translation + merge — Friends S4E3-5, fill missing Spanish from French, then stack French/English/Spanish.")
+    print("Hard: Series + AI translation + merge — Friends S4E3-5, fill missing Spanish from French, then stack French/English/Spanish.")
     print('  getsubtitle "https://www.themoviedb.org/tv/1668-friends" -s 4 -e 3-5 -l fr,en,es')
     print('  getsubtitle translate ~/Downloads/GetSubtitle/Friends -s 4 -e 3-5 -l es --engine deepl --mt-source es:fr')
     print('  getsubtitle merge ~/Downloads/GetSubtitle/Friends -s 4 -e 3-5 -l fr,en,es')
@@ -16167,32 +16168,32 @@ HELP_MAIN = """\
 getsubtitle — Find and prepare subtitles for language learning.
 
 Quick start:
-  getsubtitle setup                              # first-time setup helper
-  getsubtitle doctor                             # check install health
+  getsubtitle setup                               # first-time setup helper
+  getsubtitle doctor                              # check install health
   getsubtitle -i                                  # interactive wizard (recommended for first run)
   getsubtitle URL                                 # download from a URL
-  getsubtitle merge PATH -l ja,en                 # stack downloaded SRTs
+  getsubtitle merge PATH -l ja,en                 # create one multi-language file
   getsubtitle --config FILE.toml                  # run a saved workflow
 
 Subcommands (each has its own --help):
   setup         First-time onboarding: keys, config, recommendations.
   doctor        Check install, keys, dependencies, ffmpeg, and Ollama.
   interactive   Guided wizard — builds workflows or safely renames subtitle files.
-  fetch         Download from URL, or scan a folder. (Bare URL works too.)
-  translate     Fill missing-language SRTs via MT (argos / ollama / deepl).
-  modify        Cleanup, reading aids, SAMI→SRT, and MKV subtitle extraction.
-  merge         Stack 2+ language SRTs into one study file.
+  fetch         Get subtitles from URLs, folders, files (embedded tracks), or online subtitle sources.
+  translate     Fill missing languages with AI translation (argos / ollama / deepl).
+  modify        Clean up subtitle lines, convert formats, and add reading aids.
+  merge         Create one multi-language subtitle file.
   run           Save and run workflows by short name (run --save NAME FILE; run NAME).
   config        Manage user_settings.toml defaults.
-  sources       Check provider/source access for your configured API keys.
+  sources       Check subtitle-source access for your configured API keys.
 
-Pipeline — chain verbs in one call:
+Workflow — run several steps in one command:
   getsubtitle --fetch X --translate ollama --merge -l ja,en
   getsubtitle --source X --output Y --format vtt --config FILE.toml
 
 Two example configs ship in this repo. Copy and tweak:
   simpsons-s1-en-fr.toml          URL → download an entire season
-  plex-movies-fill-merge.toml     PATH → bulk fetch + MT + merge in-place
+  plex-movies-fill-merge.toml     PATH → bulk fetch + AI translation + merge
 
   getsubtitle --config simpsons-s1-en-fr.toml
   getsubtitle --config plex-movies-fill-merge.toml
@@ -16205,6 +16206,9 @@ Topic help:
   getsubtitle --help setup | interactive | config | keys | language | reading | sources | advanced
 
 New here? Try `getsubtitle setup` first, then `getsubtitle -i`.
+Flag aliases also work for the two guided entry points:
+  getsubtitle --setup
+  getsubtitle --interactive
 """
 
 
@@ -16237,6 +16241,7 @@ Notes:
 First-time setup and onboarding.
 
   getsubtitle setup
+  getsubtitle --setup
 
 Setup asks a few plain-language questions:
   1. Languages you already understand
@@ -16343,12 +16348,12 @@ Examples:
   getsubtitle URL -l ja --reading ja:romaji
   getsubtitle merge PATH -l ja,en --reading ja:hiragana
 
-MT-source notes:
+AI translation source notes:
   When a .ja.srt carries inline 漢字（かんじ） readings AND is used as an
-  MT source, strip_reading_before_mt=true (default) strips the
+  AI translation source, strip_reading_before_mt=true (default) strips the
   parentheticals before sending to the engine. Without this, an engine
   would translate the readings as extra content
-  ("Specifically (especially) the legs (legs) ..."). The normal pipeline
+  ("Specifically (especially) the legs (legs) ..."). The normal workflow
   keeps furigana in side files only, so this is a defence for
   third-party or hand-edited Japanese sources.
 
@@ -16460,7 +16465,7 @@ Set defaults in user_settings.toml
   reading_format = "srt"                # srt | ass | vtt | all
 
   [translate]
-  strip_reading_before_mt = true       # strip ja readings before MT
+  strip_reading_before_mt = true       # strip ja readings before AI translation
 
 Filenames:
   ja: <name>.ja.furigana-{hiragana|romaji}.{asb.srt|ruby.vtt|stacked.ass}
@@ -16477,14 +16482,14 @@ checks whether the engine you choose is actually available.
 Two ways to use it:
   1. Inside a fetch, as a fallback:
        getsubtitle URL -l LANGS --engine ENGINE
-     MTs any requested language that fetch couldn't find, sourcing from
-     the just-downloaded files.
+     AI-translates any requested language that fetch couldn't find,
+     using the just-downloaded files as the source.
 
   2. Standalone on an existing folder (no URL, no re-fetch):
        getsubtitle translate PATH -l LANGS --engine ENGINE
-     Scans PATH for *.srt files and MTs any requested language that's
-     missing from each episode's set, sourcing from the best available
-     local SRT.
+     Scans PATH for subtitle files and AI-translates any requested language
+     that's missing from each episode's set, using the best available local
+     subtitle as the source.
 
 Examples (inline with fetch):
   getsubtitle URL -l ja,en --engine ollama
@@ -16522,7 +16527,7 @@ Translation options:
   --engine ENGINE          argos, ollama, or deepl. Default: argos
                            (via [translate].engine in user_settings.toml).
                            --mt-engine is still accepted as a compatibility alias.
-  --no-mt-engine           Disable MT for this run even when the config
+  --no-mt-engine           Disable AI translation for this run even when the config
                            has an engine set. Equivalent to engine = "".
   --model NAME             Ollama model. Default: qwen3:4b
                            --mt-model is still accepted as an alias.
@@ -16559,9 +16564,10 @@ Usage:
   getsubtitle modify PATH [PATH ...] [options]
 
 The same cleanup operations that run after a download — but applied to
-files you already have. Plus format conversion for legacy containers
-like Microsoft SAMI (.smi). Pick any combination of flags; they run in
-the same order the download flow uses.
+files you already have. It can also convert legacy subtitle files or
+manually extract embedded text tracks when you need that utility directly.
+Pick any combination of flags; they run in the same order the download
+flow uses.
 
 Examples:
   getsubtitle modify FOLDER --strip-cc-noise
@@ -16729,7 +16735,8 @@ Notes:
     does not change the saved pipeline. Re-save to update it.
 """,
     "fetch": """\
-Fetch subtitles for a URL or for folder(s) on disk.
+Fetch subtitles from a URL, folder, video file, embedded text tracks,
+subtitle files next to your videos, or online providers.
 
 Not sure what flags you need? `getsubtitle -i` walks you through it.
 
@@ -16743,15 +16750,16 @@ With a URL, fetch resolves IDs from the URL and downloads matching
 subtitles from providers (Jimaku for anime; Wyzie for movies/TV).
 
 With a PATH, fetch treats local subtitles as sources before going online:
-embedded text subtitle streams and matching sidecar files are used first,
-then online providers are searched only for missing languages. It derives
-the title from the folder name, auto-detects the show's origin language via
-TMDB (or character-set heuristic when no TMDB key), and runs the right
-per-profile fetch chain. Add --subdirectory to walk one level of subdirs
-and treat each as its own show — the whole-library mode.
+embedded text subtitle streams are used first, along with matching subtitle
+files next to your videos. Then online providers are searched only for missing
+languages. This is the normal place to use subtitles already inside MKV/video
+files. It derives the title from the folder name, auto-detects the show's
+origin language via TMDB (or character-set heuristic when no TMDB key), and
+runs the right per-profile fetch chain. Add --subdirectory to walk one level
+of subdirs and treat each as its own show — the whole-library mode.
 
-`fetch` is download-only. To fill in missing languages via MT, modify
-the cleanup pass, or stack a merge afterward, use the pipeline form
+`fetch` is download-only. To fill in missing languages via AI translation, clean up
+subtitles, or stack a merge afterward, use the one-command workflow form
 (see `getsubtitle --help pipeline`):
   getsubtitle --fetch /Plex/Anime --subdirectory \\
               --translate ollama \\
@@ -16769,9 +16777,9 @@ available) `og:title` from the page, then resolve IDs via TMDB —
 configure a key once with `getsubtitle --set-key tmdb`.
 
 Profiles (auto-detected on PATH form; override with --profile):
-  ja  Japanese-origin. fetch ko first; MT ja→ko fallback.
-  ko  Korean-origin. fetch ja first; MT ko→ja fallback.
-  en  English / Western / other. fetch es+ko first; MT from en
+  ja  Japanese-origin. fetch ko first; AI translation ja→ko fallback.
+  ko  Korean-origin. fetch ja first; AI translation ko→ja fallback.
+  en  English / Western / other. fetch es+ko first; AI translation from en
       for whichever target came back empty.
 
 Profile detection chain:
@@ -16848,9 +16856,9 @@ Notes:
   - URL form does NOT default to dry-run — it's opt-in via --dry-run.
 """,
     "merge": """\
-Merge multiple language subtitle files into one study-friendly cue stack.
+Merge multiple language subtitle files into one study-friendly file.
 
-Quick way to figure out display order + master language: `getsubtitle -i`.
+Quick way to figure out display order + timing language: `getsubtitle -i`.
 
 Usage:
   getsubtitle merge PATH -l LANGS [merge options]
@@ -16862,7 +16870,7 @@ single-language SRT/VTT/ASS/SSA/SMI inputs, group by season/episode, write the c
 
 With --subdirectory, treat each immediate subdir of PATH as its own
 show and run merge once per subdir. Useful for whole-library passes
-after `fetch --subdirectory` has populated the per-show SRTs.
+after `fetch --subdirectory` has populated the per-show subtitle files.
 
 Behavior:
   The language order in -l controls display order.
@@ -16884,18 +16892,18 @@ Examples:
 
 Merge options:
   -l, --langs CODES        Required. Language order for output
-  -o, --output DIR         Output folder. Default: beside master subtitle
-  --dry-run                Show merge plan without writing files
+  -o, --output DIR         Output folder. Default: beside timing-language subtitle
+  --dry-run                Preview merge plan without writing files
   --force                  Overwrite existing outputs
   --open-folder            Open output folder after writing
   --no-open-folder-prompt  Do not ask whether to open output folder
-  --no-watermark           Skip GetSubtitle credit/disclaimer cues
+  --no-watermark           Skip GetSubtitle credit/disclaimer subtitle lines
   --format FORMAT          srt, vtt, smi, ass, or txt. SRT is the safest
                            compatibility choice; ASS gives the best local
                            layout/font control; VTT is best for browser/
-                           asbplayer Japanese ruby.
+                           asbplayer Japanese readings above kanji.
   --sync MODE              auto, strict, or loose. Default: auto
-  --master LANG            Timing master. Default: first language in -l
+  --master LANG            Timing language. Default: first language in -l
   --label-langs            Prefix each language's line with [JA]/[KO]/… so
                            stacked tracks are easy to tell apart. Also
                            [merge] label_langs = true in user_settings.toml.
@@ -16909,18 +16917,18 @@ Merge options:
   --single-line, --single  Flatten each language to one line. Default behavior
   --preserve-lines         Keep original line breaks within each language
   --reading SPEC      Inline reading aids on the matching language line
-                           (e.g. `ja:hiragana` inlines 漢字（かんじ） onto ja cues).
+                           (e.g. `ja:hiragana` adds 漢字（かんじ） to Japanese lines).
                            See `getsubtitle --help modify` for the full SPEC syntax.
   --subdirectory           Walk immediate subdirs and run merge per show
 
 Notes:
-  - First language in -l is the timing master unless --master is set.
+  - First language in -l is the timing language unless --master is set.
   - Input formats: srt, vtt, ass/ssa, smi. Use -l ja:vtt,en,ko:smi when
     multiple formats exist for the same language.
   - --reading ja:hiragana inlines Japanese readings before merging.
-  - Merged outputs include a short GetSubtitle credit/disclaimer cue at the
+  - Merged outputs include a short GetSubtitle credit/disclaimer subtitle line at the
     beginning and end. Use --no-watermark to omit it.
-  - --sync auto|strict|loose controls how strictly cues match.
+  - --sync auto|strict|loose controls how strictly subtitle timing matches.
 
 Multi-variant merge:
   Pseudo-lang codes resolve to reading-aid side files generated by
@@ -16931,14 +16939,14 @@ Multi-variant merge:
     yue-numbers (ships via romanization-yue / pycantonese)
   Output filename collapses adjacent same-base tokens:
     -l ja,ja-hiragana,ja-romaji,en  ->  Show.ja-hiragana-romaji-en.srt
-  Default master prefers the base language when both base and variant
-  are requested. Variants share cue timing with their base.
+  Default timing language prefers the base language when both base and variant
+  are requested. Variants share timing with their base.
 """,
     "pipeline": """\
-Chain fetch / translate / modify / merge into one call.
+One-command workflow: run fetch / translate / modify / merge in one call.
 
-`getsubtitle -i` builds a pipeline for you and offers to save it as a
-TOML you can re-run with `--config FILE.toml`.
+`getsubtitle -i` builds this command for you and offers to save it as a
+workflow file you can re-run with `--config FILE.toml`.
 
 Usage (inline form):
   getsubtitle [shared options] \\
@@ -16952,7 +16960,7 @@ Usage (config-file form, with optional inline CLI overrides):
   getsubtitle [--source X] [--output Y] [--format vtt] [other overrides] --config FILE.toml
 
 The `--config` flag can appear anywhere in argv; we recommend at the end
-for readability. CLI flags override matching TOML values. Layer order:
+for readability. CLI flags override matching workflow-file values. Layer order:
   built-in defaults  <  user_settings.toml  <  --config FILE.toml  <  CLI flags
 
 Top-level CLI overrides (layered onto the --config TOML):
@@ -16968,16 +16976,16 @@ Top-level CLI overrides (layered onto the --config TOML):
   --dry-run         overrides [output].dry_run = true
   --force           overrides [output].force = true
 
-Inline verb blocks (--fetch / --translate / --modify / --merge) layer on
-top of the TOML per-section: keys you set inline win on collision; keys
-not set inline come from the TOML.
+Inline step blocks (--fetch / --translate / --modify / --merge) layer on
+top of the workflow file per section: keys you set inline win on collision;
+keys not set inline come from the workflow file.
 
 Verbs always run in canonical order regardless of typing order:
   fetch → translate → modify → merge
 
-Each verb's flag block is parsed by that verb's existing argument
-surface, so per-verb options work exactly like the standalone subcommands.
-The verb's block starts at the verb flag and ends at the next verb flag
+Each step's flag block is parsed by that step's existing argument
+surface, so per-step options work exactly like the standalone subcommands.
+The step's block starts at the step flag and ends at the next step flag
 or end-of-argv. Shared options (--output, --dry-run) appear once,
 before any verb flag.
 
@@ -16992,10 +17000,10 @@ Translate engine spec (positional after --translate):
   --translate ollama              Offline LLM. Uses default model.
   --translate ollama:qwen3:8b     Pin a specific Ollama model.
   --translate deepl               Online. Requires DEEPL_API_KEY.
-  --translate ""                  Disable MT for this run.
+  --translate ""                  Disable AI translation for this run.
 
 Examples (inline):
-  # Whole-library bilingual pass: fetch each show, MT missing langs,
+  # Whole-library bilingual pass: fetch each show, AI-translate missing languages,
   # clean broadcast noise, then merge into ja+en study files.
   getsubtitle --fetch /Plex/Anime --subdirectory \\
               --translate ollama \\
@@ -17008,7 +17016,7 @@ Examples (inline):
               --merge -l ja,en --format vtt \\
               --output ~/Downloads/GetSubtitle/StudyDeck
 
-  # Just fetch + merge (no MT), single show.
+  # Just fetch + merge (no AI translation), single show.
   getsubtitle --fetch ~/Downloads/GetSubtitle/MF\\ Ghost \\
               --merge -l ja,en
 
@@ -17018,7 +17026,7 @@ Examples (config file with CLI overrides):
   getsubtitle --source /Plex/Anime --format vtt --config plex-movies-fill-merge.toml
   getsubtitle --season 2 --config simpsons-s1-en-fr.toml
 
-Pipeline TOML schema (sections in execution order):
+Workflow file schema (sections in execution order):
 
   [fetch]
   source = "/Plex/Anime"           # required: URL or PATH
@@ -17053,10 +17061,10 @@ Pipeline TOML schema (sections in execution order):
   languages = "ja:vtt, en, ko:smi" # `:format` is an INPUT hint when multiple
                                    # source formats exist on disk for one lang
                                    # (supports :srt, :vtt, :ass, :ssa, :smi)
-  master = "ja"
+  master = "ja"                    # timing language
   sync = "strict"                  # auto | strict | loose
   reading = "ja:hiragana"          # inline readings into the matching line
-  format = "vtt"                   # final stacked output format
+  format = "vtt"                   # final multi-language output format
 
   [output]
   target = "/Plex/Output"          # final output folder (alias: `root`)
@@ -17071,10 +17079,10 @@ Pipeline TOML schema (sections in execution order):
 
 Naming conventions:
   - CLI uses kebab-case (--mt-source, --reading-format, --strip-cc-noise).
-    TOML uses snake_case (mt_source, reading_format, strip_cc_noise).
-    Either spelling works in TOML — hyphens normalize to underscores so
+    Workflow files usually use snake_case (mt_source, reading_format, strip_cc_noise).
+    Either spelling works in workflow files — hyphens normalize to underscores so
     `dry-run` and `dry_run` are interchangeable.
-  - Canonical TOML keys (pre-1.0):
+  - Canonical workflow-file keys (pre-1.0):
       [translate]  mt_source           (was: mt_source_lang)
       [modify]     reading_format      (was: furigana_output_format)
       [output]     target              (was: root)
@@ -17160,8 +17168,8 @@ What it asks (only the questions relevant to your step choice appear):
 Auto-filled for you (shown in the final "Smart defaults" section and
 revisable via Edit — these are NOT asked as questions):
   • Display order — the order you typed the languages (top → bottom).
-  • Timing master — the first language.
-  • Cleanup preset — single-line cues + strip broadcast noise (on).
+  • Timing language — the first language.
+  • Cleanup preset — one-line subtitles + strip broadcast noise (on).
       Works in any player (VLC, mpv, IINA, Infuse, asbplayer, Plex web).
   • Output folder — ~/Downloads/GetSubtitle for URL/title sources;
       beside the source for local paths.
@@ -17185,10 +17193,10 @@ Final action menu (answer by number):
 Before the action menu the wizard prints a plain-language plan and smart
 defaults so you can sanity-check the intent without reading flags. Use
 option 3 when you want the exact terminal command and equivalent workflow
-file (in TOML, saveable as .toml). If a reading aid wants VTT ruby but
+file (saved as .toml). If a reading aid works best as VTT readings above kanji but
 the format is set to something else, a one-line warning surfaces here.
 Rename mode finishes immediately after the confirmed rename preview;
-it does not generate a TOML workflow because it is file maintenance,
+it does not generate a reusable workflow file because it is file maintenance,
 not a reusable fetch/modify/merge recipe. By default it creates renamed
 copies and keeps your original files; choose "Rename the original files"
 only when you are ready to move/rename in place. The preview menu first
@@ -17208,7 +17216,7 @@ workflow files on one machine for use on another.
 
 Limitations:
   - Requires an attached terminal (fails cleanly otherwise).
-  - One language alone skips display order / master and the merge step.
+  - One language alone skips display order / timing language and the merge step.
   - Thai / Arabic / Hindi / Russian reading-aid backends
     are not yet shipped; the wizard accepts and saves them so you can
     re-run once the backend lands.
@@ -17222,16 +17230,16 @@ Tips:
     (no Season Unknown / S00E00 placeholders).
   - The wizard generates the canonical names everywhere
     (--languages, --engine, --mt-source, --reading, --reading-format
-    on the CLI; mt_source / reading / reading_format in TOML).
+    on the CLI; mt_source / reading / reading_format in workflow files).
 """,
     "advanced": """\
 Advanced and experimental options.
 
 Troubleshooting:
-  --debug-providers        Show raw provider counts and language tags
+  --debug-providers        Show raw subtitle-source counts and language tags
   --browser                Open URL first for login/Cloudflare pages
 
-Provider selection:
+Subtitle source selection:
   --release-source MODE    auto | any | netflix | crunchyroll | amazon |
                            hulu | hbo | disney | apple | paramount | peacock
                             auto = infer from the URL host (works for all
@@ -17240,14 +17248,14 @@ Provider selection:
                             Or pin an explicit source name to bias toward
                             releases tagged accordingly (HULU, DSNP, ATVP, ...)
 
-Experimental providers:
-  --experimental-subdivx   Enable Spanish Subdivx fallback
-  --experimental-addic7ed  Enable Korean Addic7ed fallback; may rate-limit
+Experimental subtitle sources:
+  --experimental-subdivx   Enable Spanish Subdivx backup source
+  --experimental-addic7ed  Enable Korean Addic7ed backup source; may rate-limit
 
 Output / cleanup:
   --layout MODE            archive, flat, plex
   --strip-cc-noise         Remove broadcast closed-caption noise (➡, 《...》)
-  --single-line            Flatten SRT cues to one line
+  --single-line            Turn subtitles into one line
 
 Compatibility aliases (still accepted):
   -single, --single        Same as --single-line
@@ -17384,7 +17392,7 @@ def doctor_main(argv: list[str]) -> int:
 
     ffmpeg = shutil.which("ffmpeg")
     ffprobe = shutil.which("ffprobe")
-    rows.append(_doctor_row("ffmpeg", bool(ffmpeg), ffmpeg or "not found; needed for MKV subtitle extraction"))
+    rows.append(_doctor_row("ffmpeg", bool(ffmpeg), ffmpeg or "not found; needed for embedded subtitle extraction"))
     rows.append(_doctor_row("ffprobe", bool(ffprobe), ffprobe or "not found; needed for MKV subtitle detection"))
     ollama_bin = shutil.which("ollama")
     ollama_ok = bool(ollama_bin and _wizard_ollama_reachable())
@@ -18995,7 +19003,7 @@ def _wizard_q0_steps(state: _WizardState) -> None:
     print(_wizard_next_q(state, "What would you like to do?"))
     print("    1) Fetch      Download subtitles from a URL or title")
     print("    2) Translate  Fill missing languages with AI")
-    print("    3) Modify     Clean up cues, add reading aids (furigana, hangul, pinyin, ...)")
+    print("    3) Modify     Clean up subtitle lines, add reading aids (furigana, hangul, pinyin, ...)")
     print("    4) Merge      Create one multi-language subtitle file")
     print("    5) Rename     Batch rename subtitle files")
     print()
@@ -19057,13 +19065,13 @@ def _wizard_q1_source(state: _WizardState) -> None:
             if path.is_file() and state.steps == {"rename"}:
                 pass
             elif path.is_file() and state.steps & {"merge"}:
-                print("    File selected; using its folder so matching sidecar subtitles can be found.")
+                print("    File selected; using its folder so matching subtitle files can be found.")
                 path = path.parent
                 _videos, subtitles, _season_dirs, truncated = _wizard_media_counts(path)
                 suffix = " (scan limited)" if truncated else ""
                 description = f"local folder beside selected file: {subtitles} subtitle file(s){suffix}"
             elif path.is_file() and path.suffix.lower() in _BATCH_VIDEO_EXTS and state.steps & {"modify"}:
-                print("    Video file selected; using its folder so sidecar subtitle files can be found.")
+                print("    Video file selected; using its folder so matching subtitle files can be found.")
                 path = path.parent
                 _videos, subtitles, _season_dirs, truncated = _wizard_media_counts(path)
                 suffix = " (scan limited)" if truncated else ""
@@ -19584,7 +19592,7 @@ def _wizard_edit_timing_master(state: _WizardState) -> None:
         state.master = ""
         return
     print()
-    print("Timing master controls which subtitle file supplies cue timing.")
+    print("Timing language controls which subtitle file supplies the timestamps.")
     for i, code in enumerate(order, start=1):
         tail = "  (first displayed / default)" if i == 1 else ""
         print(f"    {i}) {code}{tail}")
@@ -19597,7 +19605,7 @@ def _wizard_edit_timing_master(state: _WizardState) -> None:
 
 def _wizard_edit_cleanup_preset(state: _WizardState) -> None:
     print()
-    print("Cleanup preset applies single-line cues and strips broadcast noise.")
+    print("Cleanup preset turns subtitles into one-line captions and strips broadcast noise.")
     state.asbplayer = _wizard_yesno("Use cleanup preset?", default=bool(state.asbplayer))
 
 
@@ -19928,7 +19936,7 @@ def _wizard_format_recommendation(state: _WizardState) -> tuple[str, str]:
     needs_ruby = _wizard_needs_japanese_ruby(state)
     has_other_reading = _wizard_has_non_japanese_reading_aid(state)
     if needs_ruby:
-        return "vtt", "VTT supports true Japanese ruby in browsers/asbplayer; local players vary."
+        return "vtt", "VTT supports positioned Japanese readings above kanji in browsers/asbplayer; local players vary."
     if has_other_reading:
         return "ass", "ASS is best for local-player stacked Korean/Chinese/Cantonese readings."
     if line_count >= 3:
@@ -19981,13 +19989,13 @@ def _wizard_q9_format(state: _WizardState) -> None:
     state.format = mapping[pick]
     state.viewing_env = {"srt": "tv", "ass": "desktop", "vtt": "browser", "smi": "legacy", "txt": "text"}.get(state.format, "")
     if needs_ruby and state.format != "vtt":
-        print("    Note: hiragana readings render as ruby (above-the-kanji)")
-        print("          only in VTT; SRT/SMI/ASS fall back to parenthetical")
+        print("    Note: hiragana readings can sit above kanji only in VTT.")
+        print("          SRT/SMI/ASS fall back to parenthetical")
         print("          漢字（かんじ） form.")
     if state.format == "vtt" and state.asbplayer and needs_ruby:
         print("    Reminder: in asbplayer, enable Settings > Misc > Subtitles >")
-        print("              Subtitle HTML = Render to see ruby. Local-player")
-        print("              VTT ruby support varies.")
+        print("              Subtitle HTML = Render to see readings above kanji.")
+        print("              Local-player VTT support varies.")
 
 
 def _wizard_expected_stack_line_count(state: _WizardState) -> int:
@@ -20068,7 +20076,7 @@ def _wizard_q10_output(state: _WizardState) -> None:
     print()
     print("Q12. Where should the final files go?")
     print("    1) Default — ~/Downloads/GetSubtitle")
-    print("    2) Same folder as the source files (in-place)")
+    print("    2) Same folder as the source files")
     print("    3) Custom folder")
     pick = _wizard_prompt("Number", "1").strip()
     if pick == "1":
@@ -20154,7 +20162,7 @@ def _wizard_plain_plan(state: _WizardState) -> list[str]:
         if state.reading_aids:
             lines.append(f"Add pronunciation guides: {', '.join(_wizard_human_reading_aids(state.reading_aids))}")
         else:
-            lines.append("Clean up cues (single line, strip broadcast noise)")
+            lines.append("Clean up subtitle lines (single line, strip broadcast noise)")
     if "merge" in steps:
         fmt = (state.format or "srt").upper()
         merge_langs = _wizard_join_human_list(_wizard_merge_language_labels(state))
@@ -20256,14 +20264,14 @@ def _wizard_q11_action(state: _WizardState) -> str:
             if k == "Output folder" and v.endswith("  (beside source)"):
                 v = "beside source"
             print(f"  {k:{key_width}}  {v}")
-    # Consistency check: reading aid wants VTT ruby but format is something else.
+    # Consistency check: reading aid wants VTT positioned readings but format is something else.
     needs_ruby = any(
         spec.startswith("ja:hiragana") or spec.startswith("ja:furigana")
         for spec in state.reading_aids
     )
     if needs_ruby and state.format and state.format != "vtt":
         print()
-        print(f"  Note: ja:hiragana looks best as VTT ruby; format is {state.format!r}.")
+        print(f"  Note: ja:hiragana looks best as VTT readings above kanji; format is {state.format!r}.")
         print("        SRT/SMI/ASS will fall back to parenthetical 漢字（かんじ） form.")
     # Default-action heuristic: save-first is safer when "run" would start a
     # long network job (URL/title sources). For local paths, run-first is fine.
@@ -20306,7 +20314,7 @@ def _wizard_q11_action(state: _WizardState) -> str:
 # Question dispatch table keeps the orchestrator readable and the test
 # harness focused — tests can call individual questions via this table.
 _WIZARD_STEPS: list[tuple[str, "callable"]] = [
-    # Display order, master timing language, cleanup preset, and output
+    # Display order, timing language, cleanup preset, and output
     # folder are filled by `_wizard_apply_smart_defaults` before the final
     # banner. Format stays explicit because player compatibility matters.
     ("steps",         _wizard_q0_steps),
@@ -20334,15 +20342,15 @@ def _wizard_apply_smart_defaults(state: _WizardState) -> dict[str, str]:
         notes["Display order"] = ", ".join(state.order) + "  (top → bottom on screen)"
     elif "merge" in state.steps and not state.order:
         state.order = list(state.languages)
-    # Master timing language: blank means 'first lang in order wins'.
+    # Timing language: blank means 'first lang in order wins'.
     # That's the right answer for nearly every merge.
     if "merge" in state.steps and len(state.order) >= 2 and not state.master:
-        notes["Timing master"] = f"{state.order[0]}  (first language)"
-    # Cleanup preset: single-line cues + strip broadcast noise. Universal
+        notes["Timing language"] = f"{state.order[0]}  (first language)"
+    # Cleanup preset: single-line subtitles + strip broadcast noise. Universal
     # win for learners and works in every player.
     if state.steps & {"modify", "merge"} and not state.asbplayer:
         state.asbplayer = True
-        notes["Cleanup preset"] = "on  (single-line cues + strip broadcast noise)"
+        notes["Cleanup preset"] = "on  (one-line subtitles + strip broadcast noise)"
     # Format and text size are asked explicitly when Merge is selected.
     # They are too player-dependent to hide as smart defaults.
     # Output folder: URL/title sources land in ~/Downloads/GetSubtitle by
@@ -20416,7 +20424,7 @@ def _wizard_edit_targets(state: _WizardState) -> list[tuple[str, str, object]]:
         order = state.order or state.languages
         targets.append(("display order", ", ".join(order), _wizard_edit_display_order))
         master = state.master or (order[0] if order else "")
-        targets.append(("timing master", master or "(first language)", _wizard_edit_timing_master))
+        targets.append(("timing language", master or "(first language)", _wizard_edit_timing_master))
     if state.steps & {"modify", "merge"}:
         targets.append(("cleanup preset", "on" if state.asbplayer else "off", _wizard_edit_cleanup_preset))
     if "translate" in state.steps:
@@ -21502,13 +21510,13 @@ def _wizard_probe_dependencies(state: _WizardState) -> list[tuple[str, str, str]
     if deferred:
         out.append(("warn",
                     f"reading-aid backend(s) for {', '.join(deferred)}",
-                    "backend not yet implemented; will warn at run time. TOML still saves cleanly."))
-    # MT engines.
+                    "backend not yet implemented; will warn at run time. The workflow file still saves cleanly."))
+    # AI translation engines.
     if state.mt_engine == "argos":
         try:
             import argostranslate  # noqa: F401
         except ImportError:
-            out.append(("block", "argostranslate (offline MT)",
+            out.append(("block", "argostranslate (offline AI translation)",
                         "pip install argostranslate"))
         else:
             statuses = _wizard_argos_pair_statuses(state)
@@ -21704,7 +21712,7 @@ def _wizard_dependency_check_before_run(state: _WizardState) -> str:
             how=fix or "see setup instructions above",
         ))
     if _wizard_yesno("Save a reusable workflow file to run after setup?", default=False):
-        print("  Saving a TOML workflow now. You can run it later with `getsubtitle --config FILE.toml`.")
+        print("  Saving a workflow file now. You can run it later with `getsubtitle --config FILE.toml`.")
         return "save"
     return "quit"
 
@@ -21962,7 +21970,7 @@ def main(argv: list[str] | None = None) -> int:
     if raw_argv[0] in ("interactive",) or raw_argv[0] in ("-i", "--interactive"):
         # Strip the trigger so interactive_main sees clean argv.
         return interactive_main(raw_argv[1:])
-    if raw_argv[0] == "setup":
+    if raw_argv[0] in ("setup", "--setup"):
         return setup_main(raw_argv[1:])
     if raw_argv[0] == "doctor":
         return doctor_main(raw_argv[1:])
@@ -22201,7 +22209,7 @@ def main(argv: list[str] | None = None) -> int:
                 # Direct SubDL fallback below will handle this pair.
                 continue
             if lang == "ja":
-                warnings.append(f"{lang}: no provider available for this URL. Use AniList/Jimaku for Japanese anime, or an IMDb/TMDB URL with WYZIE_API_KEY for broad lookup.")
+                warnings.append(f"{lang}: no subtitle source available for this URL. Use AniList/Jimaku for Japanese anime, or an IMDb/TMDB URL with WYZIE_API_KEY for broad lookup.")
             else:
                 warnings.append(f"{lang}: broad provider lookup needs an IMDb/TMDB URL plus WYZIE_API_KEY. Crunchyroll URLs currently only resolve Japanese anime subtitles through Jimaku.")
             continue
@@ -22681,7 +22689,7 @@ def main(argv: list[str] | None = None) -> int:
                     picked = pick_mt_source(target, available)
                     if not picked:
                         warnings.append(
-                            f"{target} ep{ep}: MT skipped — no source SRT was downloaded this run. "
+                            f"{target} ep{ep}: AI translation skipped — no source subtitle was downloaded this run. "
                             f"Add a source lang to -l (e.g. ja or en), or run "
                             f"`getsubtitle translate FOLDER` against an existing folder. "
                             f"See: getsubtitle --help translate"
@@ -22693,7 +22701,7 @@ def main(argv: list[str] | None = None) -> int:
 
         if mt_tasks:
             mt_task_count = len(mt_tasks)
-            print(f"\nMachine translation ({translator.name}):")
+            print(f"\nAI translation ({translator.name}):")
             grouped_mt_failures: dict[str, list[str]] = {}
             mt_written_times: list[tuple[Path, float]] = []
             for idx, (target, ep, src_path, src_lang) in enumerate(mt_tasks, start=1):
@@ -22711,7 +22719,7 @@ def main(argv: list[str] | None = None) -> int:
                         _last[0] = pct
                         progress_bar(
                             done, total, "translating",
-                            f"{_label} cue {done}/{total} ({format_elapsed(time.monotonic() - started_at)})",
+                            f"{_label} subtitle {done}/{total} ({format_elapsed(time.monotonic() - started_at)})",
                             transient=True,
                         )
 
@@ -22734,16 +22742,16 @@ def main(argv: list[str] | None = None) -> int:
             # single actionable line instead of N near-identical ones.
             for msg, tasks in grouped_mt_failures.items():
                 if len(tasks) == 1:
-                    warnings.append(f"{tasks[0]}: MT failed — {msg}")
+                    warnings.append(f"{tasks[0]}: AI translation failed — {msg}")
                     mt_failure_notes.append(f"{tasks[0]}: {msg}")
                 else:
                     sample = ", ".join(tasks[:3])
                     more = f" (+{len(tasks) - 3} more)" if len(tasks) > 3 else ""
-                    warnings.append(f"MT failed for {len(tasks)} task(s) [{sample}{more}]: {msg}")
+                    warnings.append(f"AI translation failed for {len(tasks)} task(s) [{sample}{more}]: {msg}")
                     mt_failure_notes.extend(f"{task}: {msg}" for task in tasks)
 
-        # Auto-unload Ollama models from memory after the MT pass, if enabled.
-        # Default true; failures are silent because the user's MT already ran.
+        # Auto-unload Ollama models from memory after the AI translation pass, if enabled.
+        # Default true; failures are silent because the user's AI translation already ran.
         if args.mt_engine == "ollama" and _ollama_models_flag("auto_unload", True):
             released: list[str] = []
             for tr in translator_cache.values():

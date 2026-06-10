@@ -9,14 +9,14 @@ or whole Plex/Jellyfin folders prepared for repeated watching.
 
 ![Multi-language subtitle with Japanese, Chinese, Korean, English, and Spanish study lines](examples/capability-ja-vtt-ruby-quad-stack.png)
 *A multi-language study subtitle: Japanese with reading support, Mandarin
-pinyin, Korean, English, and Spanish in one synced cue.*
+pinyin, Korean, English, and Spanish in one synced subtitle file.*
 
 ## Why Learners Use It
 
 - **Watch with two, three, or four subtitles at once** — stack target-language subtitles with native-language support.
-- **Add reading aids** — Japanese furigana/katakana ruby, romaji, Korean romanization, Mandarin pinyin, and Cantonese jyutping.
+- **Add reading aids** — Japanese furigana/katakana readings above kanji, romaji, Korean romanization, Mandarin pinyin, and Cantonese jyutping.
 - **Fill missing language tracks** — search subtitle sources, open manual search tabs, or translate with DeepL, Ollama, or Argos.
-- **Clean messy captions** — remove broadcast noise, flatten cues, convert legacy `.smi`, and make subtitles easier to sentence mine.
+- **Clean messy captions** — remove broadcast noise, turn multi-line captions into cleaner one-line subtitles, convert legacy `.smi`, and make subtitles easier to sentence mine.
 - **Prepare a media library** — scan Plex/Jellyfin folders, download or translate missing tracks, and merge per episode.
 - **Use browser-streaming subtitles when you already have them** — bring files
   from Netflix/Crunchyroll subtitle tools back into GetSubtitle for cleanup,
@@ -64,7 +64,7 @@ subtitle sources.
 ![SMI conversion to study subtitle stack](examples/capability-smi-to-study-stack.png)
 
 When a language is missing, GetSubtitle can search community sources, suggest manual searches,
-or fill the gap with machine translation.
+or fill the gap with AI translation.
 
 ## Install In 30 Seconds
 
@@ -102,7 +102,7 @@ At the end, it shows the exact CLI command and can save the workflow for reuse.
 What would you like to do?
   1) Fetch      Download subtitles from a URL or title
   2) Translate  Fill missing languages with AI
-  3) Modify     Clean up cues, add reading aids
+  3) Modify     Clean up subtitle lines, add reading aids
   4) Merge      Create one multi-language subtitle file
   5) Rename     Batch rename subtitle files
 ```
@@ -136,7 +136,7 @@ More examples: [docs/examples.md](docs/examples.md).
 - Add reading aids for Japanese, Korean, Mandarin pinyin, and Cantonese Jyutping.
 - Merge 2-4 subtitle tracks into one synced file.
 - Translate missing subtitles with local or online engines.
-- Save reusable TOML workflows.
+- Save reusable workflow files.
 - Batch rename subtitle files with previews and copy-by-default safety.
 - Run health checks before you get stuck mid-workflow.
 
@@ -145,8 +145,8 @@ More examples: [docs/examples.md](docs/examples.md).
 - [Getting started](docs/getting-started.md)
 - [Examples](docs/examples.md)
 - [Reading aids and formats](docs/reading-aids.md)
-- [Saved workflows and pipeline form](docs/workflows.md)
-- [API keys and providers](docs/api-keys.md)
+- [Saved workflows and one-command workflows](docs/workflows.md)
+- [API keys and subtitle sources](docs/api-keys.md)
 - [Supported sources](docs/sources.md)
 - [Streaming subtitle tools](docs/streaming-subtitle-tools.md)
 - [Install options](docs/install.md)
@@ -159,8 +159,8 @@ It does **not** bypass DRM, account login, or region locks. Do not redistribute
 downloaded subtitles in violation of their original license.
 
 For local video files, `getsubtitle fetch PATH` checks embedded text subtitle
-tracks and sidecar files first, then searches online only for missing
-languages.
+tracks and subtitle files next to your videos first, then searches online only
+for missing languages.
 
 ## License
 

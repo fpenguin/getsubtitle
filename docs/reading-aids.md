@@ -25,15 +25,15 @@ Chinese source files. Reading aids then choose the pronunciation system:
 
 | Use case | Format | Notes |
 |---|---|---|
-| Japanese hiragana/katakana ruby in asbplayer/browser | `vtt` | Enable asbplayer `Subtitle HTML = Render` for ruby. |
-| Japanese full-sentence romaji | `vtt`, `srt`, or `ass` | Normal subtitle-size row, not tiny ruby text. |
+| Japanese hiragana/katakana readings above kanji in asbplayer/browser | `vtt` | Enable asbplayer `Subtitle HTML = Render` for positioned readings. |
+| Japanese full-sentence romaji | `vtt`, `srt`, or `ass` | Normal subtitle-size row, not tiny above-kanji text. |
 | Korean romanization above Hangul | `ass` | Most reliable in VLC, mpv, and IINA. |
 | Mandarin pinyin or Cantonese jyutping | `ass` | ASS handles readings above characters best. |
-| Maximum player compatibility without ruby | `srt` | Parenthetical form works almost everywhere. |
+| Maximum player compatibility without positioned readings | `srt` | Parenthetical form works almost everywhere. |
 
-VTT ruby is valid markup, but player support is uneven. VLC tends to flatten
-ruby. For local playback of reading aids, use ASS. For asbplayer/browser study,
-use VTT.
+VTT can place Japanese readings above kanji, but player support is uneven.
+VLC tends to flatten those readings. For local playback of reading aids, use
+ASS. For asbplayer/browser study, use VTT.
 
 ![SRT vs VTT vs ASS reading-aid format comparison](../examples/capability-reading-format-comparison.png)
 
@@ -43,7 +43,7 @@ use VTT.
 --reading ja:hiragana,ko:revised,zh:marks,yue:numbers
 ```
 
-Or in TOML:
+Or in a workflow/settings file:
 
 ```toml
 [modify]
@@ -88,6 +88,6 @@ Add `--label-langs` to prefix each language line with `[JA]`, `[KO]`, and so on:
 getsubtitle merge FOLDER -l ja,en --label-langs
 ```
 
-Merged outputs include a short GetSubtitle credit/disclaimer cue at the
+Merged outputs include a short GetSubtitle credit/disclaimer subtitle line at the
 beginning and end. Use `--no-watermark` or `[merge] watermark = false` to omit
 it for private or test files.

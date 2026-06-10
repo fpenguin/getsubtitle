@@ -221,7 +221,7 @@
         "warnings",
         "no_scolding"
       ],
-      "notes": "Skipping MT is a valid choice; warnings should not sound like errors."
+      "notes": "Skipping AI translation is a valid choice; warnings should not sound like errors."
     },
     {
       "id": "path-12",
@@ -491,7 +491,7 @@
         "format_default",
         "player_limitations"
       ],
-      "notes": "Needs careful copy because VTT ruby is great in asbplayer but uneven elsewhere."
+      "notes": "Needs careful copy because VTT can show positioned Japanese readings in asbplayer but is uneven elsewhere."
     },
     {
       "id": "path-28",

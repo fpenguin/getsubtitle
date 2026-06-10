@@ -19,7 +19,7 @@ Q1. What would you like to do?
 
     1) Fetch      Download subtitles from a URL or title
     2) Translate  Fill missing languages with AI
-    3) Modify     Clean up cues, add reading aids (furigana, hangul, pinyin, ...)
+    3) Modify     Clean up subtitle lines, add reading aids (furigana, hangul, pinyin, ...)
     4) Merge      Create one multi-language subtitle file
     5) Rename     Batch rename subtitle files
 
@@ -131,7 +131,7 @@ Q7. Final output format.                                            Progress [�
 
               OTHER FORMATS:  日本語(にほんご)を勉強(べんきょう)したい
 
-    Suggested default: VTT — VTT supports true Japanese ruby in browsers/asbplayer; local players vary.
+    Suggested default: VTT — VTT supports positioned Japanese readings above kanji in browsers/asbplayer; local players vary.
 
   Final format [3 | b=back | q=quit] >
 
@@ -153,10 +153,10 @@ Before you run
     support varies.
 
 Smart defaults
-  Display order   ja, en  (top → bottom on screen)
-  Timing master   ja  (first language)
-  Cleanup preset  on  (single-line cues + strip broadcast noise)
-  Output folder   ~/Downloads/GetSubtitle
+  Display order    ja, en  (top → bottom on screen)
+  Timing language  ja  (first language)
+  Cleanup preset   on  (one-line subtitles + strip broadcast noise)
+  Output folder    ~/Downloads/GetSubtitle
 
 What next?
   1) Run it now

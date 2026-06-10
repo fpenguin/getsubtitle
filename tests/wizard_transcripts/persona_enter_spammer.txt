@@ -19,7 +19,7 @@ Q1. What would you like to do?
 
     1) Fetch      Download subtitles from a URL or title
     2) Translate  Fill missing languages with AI
-    3) Modify     Clean up cues, add reading aids (furigana, hangul, pinyin, ...)
+    3) Modify     Clean up subtitle lines, add reading aids (furigana, hangul, pinyin, ...)
     4) Merge      Create one multi-language subtitle file
     5) Rename     Batch rename subtitle files
 
@@ -138,17 +138,17 @@ Review your workflow                                                Progress [�
 Plan
   • Fetch Japanese, English for:
     {TMP}/Foo
-  • Clean up cues (single line, strip broadcast noise)
+  • Clean up subtitle lines (single line, strip broadcast noise)
   • Create one Japanese + English SRT study subtitle file
   • Use subtitle text size: Regular
   • Save to:
     {TMP}/Foo
 
 Smart defaults
-  Display order   ja, en  (top → bottom on screen)
-  Timing master   ja  (first language)
-  Cleanup preset  on  (single-line cues + strip broadcast noise)
-  Output folder   beside source
+  Display order    ja, en  (top → bottom on screen)
+  Timing language  ja  (first language)
+  Cleanup preset   on  (one-line subtitles + strip broadcast noise)
+  Output folder    beside source
 
 What next?
   1) Run it now

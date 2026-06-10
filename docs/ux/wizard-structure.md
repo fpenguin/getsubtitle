@@ -48,5 +48,5 @@ Start
 - **Inconsistent wording:** compare “workflow”, “command”, “TOML”, “multi-language subtitle”, “merge”, and “reading aid”.
 - **Bad defaults:** Q1 default, translation default, format default, output folder default, copy-vs-original rename default.
 - **Duplicated questions:** source path, languages, output path, format, and text size should appear once per logical flow.
-- **Missing explanations:** provider failures, local coverage gaps, embedded MKV subtitles, VTT/ASS/SRT limitations.
+- **Missing explanations:** subtitle-source failures, local coverage gaps, embedded MKV subtitles, VTT/ASS/SRT limitations.
 - **Terminology issues:** prefer beginner terms first, then technical terms in parentheses.

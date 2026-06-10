@@ -4,10 +4,26 @@ __pycache__/
 .pytest_cache/
 .mypy_cache/
 .ruff_cache/
+.hypothesis/
+.tox/
+.nox/
+.coverage
+.coverage.*
+coverage.xml
+htmlcov/
+.cache/
+.ipynb_checkpoints/
 dist/
 build/
+pip-wheel-metadata/
 *.egg-info/
 .DS_Store
+*.log
+*.tmp
+*.bak
+*.orig
+*.rej
+*~
 test-furi.*/
 
 # Local scratch/test outputs. Keep reusable fixtures under tests/fixtures

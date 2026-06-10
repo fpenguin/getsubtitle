@@ -56,11 +56,11 @@ getsubtitle --set-key tmdb
 ## Local Files
 
 When you run `getsubtitle fetch PATH`, local subtitle sources are checked before
-online providers:
+online subtitle sources:
 
 1. Embedded text subtitle streams inside video files.
-2. Matching sidecar subtitle files beside the video.
-3. Online subtitle providers for any requested languages still missing.
+2. Matching subtitle files next to the video.
+3. Online subtitle sources for any requested languages still missing.
 
 Image subtitle streams such as PGS/VobSub are reported but skipped because they
 need OCR before they can be merged, translated, or used for reading aids.

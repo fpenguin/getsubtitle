@@ -29,9 +29,9 @@ getsubtitle --help keys
 getsubtitle --help advanced
 ```
 
-## asbplayer Ruby
+## asbplayer Japanese Readings
 
-For Japanese VTT ruby in asbplayer:
+For Japanese readings above kanji in asbplayer:
 
 ```text
 Misc > Subtitles > Subtitle HTML = Render
@@ -43,8 +43,8 @@ Then use:
 --format vtt
 ```
 
-For local playback with reading aids, prefer ASS. VTT ruby support varies by
-player.
+For local playback with reading aids, prefer ASS. VTT support for positioned
+readings varies by player.
 
 ## Local MKV Files
 

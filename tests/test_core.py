@@ -3595,9 +3595,9 @@ def test_config_combine_priority_picks_master_when_no_master_flag():
                 rc = MODULE["combine_main"]([str(root), "-l", "en,ja,ko", "--dry-run"])
             assert rc == 0
             text = out.getvalue()
-    # Master line should mention ja (chosen via priority over the default
+    # Timing-language line should mention ja (chosen via priority over the default
     # "first in -l" which would have been en).
-    assert "master: ja" in text
+    assert "timing language: ja" in text
 
 
 def test_config_show_never_prints_api_keys():
@@ -4370,7 +4370,15 @@ def test_help_setup_matches_current_ending():
     assert rc == 0
     assert "quick subtitle search" in out
     assert "getsubtitle --interactive" in out
+    assert "getsubtitle --setup" in out
     assert "Easy / Medium / Hard" not in out
+
+
+def test_setup_flag_alias_routes_to_setup_help():
+    rc, out, _ = _capture_main(["--setup", "--help"])
+    assert rc == 0
+    assert "First-time setup and onboarding" in out
+    assert "getsubtitle --setup" in out
 
 
 def test_help_config_points_to_language_guide():
@@ -12583,7 +12591,7 @@ def test_wizard_apply_smart_defaults_fills_missing_answers():
     assert s.output == "~/Downloads/GetSubtitle"
     # All smart-default notes appear in the banner-friendly summary.
     assert "Display order" in notes
-    assert "Timing master" in notes
+    assert "Timing language" in notes
     assert "Cleanup preset" in notes
     assert "Output folder" in notes
 
@@ -12603,7 +12611,7 @@ def test_wizard_final_edit_targets_include_smart_defaults():
     labels = [label for label, _value, _fn in MODULE["_wizard_edit_targets"](s)]
     for expected in (
         "display order",
-        "timing master",
+        "timing language",
         "cleanup preset",
         "format / extension",
         "text size",
@@ -14682,7 +14690,7 @@ def test_download_planned_subtitles_interactive_can_retry_alternate(monkeypatch,
     CliError = MODULE["CliError"]
     g = fn.__globals__
     saved_save_subtitle = g["save_subtitle"]
-    answers = iter(["2"])  # retry with alternate provider/result
+    answers = iter(["2"])  # retry with alternate subtitle source/result
 
     best = SubtitleFile(
         provider="wyzie",
@@ -14724,7 +14732,7 @@ def test_download_planned_subtitles_interactive_can_retry_alternate(monkeypatch,
         out = buf.getvalue()
         assert failures == []
         assert [p.name for p in saved] == ["saved-alt.srt"]
-        assert "Retry with an alternate provider/result" in out
+        assert "Retry with an alternate subtitle source/result" in out
         assert "Trying alternate: alt.srt [subdl]" in out
     finally:
         g["save_subtitle"] = saved_save_subtitle

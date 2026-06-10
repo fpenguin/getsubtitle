@@ -9,9 +9,9 @@ getsubtitle -i
 
 `setup` is optional first-time onboarding. It asks what you watch, what
 languages you already understand, what languages you are learning, where you
-watch, and whether you want machine translation when subtitles are missing.
+watch, and whether you want AI translation when subtitles are missing.
 
-It then recommends useful providers and reading-aid extras, saves a profile,
+It then recommends useful subtitle sources and reading-aid extras, saves a profile,
 and lets the interactive wizard pre-fill common answers.
 
 `-i` is the guided workflow builder. It asks what you want to do, where the
@@ -21,7 +21,7 @@ aids, and where to save the result.
 The wizard can:
 
 - run the workflow immediately;
-- save a reusable TOML workflow;
+- save a reusable workflow file;
 - show the exact command it generated;
 - let you edit one answer without starting over;
 - probe missing dependencies or API keys before running.

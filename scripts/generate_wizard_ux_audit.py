@@ -135,7 +135,7 @@ PATHS: list[dict[str, object]] = [
         "category": "edge",
         "user_intent": "Accept gaps instead of translating.",
         "audit_focus": ["tone", "warnings", "no_scolding"],
-        "notes": "Skipping MT is a valid choice; warnings should not sound like errors.",
+        "notes": "Skipping AI translation is a valid choice; warnings should not sound like errors.",
     },
     {
         "id": "path-12",
@@ -295,7 +295,7 @@ PATHS: list[dict[str, object]] = [
         "category": "edge",
         "user_intent": "Use true Japanese ruby output.",
         "audit_focus": ["format_default", "player_limitations"],
-        "notes": "Needs careful copy because VTT ruby is great in asbplayer but uneven elsewhere.",
+        "notes": "Needs careful copy because VTT can show positioned Japanese readings in asbplayer but is uneven elsewhere.",
     },
     {
         "id": "path-28",
@@ -425,7 +425,7 @@ def _question_map() -> str:
         - **Inconsistent wording:** compare “workflow”, “command”, “TOML”, “multi-language subtitle”, “merge”, and “reading aid”.
         - **Bad defaults:** Q1 default, translation default, format default, output folder default, copy-vs-original rename default.
         - **Duplicated questions:** source path, languages, output path, format, and text size should appear once per logical flow.
-        - **Missing explanations:** provider failures, local coverage gaps, embedded MKV subtitles, VTT/ASS/SRT limitations.
+        - **Missing explanations:** subtitle-source failures, local coverage gaps, embedded MKV subtitles, VTT/ASS/SRT limitations.
         - **Terminology issues:** prefer beginner terms first, then technical terms in parentheses.
         """
     )

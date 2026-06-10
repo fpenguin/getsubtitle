@@ -1,8 +1,8 @@
-# Saved Workflows And Pipeline Form
+# Saved Workflows And One-Command Workflows
 
-GetSubtitle can save wizard answers as TOML and rerun them later with one flag.
+GetSubtitle can save wizard answers as a workflow file and rerun them later with one flag.
 
-## Save Workflows As TOML
+## Save Workflow Files
 
 ```sh
 getsubtitle --config simpsons-s1-en-fr.toml
@@ -18,7 +18,7 @@ getsubtitle --source /Plex/Anime --config plex-movies-fill-merge.toml
 Two example configs ship in this repo:
 
 - [`../simpsons-s1-en-fr.toml`](../simpsons-s1-en-fr.toml) - download Simpsons S1 in English + French.
-- [`../plex-movies-fill-merge.toml`](../plex-movies-fill-merge.toml) - scan `/Plex/Movies`, fetch JP/KO/EN/ES, fill MT gaps, merge in place.
+- [`../plex-movies-fill-merge.toml`](../plex-movies-fill-merge.toml) - scan `/Plex/Movies`, fetch JP/KO/EN/ES, fill AI translation gaps, and merge beside the source files.
 
 ## Named Workflows
 
@@ -80,9 +80,9 @@ Layered priority, low to high:
 built-in defaults < user_settings.toml < --config FILE.toml < CLI flags
 ```
 
-## Pipeline Form
+## One-Command Workflow
 
-Chain verbs in one call:
+Run several steps in one command:
 
 ```sh
 # Whole-library pass: fetch + translate + clean + merge
@@ -98,8 +98,8 @@ getsubtitle --fetch "https://www.imdb.com/title/tt28299608/" -s 1 -e all \
     --output ~/Downloads/GetSubtitle/StudyDeck
 ```
 
-`--subdirectory` on any PATH-based verb walks each immediate subfolder and runs
-the verb per show.
+`--subdirectory` on any path-based step scans each immediate subfolder and runs
+that step once per show.
 
 See:
 

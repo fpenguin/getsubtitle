@@ -19,7 +19,7 @@ Q1. What would you like to do?
 
     1) Fetch      Download subtitles from a URL or title
     2) Translate  Fill missing languages with AI
-    3) Modify     Clean up cues, add reading aids (furigana, hangul, pinyin, ...)
+    3) Modify     Clean up subtitle lines, add reading aids (furigana, hangul, pinyin, ...)
     4) Merge      Create one multi-language subtitle file
     5) Rename     Batch rename subtitle files
 
@@ -138,17 +138,17 @@ Review your workflow                                                Progress [�
 Plan
   • Fetch Korean, English for:
     {TMP}/Show
-  • Clean up cues (single line, strip broadcast noise)
+  • Clean up subtitle lines (single line, strip broadcast noise)
   • Create one Korean + English SRT study subtitle file
   • Use subtitle text size: Regular
   • Save to:
     {TMP}/Show
 
 Smart defaults
-  Display order   ko, en  (top → bottom on screen)
-  Timing master   ko  (first language)
-  Cleanup preset  on  (single-line cues + strip broadcast noise)
-  Output folder   beside source
+  Display order    ko, en  (top → bottom on screen)
+  Timing language  ko  (first language)
+  Cleanup preset   on  (one-line subtitles + strip broadcast noise)
+  Output folder    beside source
 
 What next?
   1) Run it now
@@ -164,7 +164,7 @@ Current settings
   2) source: path — {TMP}/Show
   3) languages: ko, en
   4) display order: ko, en
-  5) timing master: ko
+  5) timing language: ko
   6) cleanup preset: on
   7) reading aids: none
   8) format / extension: SRT
@@ -221,7 +221,7 @@ Current settings
   2) source: path — {TMP}/Show
   3) languages: ko, en
   4) display order: ko, en
-  5) timing master: ko
+  5) timing language: ko
   6) cleanup preset: on
   7) reading aids: none
   8) format / extension: ASS
@@ -236,14 +236,14 @@ Review your workflow                                                Progress [�
 Plan
   • Fetch Korean, English for:
     {TMP}/Show
-  • Clean up cues (single line, strip broadcast noise)
+  • Clean up subtitle lines (single line, strip broadcast noise)
   • Create one Korean + English ASS study subtitle file
   • Use subtitle text size: Regular
   • Save to:
     {TMP}/Show
 
 Smart defaults
-  Timing master   ko  (first language)
+  Timing language  ko  (first language)
 
 What next?
   1) Run it now
