@@ -98,6 +98,13 @@ final multi-language subtitle is readable enough to use for study.
 - v1.0 should not require users to understand provider internals, subtitle
   formats, or TOML before getting one useful multi-language subtitle file.
 
+## v0.9.9.1 — what's new
+
+- **Linux CI fix.** Title-candidate input now preserves the original case of
+  pasted paths/URLs before checking them, so the wizard behaves the same on
+  case-sensitive Linux CI and case-insensitive macOS filesystems.
+- **Validation.** Full 800+ test suite passes locally before tagging.
+
 ## v0.9.9 — what's new
 
 - **CI/platform hardening.** Python 3.10 TOML fallback tests now use the same

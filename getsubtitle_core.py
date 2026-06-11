@@ -19324,7 +19324,8 @@ def _wizard_pick_title_candidate(title: str) -> tuple[str, str, str, bool] | Non
     print("    0) Use exactly what I typed")
     print("    r) Re-enter a different title")
     while True:
-        pick = _wizard_prompt("Which title did you mean? Number, 0, or r", "1").strip().lower()
+        raw_pick = _wizard_prompt("Which title did you mean? Number, 0, or r", "1").strip()
+        pick = raw_pick.lower()
         if pick in ("r", "retry", "redo"):
             return "retry"
         if pick in ("0", "raw", "title", "keep"):
@@ -19334,7 +19335,7 @@ def _wizard_pick_title_candidate(title: str) -> tuple[str, str, str, bool] | Non
             if 0 <= idx < len(rows):
                 row = rows[idx]
                 return row["url"], row["provider"], row["label"], row.get("is_movie", False)
-        cleaned = _wizard_strip_wrapping_quotes(pick)
+        cleaned = _wizard_strip_wrapping_quotes(raw_pick)
         if _looks_like_url(cleaned):
             print("    That looks like a URL. Type 'r' to re-enter it as the source,")
             print("    or pick one of the numbered title matches.")
