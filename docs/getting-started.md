@@ -37,6 +37,19 @@ The wizard can:
 The wizard runs the common path by default, but each step can also be used on
 its own from the CLI.
 
+## If You Already Have Local Video Files
+
+Start with inspection when you are not sure whether subtitles already exist:
+
+```sh
+getsubtitle inspect /path/to/movie-or-season-folder
+```
+
+Inspect shows embedded subtitle tracks inside video files, matching subtitle
+files next to the videos, and other subtitle files in the folder. From there,
+interactive terminals can continue into the workflow builder with the path and
+detected languages prefilled.
+
 ## First Workflow
 
 ```sh

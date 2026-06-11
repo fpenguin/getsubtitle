@@ -64,3 +64,13 @@ online subtitle sources:
 
 Image subtitle streams such as PGS/VobSub are reported but skipped because they
 need OCR before they can be merged, translated, or used for reading aids.
+
+If you want to see what is already available before choosing a workflow, run:
+
+```sh
+getsubtitle inspect PATH
+```
+
+Inspect lists embedded tracks, matching sidecar subtitle files, and other
+subtitle files in the folder. In an interactive terminal it can continue into
+the guided workflow with the path and detected languages prefilled.

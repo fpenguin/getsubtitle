@@ -93,6 +93,7 @@ More install options: [docs/install.md](docs/install.md).
 ```sh
 getsubtitle setup     # optional first-time profile: what you watch, what you study
 getsubtitle -i        # guided workflow builder
+getsubtitle inspect PATH  # see embedded/sidecar subtitles before choosing a workflow
 ```
 
 The wizard asks for a source, languages, reading aids, and output choices.
@@ -132,6 +133,7 @@ More examples: [docs/examples.md](docs/examples.md).
 
 - Fetch subtitles from movie, TV, anime, and streaming/catalog URLs.
 - Work from local folders, video files, or subtitle files.
+- Inspect local videos/folders to see embedded tracks and subtitle files before deciding whether to extract, merge, or search.
 - Use streaming page metadata to identify titles, episodes, and better search aliases.
 - Add reading aids for Japanese, Korean, Mandarin pinyin, and Cantonese Jyutping.
 - Merge 2-4 subtitle tracks into one synced file.
@@ -160,7 +162,8 @@ downloaded subtitles in violation of their original license.
 
 For local video files, `getsubtitle fetch PATH` checks embedded text subtitle
 tracks and subtitle files next to your videos first, then searches online only
-for missing languages.
+for missing languages. Slow online provider searches are capped so a stalled
+source turns into a clean retry/manual-search path instead of an indefinite wait.
 
 ## License
 

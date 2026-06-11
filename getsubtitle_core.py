@@ -11,6 +11,7 @@ import os
 import getpass
 import platform
 import re
+import signal
 import shlex
 import shutil
 import subprocess
@@ -7951,7 +7952,9 @@ def parse_episode_marker(name: str) -> tuple[int, int] | None:
     # "무빙.E01...ko.srt" do not collapse into the synthetic movie bucket.
     m = _BARE_EPISODE_PATTERN.search(name)
     if m:
-        return 1, int(m.group(1))
+        episode = int(m.group(1))
+        if episode > 0:
+            return 1, episode
     if _is_movie_style_filename(name):
         return 0, 0
     return None
@@ -7969,6 +7972,58 @@ def infer_release_episode_number(name: str) -> int | None:
         return None
     episode = int(m.group(1))
     return episode if episode > 0 else None
+
+
+def _explicit_episode_marker(name: str) -> tuple[int, int] | None:
+    for pattern in _EPISODE_PATTERNS:
+        m = pattern.search(name)
+        if m:
+            return int(m.group(1)), int(m.group(2))
+    return None
+
+
+def _single_video_episode_context(target: Path) -> tuple[tuple[int, int] | None, int | None]:
+    """Return a conservative episode filter for a single selected video.
+
+    Exact SxxEyy / 1x02 markers keep their season. Bare E12 and release names
+    like "Title - 12 (...)" only provide an episode number, so fallback
+    subtitles may match any season with that episode. This keeps folder
+    fallback useful without letting every subtitle in a season folder satisfy
+    a one-episode fetch.
+    """
+    if not target.is_file() or target.suffix.lower() not in _BATCH_VIDEO_EXTS:
+        return None, None
+    explicit = _explicit_episode_marker(target.name)
+    if explicit is not None:
+        return explicit, None
+    bare = _BARE_EPISODE_PATTERN.search(target.name)
+    if bare:
+        episode = int(bare.group(1))
+        return None, episode if episode > 0 else None
+    release_episode = infer_release_episode_number(target.name)
+    if release_episode is not None:
+        return None, release_episode
+    return None, None
+
+
+def _matches_episode_context(
+    path: Path,
+    season: int,
+    episode: int,
+    *,
+    episode_key: tuple[int, int] | None,
+    episode_number: int | None,
+) -> bool:
+    if episode_key is not None:
+        return (season, episode) == episode_key
+    if episode_number is not None:
+        if episode == episode_number:
+            return True
+        # Movie-style subtitle names with a language token parse as (0, 0).
+        # If the release filename still carries " - 12 (...)", use that as
+        # the fallback episode signal.
+        return episode == 0 and infer_release_episode_number(path.name) == episode_number
+    return True
 
 
 def is_filesystem_metadata_name(name: str) -> bool:
@@ -9080,6 +9135,10 @@ def combine_main(argv: list[str]) -> int:
         scanned_ext, format_hints=_effective_format_hints,
     )
     scanned_count = len(scanned_ext)
+    detected_lang_counts: dict[str, int] = {}
+    for files in grouped.values():
+        for lang in files:
+            detected_lang_counts[lang] = detected_lang_counts.get(lang, 0) + 1
     output_dir_arg = Path(args.output).expanduser() if args.output else None
     sync_preset = SYNC_PRESETS[args.sync]
     episode_threshold = float(sync_preset["episode_success"])
@@ -9267,6 +9326,32 @@ def combine_main(argv: list[str]) -> int:
         print(f"\nSkipped: {len(skipped)}")
         for key, reason in skipped:
             print(f"  {_episode_label_se(*key)}: {reason}")
+    if skipped and detected_lang_counts:
+        detected_langs = sorted(detected_lang_counts, key=lambda lang: (-detected_lang_counts[lang], lang))
+        print("\nDetected languages in this folder:")
+        for lang in detected_langs[:8]:
+            print(f"  - {lang}: {detected_lang_counts[lang]} file/episode group(s)")
+        if len(detected_langs) > 8:
+            print(f"  ... and {len(detected_langs) - 8} more")
+        missing_requested = [lang for lang in langs if lang not in detected_lang_counts]
+        if missing_requested:
+            print(f"  Requested but not detected: {', '.join(missing_requested)}")
+        if len(detected_langs) >= 2:
+            suggested = ",".join(detected_langs[: min(3, len(detected_langs))])
+            print(f"  Try: getsubtitle merge PATH -l {suggested}")
+        print("\nWhat you can do:")
+        if missing_requested:
+            missing_csv = ",".join(missing_requested)
+            print(f"  1. Search for missing subtitles: getsubtitle fetch PATH -l {missing_csv}")
+            print(f"  2. Fill missing subtitles with AI translation: getsubtitle translate PATH -l {missing_csv}")
+            next_number = 3
+        else:
+            next_number = 1
+        if len(detected_langs) >= 2:
+            suggested = ",".join(detected_langs[: min(3, len(detected_langs))])
+            print(f"  {next_number}. Merge languages already here: getsubtitle merge PATH -l {suggested}")
+            next_number += 1
+        print(f"  {next_number}. Run inspect first: getsubtitle inspect PATH")
     _wizard_summary_add(
         "merge",
         scanned=scanned_count,
@@ -9740,6 +9825,17 @@ TEXT_SUBTITLE_CODECS_TO_EXT: dict[str, str] = {
 IMAGE_SUBTITLE_CODECS = {"hdmv_pgs_subtitle", "dvd_subtitle", "dvb_subtitle", "xsub"}
 
 
+@dataclass(frozen=True)
+class SubtitleInspectionTrack:
+    video: Path
+    kind: str
+    lang: str
+    codec: str
+    source: str
+    status: str
+    title: str = ""
+
+
 def scan_video_files(paths: list[Path]) -> list[Path]:
     out: list[Path] = []
     for p in paths:
@@ -9827,6 +9923,487 @@ def plan_mkv_subtitle_extraction(video_files: list[Path]) -> tuple[list[tuple[Pa
     return plan, notes
 
 
+def _inspect_lang_label(lang: str) -> str:
+    base = lang.split(".", 1)[0].lower()
+    if base.startswith("und"):
+        return f"Unknown ({lang})"
+    return f"{_display_lang(base)} ({lang})"
+
+
+def _inspect_stream_lang_token(stream: dict, ordinal: int, seen_langs: dict[str, int]) -> str:
+    lang = _stream_lang(stream, ordinal)
+    seen_langs[lang] = seen_langs.get(lang, 0) + 1
+    return lang if seen_langs[lang] == 1 else f"{lang}.{seen_langs[lang]}"
+
+
+def _subtitle_sidecars_for_video(video: Path) -> list[Path]:
+    stem = video.with_suffix("").name
+    suffixes = TEXT_SUBTITLE_EXTENSIONS | {".sami"}
+    return [
+        p for p in sorted(video.parent.glob(stem + ".*"))
+        if (
+            p.is_file()
+            and p.suffix.lower() in suffixes
+            and not is_filesystem_metadata_name(p.name)
+        )
+    ]
+
+
+def _subtitle_files_in_folder(folder: Path) -> list[Path]:
+    suffixes = TEXT_SUBTITLE_EXTENSIONS | {".sami"}
+    if not folder.is_dir():
+        return []
+    return [
+        p for p in sorted(folder.iterdir())
+        if (
+            p.is_file()
+            and p.suffix.lower() in suffixes
+            and not is_filesystem_metadata_name(p.name)
+        )
+    ]
+
+
+def _language_codes_from_filename(path: Path) -> list[str]:
+    stem = path.with_suffix("").name.lower()
+    codes: list[str] = []
+    for token in re.split(r"[^a-z0-9]+", stem):
+        if not token:
+            continue
+        canon = LANGUAGE_ALIASES.get(token, token)
+        if canon in LANGUAGE_DISPLAY_NAMES and canon not in codes:
+            codes.append(canon)
+    return codes
+
+
+def _sidecar_language_tokens(path: Path) -> list[str]:
+    suffix = path.suffix.lower()
+    if suffix in {".smi", ".sami"}:
+        try:
+            by_lang = parse_sami(_sami_decode_bytes(path.read_bytes()))
+        except Exception:
+            return ["und1"]
+        return sorted(by_lang) or ["und1"]
+    m = _LANG_FILENAME_PATTERN.search(path.name)
+    if m:
+        normalized = _normalize_filename_lang_token(m.group(1))
+        if normalized and normalized in LANGUAGE_DISPLAY_NAMES:
+            return [normalized]
+    codes = _language_codes_from_filename(path)
+    if not codes:
+        codes = sorted(language_codes_in_text(path.name))
+    return codes or ["und1"]
+
+
+def inspect_subtitle_tracks_for_video(video: Path) -> tuple[list[SubtitleInspectionTrack], list[str]]:
+    tracks: list[SubtitleInspectionTrack] = []
+    notes: list[str] = []
+    try:
+        if video.stat().st_size == 0:
+            notes.append(f"{video.name}: empty file; skipped embedded subtitle scan")
+        else:
+            streams = _ffprobe_subtitle_streams(video)
+            if not streams:
+                notes.append(f"{video.name}: no embedded subtitle streams")
+            seen_langs: dict[str, int] = {}
+            for ordinal, stream in enumerate(streams, start=1):
+                codec = str(stream.get("codec_name") or "unknown").lower()
+                stream_index = stream.get("index")
+                tags = stream.get("tags") or {}
+                title = str(tags.get("title") or "").strip()
+                lang = _inspect_stream_lang_token(stream, ordinal, seen_langs)
+                if codec in IMAGE_SUBTITLE_CODECS:
+                    status = "not extractable: image subtitle"
+                else:
+                    ext = TEXT_SUBTITLE_CODECS_TO_EXT.get(codec)
+                    status = f"extractable as .{ext}" if ext else "not extractable: unsupported codec"
+                tracks.append(
+                    SubtitleInspectionTrack(
+                        video=video,
+                        kind="embedded",
+                        lang=lang,
+                        codec=codec,
+                        source=f"stream {stream_index}",
+                        status=status,
+                        title=title,
+                    )
+                )
+    except OSError as e:
+        notes.append(f"{video.name}: {e}")
+    except CliError as e:
+        notes.append(f"{video.name}: embedded subtitle scan failed — {e}")
+
+    for sidecar in _subtitle_sidecars_for_video(video):
+        suffix = sidecar.suffix.lower().lstrip(".")
+        for lang in _sidecar_language_tokens(sidecar):
+            tracks.append(
+                SubtitleInspectionTrack(
+                    video=video,
+                    kind="sidecar",
+                    lang=lang,
+                    codec=suffix,
+                    source=sidecar.name,
+                    status="already available",
+                )
+            )
+    return tracks, notes
+
+
+def _inspect_track_signature(tracks: list[SubtitleInspectionTrack]) -> tuple[tuple[str, str, str, str], ...]:
+    return tuple((t.kind, t.lang, t.codec, t.status) for t in tracks)
+
+
+def _format_inspect_track(track: SubtitleInspectionTrack, *, include_source: bool) -> str:
+    title = f" — {track.title}" if track.title else ""
+    source = f"{track.source}: " if include_source else ""
+    kind = "embedded" if track.kind == "embedded" else "sidecar"
+    return (
+        f"  - {source}{_inspect_lang_label(track.lang)}"
+        f" — {kind} {track.codec}{title}; {track.status}"
+    )
+
+
+def _format_external_subtitle_file(path: Path) -> str:
+    labels = ", ".join(_inspect_lang_label(lang) for lang in _sidecar_language_tokens(path))
+    fmt = path.suffix.lower().lstrip(".")
+    return f"  - {path.name}: {labels} — {fmt}"
+
+
+def _print_inspect_section(title: str) -> None:
+    print()
+    print(title)
+
+
+def _print_inspect_embedded_tracks(tracks: list[SubtitleInspectionTrack], video_suffix: str) -> None:
+    embedded = [track for track in tracks if track.kind == "embedded"]
+    _print_inspect_section("Embedded tracks inside the video file")
+    if not embedded:
+        print(f"  - none found inside the {video_suffix} file")
+        return
+    for track in embedded:
+        print(_format_inspect_track(track, include_source=True))
+
+
+def _print_inspect_sidecar_tracks(tracks: list[SubtitleInspectionTrack]) -> None:
+    sidecars = [track for track in tracks if track.kind == "sidecar"]
+    _print_inspect_section("External subtitle files matching this video")
+    if not sidecars:
+        print("  - none found")
+        return
+    for track in sidecars:
+        print(_format_inspect_track(track, include_source=True))
+
+
+def _print_other_subtitle_files(video: Path) -> None:
+    matching = set(_subtitle_sidecars_for_video(video))
+    others = [path for path in _subtitle_files_in_folder(video.parent) if path not in matching]
+    if not others:
+        return
+    _print_inspect_section("Other subtitle files in this folder")
+    for path in others[:20]:
+        print(_format_external_subtitle_file(path))
+    if len(others) > 20:
+        print(f"  - ... and {len(others) - 20} more")
+
+
+def _print_inspect_video_block(video: Path, tracks: list[SubtitleInspectionTrack]) -> None:
+    print(f"\n{video.name}")
+    if not tracks:
+        print("  - no embedded or matching sidecar subtitles found")
+        return
+    for track in tracks:
+        print(_format_inspect_track(track, include_source=True))
+
+
+def _inspect_extractable_tracks(
+    tracks_by_video: dict[Path, list[SubtitleInspectionTrack]]
+) -> list[SubtitleInspectionTrack]:
+    return [
+        track
+        for tracks in tracks_by_video.values()
+        for track in tracks
+        if track.kind == "embedded" and track.status.startswith("extractable")
+    ]
+
+
+def _inspect_subtitle_folders(target: Path, video_files: list[Path]) -> list[Path]:
+    if target.is_file():
+        return [target.parent]
+    folders: list[Path] = []
+    for video in video_files:
+        if video.parent not in folders:
+            folders.append(video.parent)
+    return folders or [target]
+
+
+def _inspect_external_subtitle_files(target: Path, video_files: list[Path]) -> list[Path]:
+    files: list[Path] = []
+    seen: set[Path] = set()
+    if target.is_file() and target.suffix.lower() in _BATCH_VIDEO_EXTS:
+        for path in [*_subtitle_sidecars_for_video(target), *_subtitle_files_in_folder(target.parent)]:
+            if path not in seen:
+                files.append(path)
+                seen.add(path)
+        return sorted(files)
+    for folder in _inspect_subtitle_folders(target, video_files):
+        for path in _subtitle_files_in_folder(folder):
+            if path not in seen:
+                files.append(path)
+                seen.add(path)
+    return sorted(files)
+
+
+def _inspect_available_subtitle_count(
+    target: Path,
+    video_files: list[Path],
+    tracks_by_video: dict[Path, list[SubtitleInspectionTrack]],
+) -> int:
+    return len(_inspect_external_subtitle_files(target, video_files)) + len(
+        _inspect_extractable_tracks(tracks_by_video)
+    )
+
+
+def _inspect_merge_default_languages(
+    target: Path,
+    video_files: list[Path],
+    tracks_by_video: dict[Path, list[SubtitleInspectionTrack]],
+) -> list[str]:
+    langs: list[str] = []
+
+    def add(lang: str) -> None:
+        base = lang.split(".", 1)[0].lower()
+        if not base or base.startswith("und") or base in langs:
+            return
+        if base in LANGUAGE_DISPLAY_NAMES:
+            langs.append(base)
+
+    for tracks in tracks_by_video.values():
+        for track in tracks:
+            add(track.lang)
+    for path in _inspect_external_subtitle_files(target, video_files):
+        for lang in _sidecar_language_tokens(path):
+            add(lang)
+    return langs
+
+
+def _inspect_prompt_choice(valid: set[str], default: str) -> str:
+    suffix = f" [{default} | q=quit]" if default else " [q=quit]"
+    while True:
+        try:
+            raw = input(f"\n  Number{suffix} > ").strip().lower()
+        except EOFError:
+            return ""
+        if not raw and default:
+            return default
+        if raw in {"q", "quit", "exit"}:
+            return ""
+        if raw in valid:
+            return raw
+        print("    Please choose one of: " + ", ".join(sorted(valid)) + ".")
+
+
+def _inspect_prompt_text(label: str, default: str = "") -> str:
+    suffix = f" [{default} | q=cancel]" if default else " [q=cancel]"
+    try:
+        raw = input(f"\n  {label}{suffix} > ").strip()
+    except EOFError:
+        return ""
+    if not raw and default:
+        return default
+    if raw.lower() in {"q", "quit", "exit"}:
+        return ""
+    return raw
+
+
+def _inspect_start_interactive_search(target: Path) -> int:
+    state = _WizardState()
+    state.steps = {"fetch"}
+    state.source_kind = "path"
+    state.source = str(target)
+    state._initial_prefilled = {"steps"}
+    state._inspect_prefilled_path = True
+    state._skip_setup_profile = True
+    print()
+    print("Starting the workflow builder with this path prefilled.")
+    return interactive_main([], initial_state=state)
+
+
+def _inspect_start_interactive_merge(
+    target: Path,
+    video_files: list[Path],
+    tracks_by_video: dict[Path, list[SubtitleInspectionTrack]],
+) -> int:
+    merge_path = target if target.is_dir() else target.parent
+    languages = _inspect_merge_default_languages(target, video_files, tracks_by_video)[:4]
+
+    state = _WizardState()
+    state.steps = {"modify", "merge"}
+    state.source_kind = "path"
+    state.source = str(merge_path)
+    state.languages = languages
+    state._initial_prefilled = {"steps", "source"}
+    state._skip_setup_profile = True
+    if languages:
+        state._initial_prefilled.add("languages")
+
+    if "modify" in state.steps:
+        smi_files = scan_smi_files([merge_path])
+        state.convert_smi = bool(smi_files)
+
+    if target.is_file():
+        file_episode = parse_episode_marker(target.name)
+        if file_episode:
+            state.season = str(file_episode[0])
+            state.episode = str(file_episode[1])
+
+    print()
+    if languages:
+        print(
+            "Starting the workflow builder with this path and detected "
+            f"languages prefilled: {', '.join(languages)}."
+        )
+    else:
+        print("Starting the workflow builder with this path prefilled.")
+    print("You can still change any setting before running.")
+    return interactive_main([], initial_state=state)
+
+
+def _inspect_continue_menu(
+    target: Path,
+    video_files: list[Path],
+    tracks_by_video: dict[Path, list[SubtitleInspectionTrack]],
+) -> int:
+    if not _wizard_is_interactive():
+        return 0
+
+    extractable = _inspect_extractable_tracks(tracks_by_video)
+    subtitle_count = _inspect_available_subtitle_count(target, video_files, tracks_by_video)
+    actions: list[tuple[str, str]] = []
+    if extractable:
+        actions.append(("extract", "Extract embedded subtitles"))
+    if subtitle_count >= 2:
+        actions.append(("merge", "Merge subtitles"))
+    actions.append(("search", "Search for subtitles"))
+
+    if not actions:
+        return 0
+
+    print()
+    print("What next?")
+    options: dict[str, str] = {}
+    for idx, (action, label) in enumerate(actions, start=1):
+        key = str(idx)
+        options[key] = action
+        print(f"  {idx}) {label}")
+    default = "1"
+    pick = _inspect_prompt_choice(set(options), default)
+    if not pick:
+        return 0
+
+    action = options[pick]
+    if action == "extract":
+        print()
+        print("Running:")
+        print("  " + " ".join(shlex.quote(part) for part in [
+            "getsubtitle", "modify", str(target), "--extract-mkv-subs",
+        ]))
+        return modify_main([str(target), "--extract-mkv-subs"])
+
+    if action == "merge":
+        return _inspect_start_interactive_merge(target, video_files, tracks_by_video)
+
+    return _inspect_start_interactive_search(target)
+
+
+def build_inspect_parser() -> argparse.ArgumentParser:
+    p = argparse.ArgumentParser(
+        prog="getsubtitle inspect",
+        description="Inspect local video files or folders for embedded and sidecar subtitles.",
+        epilog=textwrap.dedent(
+            """\
+            Examples:
+              getsubtitle inspect Movie.mkv
+              getsubtitle inspect /Volumes/Plex/Shows/Show/Season\\ 01
+
+            Inspection is read-only unless an interactive terminal offers a
+            follow-up action and you choose it. Use --no-interactive to print
+            the report only.
+            """
+        ),
+    )
+    p.add_argument("path", help="Video file or folder to inspect.")
+    p.add_argument("--no-interactive", action="store_true",
+                   help="Print the inspection report only; do not offer follow-up actions.")
+    return p
+
+
+def inspect_main(argv: list[str]) -> int:
+    args = build_inspect_parser().parse_args(argv)
+    target = Path(args.path).expanduser()
+    if not target.exists():
+        raise CliError(f"path not found: {target}")
+
+    video_files = scan_video_files([target])
+    if not video_files:
+        print(f"No video files found in {target}.")
+        print("Supported video extensions: " + ", ".join(sorted(_BATCH_VIDEO_EXTS)))
+        return 1
+
+    tracks_by_video: dict[Path, list[SubtitleInspectionTrack]] = {}
+    notes: list[str] = []
+    for video in video_files:
+        tracks, video_notes = inspect_subtitle_tracks_for_video(video)
+        tracks_by_video[video] = tracks
+        notes.extend(video_notes)
+
+    if target.is_file():
+        print(f"Subtitle inspection for {target}")
+        _print_inspect_video_block(target, tracks_by_video.get(target, []))
+    else:
+        print(f"Subtitle inspection for {target}")
+        print(f"Videos checked: {len(video_files)}")
+        if len(video_files) == 1:
+            video = video_files[0]
+            _print_inspect_section("Video file")
+            print(f"  - {video.name}")
+            tracks = tracks_by_video[video]
+            _print_inspect_embedded_tracks(tracks, video.suffix.lower() or "video")
+            _print_inspect_sidecar_tracks(tracks)
+            _print_other_subtitle_files(video)
+        else:
+            signatures = {_inspect_track_signature(tracks) for tracks in tracks_by_video.values()}
+            if len(signatures) == 1:
+                print("Same subtitle set found in every video:")
+                sample = tracks_by_video[video_files[0]]
+                if sample:
+                    for track in sample:
+                        print(_format_inspect_track(track, include_source=False))
+                else:
+                    print("  - no embedded or matching sidecar subtitles found")
+            else:
+                print("Subtitle sets differ by file:")
+                for video in video_files:
+                    _print_inspect_video_block(video, tracks_by_video[video])
+
+        embedded_notes = [
+            note for note in notes
+            if "no embedded subtitle streams" in note
+        ]
+        if embedded_notes and len(embedded_notes) == len(video_files):
+            if len(video_files) > 1:
+                print("Embedded subtitles: none found in any video")
+            notes = [note for note in notes if note not in embedded_notes]
+
+    if notes:
+        print("\nNotes:")
+        for note in notes[:12]:
+            print(f"  - {note}")
+        if len(notes) > 12:
+            print(f"  - ... and {len(notes) - 12} more")
+    if args.no_interactive:
+        return 0
+    return _inspect_continue_menu(target, video_files, tracks_by_video)
+
+
 def extract_mkv_subtitle_plan(
     plan: list[tuple[Path, int, str, str, Path]],
     *,
@@ -9901,7 +10478,13 @@ def _embedded_subtitle_lang_summary(plan: list[tuple[Path, int, str, str, Path]]
     return ", ".join(langs) if langs else "unknown"
 
 
-def _local_fetch_lang_counts(paths: list[Path], requested_langs: list[str]) -> dict[str, int]:
+def _local_fetch_lang_counts(
+    paths: list[Path],
+    requested_langs: list[str],
+    *,
+    episode_key: tuple[int, int] | None = None,
+    episode_number: int | None = None,
+) -> dict[str, int]:
     requested = {lang for lang in requested_langs if lang and not is_pseudo_lang(lang)}
     counts = {lang: 0 for lang in requested}
     if not requested:
@@ -9909,6 +10492,14 @@ def _local_fetch_lang_counts(paths: list[Path], requested_langs: list[str]) -> d
     seen: set[tuple[Path, str]] = set()
     scanned = scan_subtitle_files_extended(paths, requested_langs=list(requested))
     for path, _season, _episode, lang, _is_mt, _fmt in scanned:
+        if not _matches_episode_context(
+            path,
+            _season,
+            _episode,
+            episode_key=episode_key,
+            episode_number=episode_number,
+        ):
+            continue
         base_lang = lang.split(".", 1)[0]
         if base_lang in requested and (path, base_lang) not in seen:
             counts[base_lang] = counts.get(base_lang, 0) + 1
@@ -9921,6 +10512,8 @@ def _smi_fetch_conversion_plan(
     *,
     requested_langs: list[str],
     already_covered: set[str],
+    episode_key: tuple[int, int] | None = None,
+    episode_number: int | None = None,
 ) -> tuple[list[tuple[Path, set[str]]], dict[str, int], list[str]]:
     requested = {lang for lang in requested_langs if lang and not is_pseudo_lang(lang)}
     plans: list[tuple[Path, set[str]]] = []
@@ -9930,6 +10523,16 @@ def _smi_fetch_conversion_plan(
         return plans, counts, notes
 
     for smi in scan_smi_files(paths):
+        smi_episode_key = parse_episode_marker(smi.name)
+        smi_season, smi_episode = smi_episode_key if smi_episode_key else (0, 0)
+        if not _matches_episode_context(
+            smi,
+            smi_season,
+            smi_episode,
+            episode_key=episode_key,
+            episode_number=episode_number,
+        ):
+            continue
         try:
             by_lang = parse_sami(_sami_decode_bytes(smi.read_bytes()))
         except Exception as e:
@@ -9980,7 +10583,11 @@ def _local_subtitle_scan_paths_for_fetch(target: Path) -> list[Path]:
         p for p in sorted(target.parent.glob(stem + ".*"))
         if p.is_file() and p.suffix.lower() in suffixes
     ]
-    return sidecars or [target]
+    fallback_subtitles = [
+        p for p in _subtitle_files_in_folder(target.parent)
+        if p not in sidecars
+    ]
+    return sidecars + fallback_subtitles or [target]
 
 
 def prepare_local_subtitle_sources_for_fetch(
@@ -10003,8 +10610,14 @@ def prepare_local_subtitle_sources_for_fetch(
     subtitle_paths = _local_subtitle_scan_paths_for_fetch(target)
     video_files = scan_video_files([target])
     expected_items = max(1, len(video_files))
+    episode_key, episode_number = _single_video_episode_context(target)
 
-    local_counts = _local_fetch_lang_counts(subtitle_paths, requested)
+    local_counts = _local_fetch_lang_counts(
+        subtitle_paths,
+        requested,
+        episode_key=episode_key,
+        episode_number=episode_number,
+    )
     preexisting_counts = dict(local_counts)
     covered = _complete_fetch_langs(local_counts, expected_items)
 
@@ -10012,6 +10625,8 @@ def prepare_local_subtitle_sources_for_fetch(
         subtitle_paths,
         requested_langs=requested,
         already_covered=covered,
+        episode_key=episode_key,
+        episode_number=episode_number,
     )
     for lang, count in smi_counts.items():
         local_counts[lang] = local_counts.get(lang, 0) + count
@@ -10042,7 +10657,10 @@ def prepare_local_subtitle_sources_for_fetch(
         print(f"  Local coverage target: {expected_items} video file(s)")
     preexisting_covered = _complete_fetch_langs(preexisting_counts, expected_items)
     if preexisting_covered:
-        existing = ", ".join(f"{lang} ({preexisting_counts.get(lang, 0)}/{expected_items})" for lang in sorted(preexisting_covered))
+        existing = ", ".join(
+            f"{lang} ({min(preexisting_counts.get(lang, 0), expected_items)}/{expected_items})"
+            for lang in sorted(preexisting_covered)
+        )
         print(f"  Already available beside video: {existing}")
     if smi_plan:
         smi_langs = sorted({lang for _path, langs in smi_plan for lang in langs})
@@ -10210,6 +10828,28 @@ def modify_main(argv: list[str]) -> int:
                 rc_total = rc or rc_total
         return rc_total
     args = build_modify_parser().parse_args(argv)
+    explicit_reading = any(
+        tok == "--reading"
+        or tok.startswith("--reading=")
+        or tok == "--no-reading"
+        for tok in argv
+    )
+    explicit_non_reading_op = any(
+        tok in {
+            "--strip-cc-noise",
+            "--single-line",
+            "--single",
+            "--convert",
+            "--extract-mkv-subs",
+        }
+        or tok.startswith("--convert=")
+        for tok in argv
+    )
+    if explicit_non_reading_op and not explicit_reading and getattr(args, "reading", None):
+        # A saved setup profile may put [modify].reading in user_settings.toml.
+        # Keep that useful for wizard/config-driven workflows, but do not let a
+        # cleanup-only direct CLI command unexpectedly generate reading-aid files.
+        args.reading = ""
     # --reading is the multi-language umbrella. Route ja entries
     # to the legacy --furigana attribute and ko entries to a fresh
     # args.ko_reading attribute. Languages we haven't shipped a
@@ -10648,7 +11288,7 @@ def parse_season_from_folder_name(name: str) -> int | None:
     """Pull a season number out of a Plex-style season subfolder name.
     Returns None when the folder name doesn't match a known season pattern
     (i.e. when the folder IS the show, not a season subdir)."""
-    stripped = name.strip()
+    stripped = unicodedata.normalize("NFC", name.strip())
     for pat in _SEASON_FOLDER_PATTERNS:
         m = pat.match(stripped)
         if m:
@@ -10675,6 +11315,11 @@ def detect_show_and_season_for_video_file(video: "Path") -> tuple["Path", int | 
     Handles Plex-style `Show/Season 01/Episode.mkv` by using the parent show
     folder as the title. Falls back to the containing folder for flat layouts.
     """
+    upper_parts = [part.upper() for part in video.parts]
+    if "BDMV" in upper_parts:
+        bdmv_index = upper_parts.index("BDMV")
+        if bdmv_index > 0:
+            return Path(*video.parts[:bdmv_index]), None
     folder = video.parent
     season = parse_season_from_folder_name(folder.name)
     if season is not None and folder.parent.exists():
@@ -10729,6 +11374,60 @@ def _directory_has_direct_video_files(root: "Path") -> bool:
     )
 
 
+_GENERIC_LIBRARY_FOLDER_NAMES = {"movies", "movie", "shows", "show", "tv", "tv shows", "television"}
+_BLURAY_INTERNAL_FOLDER_NAMES = {
+    "bdmv",
+    "certificate",
+    "backup",
+    "clipinf",
+    "jar",
+    "meta",
+    "playlist",
+    "stream",
+}
+
+
+def _is_probable_library_root(path: Path) -> bool:
+    if not path.is_dir() or _directory_has_direct_video_files(path):
+        return False
+    if path.name.strip().lower() in _GENERIC_LIBRARY_FOLDER_NAMES:
+        return True
+    try:
+        child_dirs = [p for p in path.iterdir() if p.is_dir() and not p.name.startswith(".")]
+    except OSError:
+        return False
+    # Conservative fallback for non-English library root names: many direct
+    # subfolders, no direct media. Normal show folders with seasons rarely
+    # have this many immediate children.
+    return len(child_dirs) >= 30
+
+
+def _is_bluray_internal_folder(path: Path) -> bool:
+    if not path.is_dir():
+        return False
+    parts = [part.upper() for part in path.parts]
+    if "BDMV" not in parts:
+        return False
+    bdmv_index = parts.index("BDMV")
+    internal = {part.lower() for part in path.parts[bdmv_index:]}
+    return bool(internal & _BLURAY_INTERNAL_FOLDER_NAMES)
+
+
+def _validate_fetch_path_target(path: Path, *, subdirectory: bool = False) -> None:
+    if path.is_file():
+        return
+    if _is_bluray_internal_folder(path):
+        raise CliError(
+            "This looks like a Blu-ray internal folder, not a movie/show folder.\n"
+            "Choose the parent movie folder, or choose an actual video file from STREAM."
+        )
+    if _is_probable_library_root(path) and not subdirectory:
+        raise CliError(
+            f"{path} looks like a media library root.\n"
+            "Choose one movie/show folder, or use --subdirectory to process each child folder."
+        )
+
+
 def _batch_list_smi_files(folder: "Path") -> list["Path"]:
     if not folder.is_dir():
         return []
@@ -10736,14 +11435,65 @@ def _batch_list_smi_files(folder: "Path") -> list["Path"]:
                   if p.is_file() and p.suffix.lower() == ".smi")
 
 
-def _batch_run(cmd: list[str], dry_run: bool) -> int:
+def _terminate_batch_process(proc: subprocess.Popen) -> None:
+    """Stop a timed-out batch child and any subprocesses it started."""
+    try:
+        if os.name == "nt":
+            proc.terminate()
+        else:
+            os.killpg(proc.pid, signal.SIGTERM)
+    except Exception:
+        proc.kill()
+    try:
+        proc.wait(timeout=5)
+        return
+    except subprocess.TimeoutExpired:
+        pass
+    try:
+        if os.name == "nt":
+            proc.kill()
+        else:
+            os.killpg(proc.pid, signal.SIGKILL)
+    except Exception:
+        proc.kill()
+    with contextlib.suppress(Exception):
+        proc.wait(timeout=5)
+
+
+def _batch_run(cmd: list[str], dry_run: bool, *, timeout: float | None = None) -> int:
     """Run a getsubtitle subprocess, printing the shell-quoted command first.
     Used so the user can copy-paste any single line if something looks off."""
     args = list(cmd)
     if dry_run and "--dry-run" not in args:
         args.append("--dry-run")
     print("  $ " + " ".join(shlex.quote(a) for a in args))
-    return subprocess.run(args, check=False).returncode
+    popen_kwargs = {}
+    if os.name == "nt":
+        popen_kwargs["creationflags"] = getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
+    else:
+        popen_kwargs["start_new_session"] = True
+    try:
+        proc = subprocess.Popen(args, **popen_kwargs)
+        proc.communicate(timeout=timeout)
+        return proc.returncode
+    except subprocess.TimeoutExpired:
+        _terminate_batch_process(proc)
+        limit = f"{int(timeout)}s" if timeout else "the timeout"
+        print(f"  Search took longer than {limit}; skipping this attempt.")
+        print("  Try again later, use a more specific title/ID, or search manually.")
+        return 124
+
+
+def _batch_fetch_timeout_seconds(target: Path, fetch_langs: list[str]) -> int:
+    """Bound a child fetch attempt without penalizing whole-season searches.
+
+    The UX tolerance is short for interactive use: a provider that cannot
+    answer within two minutes should become a clean "try again / search
+    manually" outcome instead of making users wonder whether the app froze.
+    """
+    videos = scan_video_files([target])
+    expected_work = max(1, len(videos)) * max(1, len(fetch_langs))
+    return min(120, max(75, expected_work * 60))
 
 
 def _batch_heading(text: str) -> None:
@@ -10872,6 +11622,7 @@ def fetch_main(argv: list[str]) -> int:
     target_path = Path(args.target).expanduser()
     if not target_path.exists():
         raise CliError(f"path not found: {target_path}")
+    _validate_fetch_path_target(target_path, subdirectory=args.subdirectory)
 
     if args.subdirectory:
         if not target_path.is_dir():
@@ -10972,6 +11723,149 @@ def _batch_describe_target(target: "Path", show_folder: "Path", season: int | No
     return f"[{profile}]{s}  {name}"
 
 
+def _direct_video_files(folder: Path) -> list[Path]:
+    if not folder.is_dir():
+        return []
+    return sorted(
+        p for p in folder.iterdir()
+        if (
+            p.is_file()
+            and p.suffix.lower() in _BATCH_VIDEO_EXTS
+            and not is_filesystem_metadata_name(p.name)
+        )
+    )
+
+
+def _batch_target_video_files(target: Path) -> list[Path]:
+    if target.is_file() and target.suffix.lower() in _BATCH_VIDEO_EXTS:
+        return [target]
+    if target.is_dir():
+        return _direct_video_files(target)
+    return []
+
+
+def _batch_target_looks_like_movie(target: Path, show_folder: Path, season: int | None) -> bool:
+    if season is not None:
+        return False
+    videos = _batch_target_video_files(target)
+    if not videos and target.is_file() and target.suffix.lower() in _BATCH_VIDEO_EXTS:
+        videos = [target]
+    if len(videos) != 1:
+        return False
+    video = videos[0]
+    if parse_episode_marker(video.name) is not None:
+        return False
+    if infer_release_episode_number(video.name) is not None:
+        return False
+    # Conservative movie signal: a single video plus a year in the folder or
+    # filename. Avoid treating one-off TV specials without dates as movies.
+    if re.search(r"\b(?:19\d{2}|20\d{2})\b", f"{show_folder.name} {video.name}"):
+        return True
+    # In a movie library, a single video in one child folder is still a movie
+    # even when the folder is missing/garbling the year (e.g. "Akira ()").
+    if show_folder.parent.name.strip().lower() in {"movies", "movie"}:
+        return True
+    # If the user selected a single video file and its containing folder has
+    # no other videos, no season folder, and no episode marker, treating it as
+    # a movie avoids accidental `-e all` searches for one-off movie files.
+    if target.is_file() and parse_season_from_folder_name(target.parent.name) is None:
+        try:
+            sibling_videos = scan_video_files([target.parent])
+        except OSError:
+            sibling_videos = []
+        if len(sibling_videos) == 1:
+            return True
+    return False
+
+
+def _batch_title_candidates_for_fetch(
+    target: Path,
+    show_folder: Path,
+    title_override: str | None,
+) -> list[str]:
+    def weak_auto_title(value: str) -> bool:
+        title = (value or "").strip()
+        lower = title.lower()
+        if not title:
+            return True
+        if parse_season_from_folder_name(title) is not None:
+            return True
+        if lower in _GENERIC_LIBRARY_FOLDER_NAMES or lower in _BLURAY_INTERNAL_FOLDER_NAMES:
+            return True
+        if re.fullmatch(r"(?:season|series|saison|staffel|temporada|seizoen)\s*\d+", lower):
+            return True
+        return False
+
+    def add(out: list[str], value: str) -> None:
+        title = (value or "").strip()
+        key = _norm_title_key(title)
+        if title and key and not weak_auto_title(title) and all(_norm_title_key(existing) != key for existing in out):
+            out.append(title)
+
+    candidates: list[str] = []
+    if title_override and title_override.strip():
+        return [title_override.strip()]
+
+    filename_guess = _wizard_title_guess_from_video_filenames(target)
+    folder_title = show_folder.stem if show_folder.is_file() else show_folder.name
+    cleaned_folder_title = _wizard_clean_video_filename_title(folder_title)
+    generic_library_folder = (
+        target.is_file()
+        and show_folder == target.parent
+        and show_folder.name.lower() in _GENERIC_LIBRARY_FOLDER_NAMES
+    )
+    if generic_library_folder and filename_guess:
+        add(candidates, filename_guess)
+    if cleaned_folder_title and _norm_title_key(cleaned_folder_title) != _norm_title_key(folder_title):
+        add(candidates, cleaned_folder_title)
+    add(candidates, folder_title)
+    if filename_guess:
+        add(candidates, filename_guess)
+    if target != show_folder:
+        target_title = target.stem if target.is_file() else target.name
+        cleaned_target_title = _wizard_clean_video_filename_title(target_title)
+        if cleaned_target_title and _norm_title_key(cleaned_target_title) != _norm_title_key(target_title):
+            add(candidates, cleaned_target_title)
+        add(candidates, target_title)
+    return candidates
+
+
+def _batch_fetch_command_for_title(
+    *,
+    title: str,
+    movie_override: bool,
+    anilist_override: int | None,
+    season: int | None,
+    target: Path,
+    output_dir: Path,
+    fetch_langs: list[str],
+) -> list[str]:
+    fetch_cmd = [
+        sys.executable, "-m", "getsubtitle",
+    ] if not shutil.which("getsubtitle") else ["getsubtitle"]
+    fetch_cmd += ["--title", title]
+    if movie_override:
+        fetch_cmd.append("--movie")
+    if anilist_override:
+        fetch_cmd += ["--anilist", str(anilist_override)]
+    episode_arg = "auto" if movie_override else "all"
+    parsed_episode, release_episode_number = _single_video_episode_context(target)
+    if parsed_episode is not None and not movie_override:
+        parsed_season, parsed_ep = parsed_episode
+        if season is None and parsed_season > 0:
+            season = parsed_season
+        if parsed_ep > 0:
+            episode_arg = str(parsed_ep)
+    elif release_episode_number is not None and not movie_override:
+        episode_arg = str(release_episode_number)
+    if season is not None and not movie_override:
+        fetch_cmd += ["-s", str(season)]
+    if not movie_override:
+        fetch_cmd += ["-e", episode_arg]
+    fetch_cmd += ["-l", ",".join(fetch_langs), "--layout", "flat", "-o", str(output_dir), "-y"]
+    return fetch_cmd
+
+
 def _batch_fetch_one(target: "Path", show_folder: "Path", season: int | None,
                      profile: str, dry_run: bool,
                      fetch_langs_override: list[str] | None = None,
@@ -10986,9 +11880,11 @@ def _batch_fetch_one(target: "Path", show_folder: "Path", season: int | None,
     """
     _batch_heading(_batch_describe_target(target, show_folder, season, profile))
 
-    title = (title_override or "").strip() or (show_folder.stem if show_folder.is_file() else show_folder.name)
+    title_candidates = _batch_title_candidates_for_fetch(target, show_folder, title_override)
+    title = title_candidates[0] if title_candidates else (show_folder.stem if show_folder.is_file() else show_folder.name)
     is_folder = target.is_dir()
     output_dir = target if is_folder else target.parent
+    effective_movie_override = movie_override or _batch_target_looks_like_movie(target, show_folder, season)
 
     fetch_langs = fetch_langs_override or _BATCH_FETCH_LANGS.get(profile, _BATCH_FETCH_LANGS["en"])
     remaining_langs = prepare_local_subtitle_sources_for_fetch(
@@ -10999,31 +11895,25 @@ def _batch_fetch_one(target: "Path", show_folder: "Path", season: int | None,
     if not remaining_langs:
         return 0
     fetch_langs = remaining_langs
-    episode_arg = "auto" if movie_override else "all"
-    parsed_episode = parse_episode_marker(target.name) if target.is_file() else None
-    if parsed_episode is not None and not movie_override:
-        parsed_season, parsed_ep = parsed_episode
-        if season is None and parsed_season > 0:
-            season = parsed_season
-        if parsed_ep > 0:
-            episode_arg = str(parsed_ep)
-
-    fetch_cmd = [
-        sys.executable, "-m", "getsubtitle",
-    ] if not shutil.which("getsubtitle") else ["getsubtitle"]
-    fetch_cmd += ["--title", title]
-    if movie_override:
-        fetch_cmd.append("--movie")
-    if anilist_override:
-        fetch_cmd += ["--anilist", str(anilist_override)]
-    if season is not None and not movie_override:
-        fetch_cmd += ["-s", str(season)]
-    if not movie_override:
-        fetch_cmd += ["-e", episode_arg]
-    fetch_cmd += ["-l", ",".join(fetch_langs), "--layout", "flat", "-o", str(output_dir), "-y"]
     suffix = " (requested)" if fetch_langs_override else ""
     print(f"  fetch: -l {','.join(fetch_langs)}{suffix}")
-    rc = _batch_run(fetch_cmd, dry_run=dry_run)
+    rc = 1
+    child_timeout = _batch_fetch_timeout_seconds(target, fetch_langs)
+    for idx, candidate_title in enumerate(title_candidates or [title]):
+        if idx:
+            print(f"  retrying with title from filename/folder: {candidate_title}")
+        fetch_cmd = _batch_fetch_command_for_title(
+            title=candidate_title,
+            movie_override=effective_movie_override,
+            anilist_override=anilist_override,
+            season=season,
+            target=target,
+            output_dir=output_dir,
+            fetch_langs=fetch_langs,
+        )
+        rc = _batch_run(fetch_cmd, dry_run=dry_run, timeout=child_timeout)
+        if rc == 0:
+            break
     if rc and not dry_run:
         if maybe_extract_embedded_subtitles_after_fetch_miss(target):
             return 0
@@ -16455,6 +17345,7 @@ Subcommands (each has its own --help):
   translate     Fill missing languages with AI translation (argos / ollama / deepl).
   modify        Clean up subtitle lines, convert formats, and add reading aids.
   merge         Create one multi-language subtitle file.
+  inspect       Show local embedded/sidecar subtitles, then continue in the wizard.
   run           Save and run workflows by short name (run --save NAME FILE; run NAME).
   config        Manage user_settings.toml defaults.
   sources       Check subtitle-source access for your configured API keys.
@@ -16474,7 +17365,7 @@ Layered config (lowest → highest priority):
   built-in defaults  <  user_settings.toml  <  --config FILE.toml  <  CLI flags
 
 Topic help:
-  getsubtitle --help fetch | translate | modify | merge | workflow
+  getsubtitle --help fetch | translate | modify | merge | inspect | workflow
   getsubtitle --help setup | interactive | config | keys | language | reading | sources | advanced
 
 New here? Try `getsubtitle setup` first, then `getsubtitle -i`.
@@ -16968,6 +17859,33 @@ Notes:
   - Does not download subtitles.
   - Source names and statuses are reported as Wyzie returns them.
 """,
+    "inspect": """\
+Inspect local video files or folders before choosing a workflow.
+
+Usage:
+  getsubtitle inspect PATH
+
+Use this when you are not sure what subtitles already exist beside or inside
+your video files. Inspect is read-first: it lists video files, embedded text
+subtitle tracks, image subtitle tracks that cannot be extracted, matching
+subtitle files next to the video, and other subtitle files in the same folder.
+
+After the report, interactive terminals can continue directly into the guided
+workflow:
+  - extract embedded text subtitle tracks when available
+  - merge detected subtitle languages
+  - search for missing subtitles with the inspected path prefilled
+
+Examples:
+  getsubtitle inspect Movie.mkv
+  getsubtitle inspect /Volumes/Plex/Shows/Show/Season\\ 01
+
+Notes:
+  - Inspect does not modify video files.
+  - Extraction writes separate subtitle sidecar files using ffmpeg/ffprobe.
+  - For everyday local-video fetching, `getsubtitle fetch PATH -l LANGS --run`
+    checks embedded tracks and sidecar subtitles before online search.
+""",
     "doctor": """\
 Check install health.
 
@@ -17133,6 +18051,9 @@ Fetch options:
 Notes:
   - PATH form defaults to dry-run. Add --run to actually fetch.
   - URL form does NOT default to dry-run — it's opt-in via --dry-run.
+  - Local PATH fetches cap each online search attempt at about two minutes.
+    If a provider is slow, GetSubtitle skips that attempt cleanly and suggests
+    retry/manual-search options instead of waiting indefinitely.
 """,
     "merge": """\
 Merge multiple language subtitle files into one study-friendly file.
@@ -17571,7 +18492,7 @@ def _is_topic_help_request(argv: list[str]) -> bool:
             return True
         if len(argv) == 1:
             return True
-    if argv[0] in ("merge", "fetch", "sources", "setup", "doctor"):
+    if argv[0] in ("merge", "fetch", "inspect", "sources", "setup", "doctor"):
         if any(a in ("-h", "--help") for a in argv[1:]):
             return True
         if len(argv) == 1:
@@ -17597,6 +18518,9 @@ def _show_topic_help(argv: list[str]) -> int:
         return 0
     if argv and argv[0] == "fetch":
         sys.stdout.write(HELP_TOPICS["fetch"])
+        return 0
+    if argv and argv[0] == "inspect":
+        sys.stdout.write(HELP_TOPICS["inspect"])
         return 0
     if argv and argv[0] in ("--config", "pipeline", "workflow", "workflows"):
         sys.stdout.write(HELP_TOPICS["pipeline"])
@@ -18385,14 +19309,16 @@ def _wizard_path_fetch_title_guess(path: Path) -> str:
 
 
 def _wizard_clean_video_filename_title(name: str) -> str:
-    text = Path(name).stem
+    path = Path(name)
+    known_suffixes = _BATCH_VIDEO_EXTS | SUB_EXTENSIONS | ARCHIVE_EXTENSIONS | {".smi", ".ssa"}
+    text = path.stem if path.suffix.lower() in known_suffixes else path.name
     text = re.sub(r"^(?:\[[^\]]+\]|\([^)]+\))\s*", "", text).strip()
     # Movie release filenames often have the useful title/year followed by
     # rip/codec/audio/release-group tags. Prefer a clean "Title (Year)"
     # guess over sending the whole release name to TMDB/AniList.
     year_match = re.search(r"\b(19\d{2}|20\d{2})\b", text)
     if year_match:
-        before_year = text[:year_match.start()].strip(" -._")
+        before_year = text[:year_match.start()].strip(" -._(")
         if before_year:
             before_year = re.sub(r"[._]+", " ", before_year)
             before_year = re.sub(r"\s+", " ", before_year)
@@ -19391,6 +20317,31 @@ def _wizard_q1_source(state: _WizardState) -> None:
                     print("    SMI subtitles found; will convert them to SRT before cleanup/readings.")
             state.source = str(path)
             print(f"    Searching for: {description}")
+            return
+    if getattr(state, "_inspect_prefilled_path", False) and state.source:
+        print(_wizard_next_q(state, "Using inspected file or folder."))
+        try:
+            path, description = _wizard_describe_path_source(state.source)
+        except CliError as exc:
+            print(f"    {exc}")
+            delattr(state, "_inspect_prefilled_path")
+        else:
+            state.source_kind = "path"
+            state.source = str(path)
+            print(f"    {path}")
+            print(f"    Searching for: {description}")
+            try:
+                _wizard_confirm_path_fetch_title(state, path)
+            except _WizardBack:
+                state.source = ""
+                state.source_title = ""
+                state.source_anilist_id = ""
+                state.is_movie = False
+                if hasattr(state, "_inspect_prefilled_path"):
+                    delattr(state, "_inspect_prefilled_path")
+                raise
+            if hasattr(state, "_inspect_prefilled_path"):
+                delattr(state, "_inspect_prefilled_path")
             return
     entry_only = bool(getattr(state, "_source_entry_only", False))
     if hasattr(state, "_source_entry_only"):
@@ -20758,7 +21709,10 @@ def _wizard_step_skip(label: str, state: _WizardState) -> bool:
 
 def _wizard_step_prefilled(label: str, state: _WizardState) -> bool:
     setup_sources = getattr(state, "_setup_prefilled", set()) or set()
+    initial_sources = getattr(state, "_initial_prefilled", set()) or set()
     prefilled = {
+        "steps": "steps" in initial_sources,
+        "source": "source" in initial_sources and bool(state.source),
         "languages": bool(state.languages),
         "filename_numbering": bool(state.episode_filename_start),
         "translate": state.mt_engine != "" or "translate" in setup_sources,
@@ -22042,7 +22996,7 @@ Commands:
 ------------------------------------------------------------------------------------------------"""
 
 
-def interactive_main(argv: list[str] | None = None) -> int:
+def interactive_main(argv: list[str] | None = None, initial_state: _WizardState | None = None) -> int:
     """Run the wizard. Returns a shell-style exit code.
     `argv` is accepted (and ignored) so it slots into the same dispatch
     shape as the other *_main functions."""
@@ -22054,7 +23008,8 @@ def interactive_main(argv: list[str] | None = None) -> int:
     print(_WIZARD_INTRO)
     setup_profile = _setup_load_profile()
     use_setup_profile = False
-    if setup_profile is not None:
+    skip_setup_profile = bool(getattr(initial_state, "_skip_setup_profile", False))
+    if setup_profile is not None and not skip_setup_profile:
         print("Setup profile found")
         print()
         print("From setup:")
@@ -22063,20 +23018,30 @@ def interactive_main(argv: list[str] | None = None) -> int:
         for label, value in rows:
             print(f"  {label:{key_width}}  {value}")
         print()
-        use_setup_profile = _wizard_yesno("Use these defaults?", default=True)
+        try:
+            use_setup_profile = _wizard_yesno("Use these defaults?", default=True)
+        except _WizardAbort:
+            print()
+            print("Cancelled.")
+            return 130
 
+    first_state = initial_state
     while True:
-        state = _WizardState()
+        state = first_state or _WizardState()
+        first_state = None
         if setup_profile is not None and use_setup_profile:
-            state.languages = list(setup_profile.learning + [
-                lang for lang in setup_profile.native
-                if lang not in setup_profile.learning
-            ])
-            state.order = list(state.languages)
-            state.mt_engine = _setup_profile_mt_engine(setup_profile)
-            state.reading_aids = _setup_profile_reading_aids(setup_profile)
+            if not state.languages:
+                state.languages = list(setup_profile.learning + [
+                    lang for lang in setup_profile.native
+                    if lang not in setup_profile.learning
+                ])
+                state.order = list(state.languages)
+            if not state.mt_engine:
+                state.mt_engine = _setup_profile_mt_engine(setup_profile)
+            if not state.reading_aids:
+                state.reading_aids = _setup_profile_reading_aids(setup_profile)
             fmt, fmt_reason = _setup_profile_preferred_format(setup_profile, state.reading_aids)
-            if fmt:
+            if fmt and not state.format:
                 state.format = fmt
                 state.viewing_env = {
                     "srt": "tv",
@@ -22085,8 +23050,10 @@ def interactive_main(argv: list[str] | None = None) -> int:
                 }.get(fmt, "")
                 if fmt == "vtt":
                     state.asbplayer = True
-            state._setup_prefilled = {"languages", "translate", "reading_aids"}
-            if fmt:
+            state._setup_prefilled = set(getattr(state, "_setup_prefilled", set())) | {
+                "languages", "translate", "reading_aids"
+            }
+            if fmt and state.format == fmt:
                 state._setup_prefilled.add("format")
                 state._setup_format_reason = fmt_reason
 
@@ -22302,6 +23269,8 @@ def main(argv: list[str] | None = None) -> int:
         return modify_main(raw_argv[1:])
     if raw_argv[0] == "fetch":
         return fetch_main(raw_argv[1:])
+    if raw_argv[0] == "inspect":
+        return inspect_main(raw_argv[1:])
     if raw_argv[0] == "config":
         return config_main(raw_argv[1:])
     if raw_argv[0] == "sources":

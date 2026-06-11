@@ -3049,6 +3049,33 @@ def test_merge_end_to_end_mixed_input_formats(tmp_path):
     assert "Hello" in content
 
 
+def test_merge_missing_requested_languages_suggests_detected_languages(tmp_path):
+    import contextlib
+    import io
+
+    (tmp_path / "Show.S01E01.en.srt").write_text(
+        "1\n00:00:01,000 --> 00:00:03,000\nHello\n", encoding="utf-8")
+    (tmp_path / "Show.S01E01.es.srt").write_text(
+        "1\n00:00:01,000 --> 00:00:03,000\nHola\n", encoding="utf-8")
+
+    buf = io.StringIO()
+    with contextlib.redirect_stdout(buf):
+        rc = MODULE["combine_main"]([
+            str(tmp_path), "-l", "ja,ko", "--dry-run",
+        ])
+
+    out = buf.getvalue()
+    assert rc == 1
+    assert "Detected languages in this folder:" in out
+    assert "en:" in out
+    assert "es:" in out
+    assert "Requested but not detected: ja, ko" in out
+    assert "Try: getsubtitle merge PATH -l" in out
+    assert "What you can do:" in out
+    assert "getsubtitle fetch PATH -l ja,ko" in out
+    assert "getsubtitle inspect PATH" in out
+
+
 def test_multi_variant_vtt_prefers_japanese_ruby_side_file():
     import tempfile
     from pathlib import Path
@@ -6084,7 +6111,7 @@ def test_workflow_topic_help_alias_is_beginner_facing():
     with contextlib.redirect_stdout(out2), _isolated_config(None):
         rc = MODULE["main"](["--help"])
     assert rc == 0
-    assert "--help fetch | translate | modify | merge | workflow" in out2.getvalue()
+    assert "--help fetch | translate | modify | merge | inspect | workflow" in out2.getvalue()
 
 
 def test_merge_topic_help_renders_with_expected_content():
@@ -6137,6 +6164,7 @@ def test_parse_season_from_folder_name_recognises_common_forms():
     assert p("1기") == 1
     assert p("2기") == 2
     assert p("3기") == 3
+    assert p("2기") == 2
     # Compact form
     assert p("S01") == 1
     assert p("s2") == 2
@@ -6144,6 +6172,36 @@ def test_parse_season_from_folder_name_recognises_common_forms():
     assert p("MF Ghost") is None
     assert p("Moving (2023)") is None
     assert p("") is None
+
+
+def test_fetch_rejects_probable_library_root_without_subdirectory(tmp_path):
+    import pytest
+
+    root = tmp_path / "Movies"
+    root.mkdir()
+    for idx in range(31):
+        (root / f"Movie {idx:02d}").mkdir()
+
+    with pytest.raises(MODULE["CliError"]) as exc:
+        MODULE["fetch_main"]([str(root), "-l", "ja,ko"])
+
+    msg = str(exc.value)
+    assert "media library root" in msg
+    assert "--subdirectory" in msg
+
+
+def test_fetch_rejects_bluray_internal_folder(tmp_path):
+    import pytest
+
+    internal = tmp_path / "Movie" / "BDMV" / "BACKUP" / "CLIPINF"
+    internal.mkdir(parents=True)
+
+    with pytest.raises(MODULE["CliError"]) as exc:
+        MODULE["fetch_main"]([str(internal), "-l", "ja,ko"])
+
+    msg = str(exc.value)
+    assert "Blu-ray internal folder" in msg
+    assert "parent movie folder" in msg
 
 
 def test_detect_show_and_season_handles_three_layouts():
@@ -6283,19 +6341,17 @@ def test_batch_walk_targets_finds_folders_and_bare_files():
 def test_fetch_main_subdirectory_dispatches_to_per_show_runs():
     # `getsubtitle fetch ROOT --subdirectory` should walk every immediate
     # subdir of ROOT and run a per-show fetch for each. We don't run real
-    # subprocess calls — patch subprocess.run to capture them.
+    # subprocess calls — patch _batch_run to capture them.
     import tempfile, io, contextlib
     from pathlib import Path
     scope = MODULE["fetch_main"].__globals__
-    saved_run = scope["subprocess"].run
+    saved_batch_run = scope["_batch_run"]
 
     captured: list[list[str]] = []
-    class _FakeResult:
-        returncode = 0
-    def fake_run(args, **kwargs):
+    def fake_batch_run(args, dry_run=False, **kwargs):
         captured.append(args)
-        return _FakeResult()
-    scope["subprocess"].run = fake_run
+        return 0
+    scope["_batch_run"] = fake_batch_run
 
     # Patch profile detection to a known value so we don't hit TMDB.
     saved_detect = scope["detect_profile_from_title"]
@@ -6318,7 +6374,7 @@ def test_fetch_main_subdirectory_dispatches_to_per_show_runs():
                 assert any("Show A" in " ".join(c) for c in fetch_calls), captured
                 assert any("Show B" in " ".join(c) for c in fetch_calls), captured
     finally:
-        scope["subprocess"].run = saved_run
+        scope["_batch_run"] = saved_batch_run
         scope["detect_profile_from_title"] = saved_detect
 
 
@@ -6326,17 +6382,15 @@ def test_fetch_main_profile_override_applies_to_all_folders():
     import tempfile, io, contextlib
     from pathlib import Path
     scope = MODULE["fetch_main"].__globals__
-    saved_run = scope["subprocess"].run
+    saved_batch_run = scope["_batch_run"]
     captured_langs: list[str] = []
-    class _FakeResult:
-        returncode = 0
-    def fake_run(args, **kwargs):
+    def fake_batch_run(args, dry_run=False, **kwargs):
         # Pull the -l value so we can verify the profile actually drove it.
         for i, a in enumerate(args):
             if a == "-l" and i + 1 < len(args):
                 captured_langs.append(args[i + 1])
-        return _FakeResult()
-    scope["subprocess"].run = fake_run
+        return 0
+    scope["_batch_run"] = fake_batch_run
 
     # Force the detector to ja so we'd normally get -l ko fetches, but
     # --profile en should override and give us -l es,ko fetches.
@@ -6354,7 +6408,7 @@ def test_fetch_main_profile_override_applies_to_all_folders():
                         "--profile", "en", "--run",
                     ])
     finally:
-        scope["subprocess"].run = saved_run
+        scope["_batch_run"] = saved_batch_run
         scope["detect_profile_from_title"] = saved_detect
     # en profile fetches es+ko, not ko alone.
     assert any("es,ko" in lv for lv in captured_langs), captured_langs
@@ -6364,19 +6418,16 @@ def test_fetch_main_path_form_respects_explicit_languages_over_profile_defaults(
     import tempfile, io, contextlib
     from pathlib import Path
     scope = MODULE["fetch_main"].__globals__
-    saved_run = scope["subprocess"].run
+    saved_batch_run = scope["_batch_run"]
     captured_langs: list[str] = []
 
-    class _FakeResult:
-        returncode = 0
-
-    def fake_run(args, **kwargs):
+    def fake_batch_run(args, dry_run=False, **kwargs):
         for i, a in enumerate(args):
             if a == "-l" and i + 1 < len(args):
                 captured_langs.append(args[i + 1])
-        return _FakeResult()
+        return 0
 
-    scope["subprocess"].run = fake_run
+    scope["_batch_run"] = fake_batch_run
     saved_detect = scope["detect_profile_from_title"]
     scope["detect_profile_from_title"] = lambda title, year=None: "en"
     try:
@@ -6393,7 +6444,7 @@ def test_fetch_main_path_form_respects_explicit_languages_over_profile_defaults(
                     ])
                 text = out.getvalue()
     finally:
-        scope["subprocess"].run = saved_run
+        scope["_batch_run"] = saved_batch_run
         scope["detect_profile_from_title"] = saved_detect
 
     assert captured_langs == ["ja,ko"], captured_langs
@@ -6406,18 +6457,15 @@ def test_fetch_main_path_form_respects_title_override():
     import tempfile, io, contextlib
     from pathlib import Path
     scope = MODULE["fetch_main"].__globals__
-    saved_run = scope["subprocess"].run
+    saved_batch_run = scope["_batch_run"]
     saved_detect = scope["detect_profile_from_title"]
     captured: list[list[str]] = []
 
-    class _FakeResult:
-        returncode = 0
-
-    def fake_run(args, **kwargs):
+    def fake_batch_run(args, dry_run=False, **kwargs):
         captured.append(args)
-        return _FakeResult()
+        return 0
 
-    scope["subprocess"].run = fake_run
+    scope["_batch_run"] = fake_batch_run
     scope["detect_profile_from_title"] = lambda title, year=None: "ja"
     try:
         with tempfile.TemporaryDirectory() as tmp:
@@ -6431,7 +6479,7 @@ def test_fetch_main_path_form_respects_title_override():
                 ])
         assert rc == 0
     finally:
-        scope["subprocess"].run = saved_run
+        scope["_batch_run"] = saved_batch_run
         scope["detect_profile_from_title"] = saved_detect
 
     assert len(captured) == 1
@@ -6445,18 +6493,15 @@ def test_fetch_main_explicit_season_folder_fetches_once_with_parent_title():
     import tempfile, io, contextlib
     from pathlib import Path
     scope = MODULE["fetch_main"].__globals__
-    saved_run = scope["subprocess"].run
+    saved_batch_run = scope["_batch_run"]
     saved_detect = scope["detect_profile_from_title"]
     captured: list[list[str]] = []
 
-    class _FakeResult:
-        returncode = 0
-
-    def fake_run(args, **kwargs):
+    def fake_batch_run(args, dry_run=False, **kwargs):
         captured.append(args)
-        return _FakeResult()
+        return 0
 
-    scope["subprocess"].run = fake_run
+    scope["_batch_run"] = fake_batch_run
     scope["detect_profile_from_title"] = lambda title, year=None: "ja"
     try:
         with tempfile.TemporaryDirectory() as tmp:
@@ -6468,7 +6513,7 @@ def test_fetch_main_explicit_season_folder_fetches_once_with_parent_title():
                 rc = MODULE["main"](["fetch", str(season), "--languages", "ja,ko", "--run"])
         assert rc == 0
     finally:
-        scope["subprocess"].run = saved_run
+        scope["_batch_run"] = saved_batch_run
         scope["detect_profile_from_title"] = saved_detect
 
     assert len(captured) == 1
@@ -6483,18 +6528,15 @@ def test_fetch_main_explicit_video_file_scopes_to_that_episode():
     import tempfile, io, contextlib
     from pathlib import Path
     scope = MODULE["fetch_main"].__globals__
-    saved_run = scope["subprocess"].run
+    saved_batch_run = scope["_batch_run"]
     saved_detect = scope["detect_profile_from_title"]
     captured: list[list[str]] = []
 
-    class _FakeResult:
-        returncode = 0
-
-    def fake_run(args, **kwargs):
+    def fake_batch_run(args, dry_run=False, **kwargs):
         captured.append(args)
-        return _FakeResult()
+        return 0
 
-    scope["subprocess"].run = fake_run
+    scope["_batch_run"] = fake_batch_run
     scope["detect_profile_from_title"] = lambda title, year=None: "ja"
     try:
         with tempfile.TemporaryDirectory() as tmp:
@@ -6505,7 +6547,7 @@ def test_fetch_main_explicit_video_file_scopes_to_that_episode():
                 rc = MODULE["main"](["fetch", str(video), "--languages", "ja,ko", "--run"])
         assert rc == 0
     finally:
-        scope["subprocess"].run = saved_run
+        scope["_batch_run"] = saved_batch_run
         scope["detect_profile_from_title"] = saved_detect
 
     assert len(captured) == 1
@@ -6522,14 +6564,12 @@ def test_fetch_main_dry_run_is_default_for_path_form():
     import tempfile, io, contextlib
     from pathlib import Path
     scope = MODULE["fetch_main"].__globals__
-    saved_run = scope["subprocess"].run
-    all_args: list[list[str]] = []
-    class _FakeResult:
-        returncode = 0
-    def fake_run(args, **kwargs):
-        all_args.append(args)
-        return _FakeResult()
-    scope["subprocess"].run = fake_run
+    saved_batch_run = scope["_batch_run"]
+    all_calls: list[tuple[list[str], bool]] = []
+    def fake_batch_run(args, dry_run=False, **kwargs):
+        all_calls.append((args, dry_run))
+        return 0
+    scope["_batch_run"] = fake_batch_run
 
     saved_detect = scope["detect_profile_from_title"]
     scope["detect_profile_from_title"] = lambda title, year=None: "ja"
@@ -6546,15 +6586,15 @@ def test_fetch_main_dry_run_is_default_for_path_form():
                         "fetch", str(root), "--subdirectory",
                     ])
     finally:
-        scope["subprocess"].run = saved_run
+        scope["_batch_run"] = saved_batch_run
         scope["detect_profile_from_title"] = saved_detect
     # PATH form defaults to dry-run: every captured subprocess invocation
     # must carry --dry-run so the underlying getsubtitle call is a no-op.
-    assert all_args, "expected at least one captured call"
-    getsubtitle_calls = [args for args in all_args if args and args[0] != "security"]
+    assert all_calls, "expected at least one captured call"
+    getsubtitle_calls = [(args, dry_run) for args, dry_run in all_calls if args and args[0] != "security"]
     assert getsubtitle_calls, "expected at least one getsubtitle subprocess call"
-    for args in getsubtitle_calls:
-        assert "--dry-run" in args, f"expected --dry-run in {args}"
+    for args, dry_run in getsubtitle_calls:
+        assert dry_run is True, f"expected dry_run=True for {args}"
 
 
 def test_fetch_main_url_form_delegates_to_main_download_flow():
@@ -7634,7 +7674,7 @@ def test_inline_pipeline_path_fetch_adds_run_by_default():
 def test_batch_fetch_movie_override_does_not_emit_episode_all(tmp_path, monkeypatch):
     captured: list[list[str]] = []
     g = MODULE["_batch_fetch_one"].__globals__
-    monkeypatch.setitem(g, "_batch_run", lambda cmd, dry_run: captured.append(list(cmd)) or 0)
+    monkeypatch.setitem(g, "_batch_run", lambda cmd, dry_run, **_k: captured.append(list(cmd)) or 0)
     monkeypatch.setattr(g["shutil"], "which", lambda _name: "getsubtitle")
 
     MODULE["_batch_fetch_one"](
@@ -7657,6 +7697,252 @@ def test_batch_fetch_movie_override_does_not_emit_episode_all(tmp_path, monkeypa
     assert "--episode" not in cmd
     assert "-s" not in cmd
     assert "--season" not in cmd
+
+
+def test_batch_fetch_single_video_movie_folder_auto_omits_episode_all(tmp_path, monkeypatch):
+    captured: list[list[str]] = []
+    g = MODULE["_batch_fetch_one"].__globals__
+    monkeypatch.setitem(g, "_batch_run", lambda cmd, dry_run, **_k: captured.append(list(cmd)) or 0)
+    monkeypatch.setattr(g["shutil"], "which", lambda _name: "getsubtitle")
+    folder = tmp_path / "Stand by Me (1986)"
+    folder.mkdir()
+    video = folder / "Stand by Me (1986) Bluray-1080p.mp4"
+    video.write_bytes(b"video")
+
+    MODULE["_batch_fetch_one"](
+        target=folder,
+        show_folder=folder,
+        season=None,
+        profile="en",
+        dry_run=True,
+        fetch_langs_override=["ja"],
+    )
+
+    assert captured
+    cmd = captured[0]
+    assert "--movie" in cmd
+    assert "-e" not in cmd
+    assert "--episode" not in cmd
+    assert cmd[cmd.index("--title") + 1] == "Stand by Me (1986)"
+
+
+def test_batch_fetch_retries_with_filename_title_when_folder_title_fails(tmp_path, monkeypatch):
+    captured: list[list[str]] = []
+    g = MODULE["_batch_fetch_one"].__globals__
+
+    def fake_run(cmd, dry_run, **_k):
+        captured.append(list(cmd))
+        return 1 if len(captured) == 1 else 0
+
+    monkeypatch.setitem(g, "_batch_run", fake_run)
+    monkeypatch.setitem(g, "prepare_local_subtitle_sources_for_fetch", lambda *a, **k: ["ja"])
+    monkeypatch.setattr(g["shutil"], "which", lambda _name: "getsubtitle")
+    folder = tmp_path / "니아 오토마타"
+    folder.mkdir()
+    video = folder / "[Ohys-Raws] NieR Automata Ver1.1a - 12 END (BS11 1280x720 x264 AAC).mp4"
+    video.write_bytes(b"video")
+
+    rc = MODULE["_batch_fetch_one"](
+        target=video,
+        show_folder=folder,
+        season=None,
+        profile="ja",
+        dry_run=True,
+        fetch_langs_override=["ja"],
+    )
+
+    assert rc == 0
+    assert len(captured) == 2
+    first_title = captured[0][captured[0].index("--title") + 1]
+    second_title = captured[1][captured[1].index("--title") + 1]
+    assert first_title == "니아 오토마타"
+    assert second_title == "NieR Automata Ver1.1a"
+
+
+def test_batch_fetch_top_level_movie_file_prefers_filename_title(tmp_path, monkeypatch):
+    captured: list[list[str]] = []
+    g = MODULE["_batch_fetch_one"].__globals__
+    monkeypatch.setitem(g, "_batch_run", lambda cmd, dry_run, **_k: captured.append(list(cmd)) or 0)
+    monkeypatch.setitem(g, "prepare_local_subtitle_sources_for_fetch", lambda *a, **k: ["ja"])
+    monkeypatch.setattr(g["shutil"], "which", lambda _name: "getsubtitle")
+    library = tmp_path / "Movies"
+    library.mkdir()
+    video = library / "The Roundup 2022.E00.220518.HDRip.H264.720p.LAON.mp4"
+    video.write_bytes(b"video")
+
+    MODULE["_batch_fetch_one"](
+        target=video,
+        show_folder=library,
+        season=None,
+        profile="en",
+        dry_run=True,
+        fetch_langs_override=["ja"],
+    )
+
+    assert captured
+    cmd = captured[0]
+    assert cmd[cmd.index("--title") + 1] == "The Roundup (2022)"
+    assert "--movie" in cmd
+    assert "-e" not in cmd
+
+
+def test_batch_fetch_bdmv_stream_uses_parent_movie_folder_title(tmp_path, monkeypatch):
+    captured: list[list[str]] = []
+    g = MODULE["_batch_fetch_one"].__globals__
+    monkeypatch.setitem(g, "_batch_run", lambda cmd, dry_run, **_k: captured.append(list(cmd)) or 0)
+    monkeypatch.setitem(g, "prepare_local_subtitle_sources_for_fetch", lambda *a, **k: ["en"])
+    monkeypatch.setattr(g["shutil"], "which", lambda _name: "getsubtitle")
+    movie = tmp_path / "Movies" / "Ayrton.Senna.Beyond.the.Speed.of.Sound.2010.1080p.Blu-ray"
+    stream = movie / "BDMV" / "STREAM"
+    stream.mkdir(parents=True)
+    video = stream / "00000.m2ts"
+    video.write_bytes(b"video")
+
+    show_folder, season = MODULE["detect_show_and_season_for_video_file"](video)
+    MODULE["_batch_fetch_one"](
+        target=video,
+        show_folder=show_folder,
+        season=season,
+        profile="en",
+        dry_run=True,
+        fetch_langs_override=["en"],
+    )
+
+    assert captured
+    cmd = captured[0]
+    assert cmd[cmd.index("--title") + 1] == "Ayrton Senna Beyond the Speed of Sound (2010)"
+    assert "--movie" in cmd
+    assert "-e" not in cmd
+
+
+def test_batch_fetch_single_video_movie_library_folder_without_year_is_movie(tmp_path, monkeypatch):
+    captured: list[list[str]] = []
+    g = MODULE["_batch_fetch_one"].__globals__
+    monkeypatch.setitem(g, "_batch_run", lambda cmd, dry_run, **_k: captured.append(list(cmd)) or 0)
+    monkeypatch.setitem(g, "prepare_local_subtitle_sources_for_fetch", lambda *a, **k: ["en"])
+    monkeypatch.setattr(g["shutil"], "which", lambda _name: "getsubtitle")
+    movie = tmp_path / "Movies" / "Akira ()"
+    movie.mkdir(parents=True)
+    video = movie / "Akira.HDTV[720p]_(H.264_DTS-5.1).mkv"
+    video.write_bytes(b"video")
+
+    show_folder, season = MODULE["detect_show_and_season_for_video_file"](video)
+    MODULE["_batch_fetch_one"](
+        target=video,
+        show_folder=show_folder,
+        season=season,
+        profile="en",
+        dry_run=True,
+        fetch_langs_override=["en"],
+    )
+
+    assert captured
+    cmd = captured[0]
+    assert "--movie" in cmd
+    assert "-e" not in cmd
+
+
+def test_batch_fetch_release_folder_adds_clean_title_candidate(tmp_path):
+    folder = tmp_path / "Pride.And.Prejudice.2005.1080p.BluRay.x264-FLHD"
+    folder.mkdir()
+    (folder / "flhd-pap-sample.mkv").write_bytes(b"video")
+
+    titles = MODULE["_batch_title_candidates_for_fetch"](folder, folder, None)
+
+    assert titles[0] == "Pride And Prejudice (2005)"
+    assert "Pride.And.Prejudice.2005.1080p.BluRay.x264-FLHD" in titles
+
+
+def test_batch_fetch_dotted_folder_title_keeps_words_before_year(tmp_path):
+    folder = tmp_path / "Once Upon a Time. in Hollywood (2019)"
+    folder.mkdir()
+    (folder / "movie.mp4").write_bytes(b"video")
+
+    titles = MODULE["_batch_title_candidates_for_fetch"](folder, folder, None)
+
+    assert titles[0] == "Once Upon a Time in Hollywood (2019)"
+    assert "Once Upon a Time" not in titles
+
+
+def test_batch_fetch_title_candidates_skip_season_folder_fallback(tmp_path):
+    show = tmp_path / "The Last of Us"
+    season = show / "Season 01"
+    season.mkdir(parents=True)
+    video = season / "The.Last.of.Us.S01E01.mkv"
+    video.write_bytes(b"video")
+
+    show_folder, parsed_season = MODULE["detect_show_and_season_for_video_file"](video)
+    titles = MODULE["_batch_title_candidates_for_fetch"](season, show_folder, None)
+
+    assert parsed_season == 1
+    assert "The Last of Us" in titles
+    assert "Season 01" not in titles
+
+
+def test_batch_fetch_release_number_video_uses_that_episode(tmp_path, monkeypatch):
+    captured: list[list[str]] = []
+    g = MODULE["_batch_fetch_one"].__globals__
+    monkeypatch.setitem(g, "_batch_run", lambda cmd, dry_run, **_k: captured.append(list(cmd)) or 0)
+    monkeypatch.setitem(g, "prepare_local_subtitle_sources_for_fetch", lambda *a, **k: ["ko"])
+    monkeypatch.setattr(g["shutil"], "which", lambda _name: "getsubtitle")
+    show = tmp_path / "Takagi-san"
+    show.mkdir()
+    video = show / "[Ohys-Raws] Karakai Jouzu no Takagi-san 2 - 07 (MX 1280x720 x264 AAC).mp4"
+    video.write_bytes(b"video")
+
+    MODULE["_batch_fetch_one"](
+        target=video,
+        show_folder=show,
+        season=None,
+        profile="en",
+        dry_run=True,
+        fetch_langs_override=["ko"],
+    )
+
+    assert captured
+    cmd = captured[0]
+    assert "-e" in cmd
+    assert cmd[cmd.index("-e") + 1] == "7"
+
+
+def test_batch_run_timeout_returns_clean_nonzero(monkeypatch, capsys):
+    import subprocess
+
+    scope = MODULE["_batch_run"].__globals__
+    terminated = []
+
+    class FakeProc:
+        pid = 12345
+        returncode = None
+
+        def communicate(self, timeout=None):
+            raise subprocess.TimeoutExpired(cmd=["getsubtitle"], timeout=timeout)
+
+    def fake_popen(*_args, **_kwargs):
+        return FakeProc()
+
+    def fake_terminate(proc):
+        terminated.append(proc.pid)
+
+    monkeypatch.setattr(scope["subprocess"], "Popen", fake_popen)
+    monkeypatch.setitem(scope, "_terminate_batch_process", fake_terminate)
+
+    rc = MODULE["_batch_run"](["getsubtitle", "--title", "Slow"], dry_run=True, timeout=1)
+
+    out = capsys.readouterr().out
+    assert rc == 124
+    assert terminated == [12345]
+    assert "Search took longer than 1s" in out
+    assert "Try again later" in out
+
+
+def test_batch_fetch_timeout_cap_is_two_minutes(tmp_path):
+    show = tmp_path / "Show"
+    show.mkdir()
+    for ep in range(1, 6):
+        (show / f"Show.S01E{ep:02d}.mkv").write_bytes(b"video")
+
+    assert MODULE["_batch_fetch_timeout_seconds"](show, ["ja", "ko"]) == 120
 
 
 def test_pipeline_url_source_does_not_auto_add_run():
@@ -10020,6 +10306,26 @@ def test_interactive_non_tty_raises_clean_error():
         # On a CI box stdin may be a tty surprisingly; if so the wizard
         # would have tried to read input and EOFed. Either is acceptable.
         pass
+
+
+def test_interactive_setup_profile_quit_returns_cleanly(monkeypatch, capsys):
+    g = MODULE["interactive_main"].__globals__
+    profile = MODULE["_SetupChoice"](
+        native=["en"],
+        learning=["ja"],
+        content="anime",
+        venue="browser",
+        mt="none",
+        output_format="vtt",
+    )
+    monkeypatch.setitem(g, "_wizard_is_interactive", lambda: True)
+    monkeypatch.setitem(g, "_setup_load_profile", lambda: profile)
+    monkeypatch.setattr("builtins.input", lambda _prompt: "q")
+
+    assert MODULE["interactive_main"]([]) == 130
+    out = capsys.readouterr().out
+    assert "Setup profile found" in out
+    assert "Cancelled." in out
 
 
 def test_wizard_emit_cli_uses_canonical_flags():
@@ -14163,10 +14469,214 @@ def test_scan_video_files_ignores_macos_appledouble_sidecars(tmp_path):
     assert found == [real]
 
 
+def test_inspect_main_single_file_lists_embedded_and_sidecar_tracks(tmp_path, monkeypatch, capsys):
+    video = tmp_path / "Movie.mp4"
+    video.write_bytes(b"video")
+    (tmp_path / "Movie.ko.ass").write_text("[Script Info]\n", encoding="utf-8")
+
+    def fake_probe(_path):
+        return [
+            {"index": 2, "codec_name": "subrip", "tags": {"language": "eng", "title": "English CC"}},
+            {"index": 3, "codec_name": "hdmv_pgs_subtitle", "tags": {"language": "jpn"}},
+        ]
+
+    g = MODULE["inspect_subtitle_tracks_for_video"].__globals__
+    monkeypatch.setitem(g, "_ffprobe_subtitle_streams", fake_probe)
+
+    assert MODULE["inspect_main"]([str(video)]) == 0
+    out = capsys.readouterr().out
+    assert "Movie.mp4" in out
+    assert "stream 2: English (en)" in out
+    assert "English CC" in out
+    assert "extractable as .srt" in out
+    assert "stream 3: Japanese (ja)" in out
+    assert "not extractable: image subtitle" in out
+    assert "Movie.ko.ass: Korean (ko)" in out
+
+
+def test_inspect_main_folder_groups_same_subtitle_set(tmp_path, monkeypatch, capsys):
+    for name in ("Episode 01.mkv", "Episode 02.mkv"):
+        (tmp_path / name).write_bytes(b"video")
+
+    def fake_probe(_path):
+        return [
+            {"index": 2, "codec_name": "subrip", "tags": {"language": "eng"}},
+            {"index": 3, "codec_name": "ass", "tags": {"language": "kor"}},
+        ]
+
+    g = MODULE["inspect_subtitle_tracks_for_video"].__globals__
+    monkeypatch.setitem(g, "_ffprobe_subtitle_streams", fake_probe)
+
+    assert MODULE["inspect_main"]([str(tmp_path)]) == 0
+    out = capsys.readouterr().out
+    assert "Videos checked: 2" in out
+    assert "Same subtitle set found in every video" in out
+    assert "English (en) — embedded subrip" in out
+    assert "Korean (ko) — embedded ass" in out
+    assert "\nEpisode 01.mkv\n" not in out
+
+
+def test_inspect_main_single_video_folder_uses_single_video_wording(tmp_path, monkeypatch, capsys):
+    video = tmp_path / "Movie.mkv"
+    video.write_bytes(b"video")
+    (tmp_path / "Movie.ko.srt").write_text(
+        "1\n00:00:01,000 --> 00:00:02,000\n안녕\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "Movie Study.zh-ko.ass").write_text("[Script Info]\n", encoding="utf-8")
+
+    g = MODULE["inspect_subtitle_tracks_for_video"].__globals__
+    monkeypatch.setitem(g, "_ffprobe_subtitle_streams", lambda _path: [])
+
+    assert MODULE["inspect_main"]([str(tmp_path)]) == 0
+    out = capsys.readouterr().out
+    assert "Videos checked: 1" in out
+    assert "Video file\n  - Movie.mkv" in out
+    assert "Embedded tracks inside the video file" in out
+    assert "none found inside the .mkv file" in out
+    assert "External subtitle files matching this video" in out
+    assert "Movie.ko.srt: Korean (ko)" in out
+    assert "Other subtitle files in this folder" in out
+    assert "Movie Study.zh-ko.ass: Chinese (zh), Korean (ko)" in out
+    assert "Same subtitle set found in every video" not in out
+    assert "Notes:" not in out
+
+
+def test_inspect_main_folder_prints_per_file_when_subtitle_sets_differ(tmp_path, monkeypatch, capsys):
+    ep1 = tmp_path / "Episode 01.mkv"
+    ep2 = tmp_path / "Episode 02.mkv"
+    ep1.write_bytes(b"video")
+    ep2.write_bytes(b"video")
+
+    def fake_probe(path):
+        streams = [{"index": 2, "codec_name": "subrip", "tags": {"language": "eng"}}]
+        if Path(path).name == "Episode 02.mkv":
+            streams.append({"index": 3, "codec_name": "subrip", "tags": {"language": "kor"}})
+        return streams
+
+    g = MODULE["inspect_subtitle_tracks_for_video"].__globals__
+    monkeypatch.setitem(g, "_ffprobe_subtitle_streams", fake_probe)
+
+    assert MODULE["inspect_main"]([str(tmp_path)]) == 0
+    out = capsys.readouterr().out
+    assert "Subtitle sets differ by file" in out
+    assert "Episode 01.mkv" in out
+    assert "Episode 02.mkv" in out
+    assert "stream 3: Korean (ko)" in out
+
+
+def test_inspect_command_routes_and_has_public_help_topic(tmp_path, monkeypatch, capsys):
+    video = tmp_path / "Movie.mkv"
+    video.write_bytes(b"video")
+    g = MODULE["inspect_subtitle_tracks_for_video"].__globals__
+    monkeypatch.setitem(g, "_ffprobe_subtitle_streams", lambda _path: [])
+
+    assert "inspect" in MODULE["HELP_TOPICS"]
+    assert MODULE["main"](["inspect", str(video)]) == 0
+    assert "Subtitle inspection" in capsys.readouterr().out
+    assert MODULE["main"](["inspect", "--help"]) == 0
+    assert "Inspect local video files" in capsys.readouterr().out
+
+
+def test_inspect_no_interactive_suppresses_followup_menu(tmp_path, monkeypatch, capsys):
+    video = tmp_path / "Movie.mkv"
+    video.write_bytes(b"video")
+    (tmp_path / "Movie.en.srt").write_text("1\n00:00:01,000 --> 00:00:02,000\nHi\n", encoding="utf-8")
+    (tmp_path / "Movie.ko.srt").write_text("1\n00:00:01,000 --> 00:00:02,000\n안녕\n", encoding="utf-8")
+    g = MODULE["inspect_main"].__globals__
+    monkeypatch.setitem(g, "_ffprobe_subtitle_streams", lambda _path: [])
+    monkeypatch.setitem(g, "_wizard_is_interactive", lambda: True)
+
+    assert MODULE["inspect_main"]([str(video), "--no-interactive"]) == 0
+    out = capsys.readouterr().out
+    assert "Subtitle inspection" in out
+    assert "What next?" not in out
+
+
+def test_inspect_menu_can_extract_embedded_subtitles(tmp_path, monkeypatch, capsys):
+    video = tmp_path / "Movie.mkv"
+    video.write_bytes(b"video")
+    calls: list[list[str]] = []
+    g = MODULE["inspect_main"].__globals__
+    monkeypatch.setitem(g, "_ffprobe_subtitle_streams", lambda _path: [
+        {"index": 2, "codec_name": "subrip", "tags": {"language": "eng"}},
+    ])
+    monkeypatch.setitem(g, "_wizard_is_interactive", lambda: True)
+    monkeypatch.setitem(g, "modify_main", lambda argv: calls.append(list(argv)) or 0)
+    monkeypatch.setattr("builtins.input", lambda _prompt: "1")
+
+    assert MODULE["inspect_main"]([str(video)]) == 0
+    out = capsys.readouterr().out
+    assert "What next?" in out
+    assert "1) Extract embedded subtitles" in out
+    assert calls == [[str(video), "--extract-mkv-subs"]]
+
+
+def test_inspect_menu_can_merge_detected_subtitles(tmp_path, monkeypatch, capsys):
+    video = tmp_path / "Movie.mkv"
+    video.write_bytes(b"video")
+    (tmp_path / "Movie.en.srt").write_text("1\n00:00:01,000 --> 00:00:02,000\nHi\n", encoding="utf-8")
+    (tmp_path / "Movie.ko.srt").write_text("1\n00:00:01,000 --> 00:00:02,000\n안녕\n", encoding="utf-8")
+    captured = {}
+    answers = iter(["1"])
+    g = MODULE["inspect_main"].__globals__
+    monkeypatch.setitem(g, "_ffprobe_subtitle_streams", lambda _path: [])
+    monkeypatch.setitem(g, "_wizard_is_interactive", lambda: True)
+
+    def fake_interactive(_argv, initial_state=None):
+        captured["state"] = initial_state
+        return 0
+
+    monkeypatch.setitem(g, "interactive_main", fake_interactive)
+    monkeypatch.setattr("builtins.input", lambda _prompt: next(answers))
+
+    assert MODULE["inspect_main"]([str(video)]) == 0
+    out = capsys.readouterr().out
+    assert "1) Merge subtitles" in out
+    assert "2) Search for subtitles" in out
+    assert "Starting the workflow builder with this path and detected languages prefilled: en, ko." in out
+    state = captured["state"]
+    assert state.source == str(tmp_path)
+    assert state.source_kind == "path"
+    assert state.steps == {"modify", "merge"}
+    assert state.languages == ["en", "ko"]
+    assert state._initial_prefilled == {"steps", "source", "languages"}
+    assert state._skip_setup_profile is True
+    assert MODULE["_wizard_step_prefilled"]("source", state) is True
+
+
+def test_inspect_menu_search_starts_wizard_with_prefilled_path(tmp_path, monkeypatch, capsys):
+    video = tmp_path / "Movie.mkv"
+    video.write_bytes(b"video")
+    captured = {}
+    g = MODULE["inspect_main"].__globals__
+    monkeypatch.setitem(g, "_ffprobe_subtitle_streams", lambda _path: [])
+    monkeypatch.setitem(g, "_wizard_is_interactive", lambda: True)
+
+    def fake_interactive(_argv, initial_state=None):
+        captured["state"] = initial_state
+        return 0
+
+    monkeypatch.setitem(g, "interactive_main", fake_interactive)
+    monkeypatch.setattr("builtins.input", lambda _prompt: "1")
+
+    assert MODULE["inspect_main"]([str(video)]) == 0
+    out = capsys.readouterr().out
+    assert "1) Search for subtitles" in out
+    state = captured["state"]
+    assert state.source == str(video)
+    assert state.source_kind == "path"
+    assert state.steps == {"fetch"}
+    assert state._initial_prefilled == {"steps"}
+    assert state._inspect_prefilled_path is True
+    assert state._skip_setup_profile is True
+    assert "Starting the workflow builder with this path prefilled." in out
+
+
 def test_fetch_path_uses_embedded_subtitles_before_online(tmp_path, monkeypatch):
     captured: list[list[str]] = []
     g = MODULE["_batch_fetch_one"].__globals__
-    monkeypatch.setitem(g, "_batch_run", lambda cmd, dry_run: captured.append(list(cmd)) or 0)
+    monkeypatch.setitem(g, "_batch_run", lambda cmd, dry_run, **_k: captured.append(list(cmd)) or 0)
 
     def fake_probe(_path):
         return [
@@ -14196,7 +14706,7 @@ def test_fetch_path_uses_embedded_subtitles_before_online(tmp_path, monkeypatch)
 def test_fetch_path_smi_sidecar_suppresses_online_for_that_language(tmp_path, monkeypatch):
     captured: list[list[str]] = []
     g = MODULE["_batch_fetch_one"].__globals__
-    monkeypatch.setitem(g, "_batch_run", lambda cmd, dry_run: captured.append(list(cmd)) or 0)
+    monkeypatch.setitem(g, "_batch_run", lambda cmd, dry_run, **_k: captured.append(list(cmd)) or 0)
     monkeypatch.setitem(g, "_ffprobe_subtitle_streams", lambda _path: [])
     video = tmp_path / "The.God.of.Cookery.1996.mkv"
     video.write_bytes(b"video")
@@ -14229,7 +14739,7 @@ def test_fetch_path_smi_sidecar_suppresses_online_for_that_language(tmp_path, mo
 def test_fetch_path_single_video_counts_same_stem_sidecars_before_embedded(tmp_path, monkeypatch):
     captured: list[list[str]] = []
     g = MODULE["_batch_fetch_one"].__globals__
-    monkeypatch.setitem(g, "_batch_run", lambda cmd, dry_run: captured.append(list(cmd)) or 0)
+    monkeypatch.setitem(g, "_batch_run", lambda cmd, dry_run, **_k: captured.append(list(cmd)) or 0)
 
     def fake_probe(_path):
         return [
@@ -14257,6 +14767,81 @@ def test_fetch_path_single_video_counts_same_stem_sidecars_before_embedded(tmp_p
 
     assert rc == 0
     assert captured == []
+
+
+def test_fetch_path_single_video_uses_nonmatching_subtitles_as_fallback(tmp_path, monkeypatch):
+    captured: list[list[str]] = []
+    g = MODULE["_batch_fetch_one"].__globals__
+    monkeypatch.setitem(g, "_batch_run", lambda cmd, dry_run, **_k: captured.append(list(cmd)) or 0)
+    monkeypatch.setitem(g, "_ffprobe_subtitle_streams", lambda _path: [])
+    video = tmp_path / "Movie.mkv"
+    video.write_bytes(b"video")
+    (tmp_path / "Different.Release.zh.srt").write_text(
+        "1\n00:00:01,000 --> 00:00:02,000\n中文学习中文学习中文学习中文学习中文学习\n",
+        encoding="utf-8",
+    )
+
+    rc = MODULE["_batch_fetch_one"](
+        target=video,
+        show_folder=tmp_path,
+        season=None,
+        profile="en",
+        dry_run=True,
+        fetch_langs_override=["zh"],
+        title_override="Movie",
+        movie_override=True,
+    )
+
+    assert rc == 0
+    assert captured == []
+
+
+def test_fetch_path_single_video_fallback_respects_release_episode(tmp_path, monkeypatch):
+    captured: list[list[str]] = []
+    g = MODULE["_batch_fetch_one"].__globals__
+    monkeypatch.setitem(g, "_batch_run", lambda cmd, dry_run, **_k: captured.append(list(cmd)) or 0)
+    monkeypatch.setitem(g, "_ffprobe_subtitle_streams", lambda _path: [])
+    video = tmp_path / "Show - 12 END (HDTV).mp4"
+    video.write_bytes(b"video")
+    (tmp_path / "Show.S01E01.ko.srt").write_text(
+        "1\n00:00:01,000 --> 00:00:02,000\n안녕하세요\n",
+        encoding="utf-8",
+    )
+
+    rc = MODULE["_batch_fetch_one"](
+        target=video,
+        show_folder=tmp_path,
+        season=None,
+        profile="en",
+        dry_run=True,
+        fetch_langs_override=["ko"],
+        title_override="Show",
+        movie_override=False,
+    )
+
+    assert rc == 0
+    assert captured
+    cmd = captured[0]
+    assert "-l" in cmd
+    assert cmd[cmd.index("-l") + 1] == "ko"
+
+
+def test_modify_explicit_cleanup_ignores_saved_reading_default(tmp_path, capsys):
+    sub = tmp_path / "Movie.en.srt"
+    sub.write_text("1\n00:00:01,000 --> 00:00:02,000\nHello\n", encoding="utf-8")
+    config = """
+[modify]
+reading = "ja:hiragana"
+reading_format = "vtt"
+"""
+    with _isolated_config(config):
+        rc = MODULE["modify_main"]([str(tmp_path), "--strip-cc-noise", "--single-line", "--dry-run"])
+
+    assert rc == 0
+    out = capsys.readouterr().out
+    assert "Operations: strip CC noise, flatten single-line" in out
+    assert "furigana" not in out
+    assert "--reading ja:* requested" not in out
 
 
 def test_convert_text_subtitle_to_srt_file_converts_ass_source():

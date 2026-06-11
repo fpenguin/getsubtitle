@@ -98,11 +98,31 @@ final multi-language subtitle is readable enough to use for study.
 - v1.0 should not require users to understand provider internals, subtitle
   formats, or TOML before getting one useful multi-language subtitle file.
 
+## v0.9.8.1 — what's new
+
+- **PATH fetch timeout cleanup.** Timed-out local fetch searches now terminate
+  the whole child process group, so provider calls do not keep running in the
+  background after GetSubtitle reports a clean timeout.
+- **Inspect is scriptable.** `getsubtitle inspect PATH --no-interactive`
+  prints the local subtitle report without opening the follow-up menu, making
+  it safer for QA and automation.
+- **Better local title guesses.** Automatic PATH fetches now skip weak fallback
+  titles such as `Season 01`, `STREAM`, and `BDMV`, and keep dotted movie
+  titles like `Once Upon a Time. in Hollywood (2019)` intact.
+- **More recovery guidance.** Merge failures caused by missing requested
+  languages now show detected languages and concrete next commands.
+- **Validation.** Full suite passes, and a final 100-case random Plex QA pass
+  completed with no crashes, no harness timeouts, and clean bounded provider
+  timeouts.
+
 ## v0.9.8 — what's new
 
 - **Safer subtitle fetching.** Provider results now get stronger title,
   episode, and language checks before saving. Obvious mismatches are rejected
   instead of silently producing the wrong subtitle file.
+- **Bounded local fetch attempts.** Local PATH fetches cap each online search
+  attempt at about two minutes, returning a clean retry/manual-search path
+  instead of a long silent wait.
 - **Bad-download guardrails.** HTML error pages, heavily corrupted text, and
   malformed local subtitles are detected earlier so they do not flow into
   cleanup, translation, or merge.
@@ -110,6 +130,9 @@ final multi-language subtitle is readable enough to use for study.
   subtitles and embedded text tracks before falling back to online subtitle
   search. Embedded extraction writes via temporary files so failed extraction
   cannot damage existing sidecars.
+- **Inspect-to-wizard bridge.** `getsubtitle inspect PATH` lists embedded
+  tracks, matching sidecar subtitles, and other subtitle files, then can hand
+  off to the guided workflow with path/language context prefilled.
 - **Safer workflow writes.** Saved workflows and subtitle outputs now use
   overwrite checks or atomic writes in more places, reducing partial-file and
   accidental-overwrite risk.
