@@ -2,6 +2,22 @@
 
 The main installer is recommended for most users.
 
+Requires Python 3.10 or newer. Check with:
+
+```sh
+python3 --version
+```
+
+If macOS reports Python 3.9 or older, install a newer Python first:
+
+```sh
+brew install python@3.11
+```
+
+GetSubtitle itself does not require ffmpeg for online subtitle search, but
+ffmpeg/ffprobe are needed to inspect or extract embedded subtitle tracks from
+video files. Run `getsubtitle doctor` after installing to check both.
+
 ## macOS / Linux
 
 ```sh

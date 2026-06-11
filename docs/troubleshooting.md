@@ -58,14 +58,14 @@ getsubtitle fetch /path/to/movie-or-season-folder -l ja,en --run
 ```
 
 `fetch PATH` checks embedded text tracks and subtitle files next to your videos
-before online search. Embedded extraction writes separate subtitle sidecar files;
-it does not modify the video file.
+before online search. Embedded extraction writes separate subtitle files beside
+the video; it does not modify the video file.
 
 ## Slow Subtitle Searches
 
-Local-folder fetches cap each online search attempt at about two minutes. If a
-provider stalls, GetSubtitle skips that attempt cleanly and suggests retrying,
-using a more specific title/ID, or searching manually.
+Local-folder fetches cap each online search attempt at about two minutes. If an
+online subtitle source stalls, GetSubtitle skips that attempt cleanly and
+suggests retrying, using a more specific title/ID, or searching manually.
 
 ## Responsible Use Reminder
 

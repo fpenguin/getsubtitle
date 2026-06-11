@@ -307,7 +307,7 @@ open_folder = false
 # Default: false.
 force = false
 
-# Show raw subtitle-source counts and language tags from each source call.
+# Show raw subtitle-source counts and language tags from each online source call.
 # Useful when debugging why a subtitle wasn't found. Default: false.
 debug_providers = false
 

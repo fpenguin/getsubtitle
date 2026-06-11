@@ -526,7 +526,7 @@ def test_subtitle_search_outcome_distinguishes_rate_limit(capsys, tmp_path):
     )
     out = capsys.readouterr().out
     assert "Subtitle search was rate-limited" in out
-    assert "Possible cause:\n  A subtitle provider asked us to slow down." in out
+    assert "Possible cause:\n  A subtitle source asked us to slow down." in out
     assert "Also try searching for:\n  Kaizoku Ojo" in out
 
 
@@ -562,7 +562,7 @@ def test_no_subtitle_recovery_timeout_recommends_retry_first(monkeypatch, capsys
     )
     out = capsys.readouterr().out
     assert "Could not search for subtitles" in out
-    assert "Possible cause:\n  A subtitle provider did not respond." in out
+    assert "Possible cause:\n  A subtitle source did not respond." in out
     assert "Open subtitle search pages now? [y/N]" in out
     assert "What you can do" in out
     assert "Retry the search in a few minutes." in out
@@ -7407,8 +7407,6 @@ def test_pipeline_from_config_file_runs_full_pipeline():
 
 
 def test_minimal_toml_parse_matches_tomllib_for_supported_schema():
-    import tomllib
-
     text = """
     [fetch]
     languages = "ja,en"
@@ -7421,7 +7419,8 @@ def test_minimal_toml_parse_matches_tomllib_for_supported_schema():
     "ja:ko" = "qwen3:4b"
     """
 
-    assert MODULE["_minimal_toml_parse"](text) == tomllib.loads(text)
+    toml_mod = MODULE["_import_tomllib"]()
+    assert MODULE["_minimal_toml_parse"](text) == toml_mod.loads(text)
 
 
 def test_prepare_downloaded_subtitle_bytes_rejects_html_error_page():
@@ -7675,7 +7674,7 @@ def test_batch_fetch_movie_override_does_not_emit_episode_all(tmp_path, monkeypa
     captured: list[list[str]] = []
     g = MODULE["_batch_fetch_one"].__globals__
     monkeypatch.setitem(g, "_batch_run", lambda cmd, dry_run, **_k: captured.append(list(cmd)) or 0)
-    monkeypatch.setattr(g["shutil"], "which", lambda _name: "getsubtitle")
+    monkeypatch.setattr(g["shutil"], "which", lambda name: "getsubtitle" if name == "getsubtitle" else None)
 
     MODULE["_batch_fetch_one"](
         target=tmp_path,
@@ -7703,7 +7702,7 @@ def test_batch_fetch_single_video_movie_folder_auto_omits_episode_all(tmp_path, 
     captured: list[list[str]] = []
     g = MODULE["_batch_fetch_one"].__globals__
     monkeypatch.setitem(g, "_batch_run", lambda cmd, dry_run, **_k: captured.append(list(cmd)) or 0)
-    monkeypatch.setattr(g["shutil"], "which", lambda _name: "getsubtitle")
+    monkeypatch.setattr(g["shutil"], "which", lambda name: "getsubtitle" if name == "getsubtitle" else None)
     folder = tmp_path / "Stand by Me (1986)"
     folder.mkdir()
     video = folder / "Stand by Me (1986) Bluray-1080p.mp4"
@@ -7736,7 +7735,7 @@ def test_batch_fetch_retries_with_filename_title_when_folder_title_fails(tmp_pat
 
     monkeypatch.setitem(g, "_batch_run", fake_run)
     monkeypatch.setitem(g, "prepare_local_subtitle_sources_for_fetch", lambda *a, **k: ["ja"])
-    monkeypatch.setattr(g["shutil"], "which", lambda _name: "getsubtitle")
+    monkeypatch.setattr(g["shutil"], "which", lambda name: "getsubtitle" if name == "getsubtitle" else None)
     folder = tmp_path / "니아 오토마타"
     folder.mkdir()
     video = folder / "[Ohys-Raws] NieR Automata Ver1.1a - 12 END (BS11 1280x720 x264 AAC).mp4"
@@ -7764,7 +7763,7 @@ def test_batch_fetch_top_level_movie_file_prefers_filename_title(tmp_path, monke
     g = MODULE["_batch_fetch_one"].__globals__
     monkeypatch.setitem(g, "_batch_run", lambda cmd, dry_run, **_k: captured.append(list(cmd)) or 0)
     monkeypatch.setitem(g, "prepare_local_subtitle_sources_for_fetch", lambda *a, **k: ["ja"])
-    monkeypatch.setattr(g["shutil"], "which", lambda _name: "getsubtitle")
+    monkeypatch.setattr(g["shutil"], "which", lambda name: "getsubtitle" if name == "getsubtitle" else None)
     library = tmp_path / "Movies"
     library.mkdir()
     video = library / "The Roundup 2022.E00.220518.HDRip.H264.720p.LAON.mp4"
@@ -7791,7 +7790,7 @@ def test_batch_fetch_bdmv_stream_uses_parent_movie_folder_title(tmp_path, monkey
     g = MODULE["_batch_fetch_one"].__globals__
     monkeypatch.setitem(g, "_batch_run", lambda cmd, dry_run, **_k: captured.append(list(cmd)) or 0)
     monkeypatch.setitem(g, "prepare_local_subtitle_sources_for_fetch", lambda *a, **k: ["en"])
-    monkeypatch.setattr(g["shutil"], "which", lambda _name: "getsubtitle")
+    monkeypatch.setattr(g["shutil"], "which", lambda name: "getsubtitle" if name == "getsubtitle" else None)
     movie = tmp_path / "Movies" / "Ayrton.Senna.Beyond.the.Speed.of.Sound.2010.1080p.Blu-ray"
     stream = movie / "BDMV" / "STREAM"
     stream.mkdir(parents=True)
@@ -7820,7 +7819,7 @@ def test_batch_fetch_single_video_movie_library_folder_without_year_is_movie(tmp
     g = MODULE["_batch_fetch_one"].__globals__
     monkeypatch.setitem(g, "_batch_run", lambda cmd, dry_run, **_k: captured.append(list(cmd)) or 0)
     monkeypatch.setitem(g, "prepare_local_subtitle_sources_for_fetch", lambda *a, **k: ["en"])
-    monkeypatch.setattr(g["shutil"], "which", lambda _name: "getsubtitle")
+    monkeypatch.setattr(g["shutil"], "which", lambda name: "getsubtitle" if name == "getsubtitle" else None)
     movie = tmp_path / "Movies" / "Akira ()"
     movie.mkdir(parents=True)
     video = movie / "Akira.HDTV[720p]_(H.264_DTS-5.1).mkv"
@@ -7884,7 +7883,7 @@ def test_batch_fetch_release_number_video_uses_that_episode(tmp_path, monkeypatc
     g = MODULE["_batch_fetch_one"].__globals__
     monkeypatch.setitem(g, "_batch_run", lambda cmd, dry_run, **_k: captured.append(list(cmd)) or 0)
     monkeypatch.setitem(g, "prepare_local_subtitle_sources_for_fetch", lambda *a, **k: ["ko"])
-    monkeypatch.setattr(g["shutil"], "which", lambda _name: "getsubtitle")
+    monkeypatch.setattr(g["shutil"], "which", lambda name: "getsubtitle" if name == "getsubtitle" else None)
     show = tmp_path / "Takagi-san"
     show.mkdir()
     video = show / "[Ohys-Raws] Karakai Jouzu no Takagi-san 2 - 07 (MX 1280x720 x264 AAC).mp4"
@@ -7934,6 +7933,58 @@ def test_batch_run_timeout_returns_clean_nonzero(monkeypatch, capsys):
     assert terminated == [12345]
     assert "Search took longer than 1s" in out
     assert "Try again later" in out
+
+
+def test_batch_run_parent_sigterm_terminates_active_child(monkeypatch):
+    import pytest
+
+    scope = MODULE["_batch_run"].__globals__
+    signal_mod = scope["signal"]
+    installed_handlers = {}
+    restored_handlers = []
+    terminated = []
+
+    class FakeProc:
+        pid = 12345
+        returncode = None
+
+        def communicate(self, timeout=None):
+            installed_handlers[signal_mod.SIGTERM](signal_mod.SIGTERM, None)
+
+        def poll(self):
+            return None
+
+    def fake_popen(*_args, **_kwargs):
+        return FakeProc()
+
+    def fake_terminate(proc):
+        terminated.append(proc.pid)
+        proc.returncode = -signal_mod.SIGTERM
+
+    previous = {
+        signal_mod.SIGINT: object(),
+        signal_mod.SIGTERM: object(),
+    }
+
+    def fake_getsignal(sig):
+        return previous[sig]
+
+    def fake_signal(sig, handler):
+        installed_handlers[sig] = handler
+        restored_handlers.append((sig, handler))
+
+    monkeypatch.setattr(scope["subprocess"], "Popen", fake_popen)
+    monkeypatch.setitem(scope, "_terminate_batch_process", fake_terminate)
+    monkeypatch.setattr(signal_mod, "getsignal", fake_getsignal)
+    monkeypatch.setattr(signal_mod, "signal", fake_signal)
+
+    with pytest.raises(SystemExit) as exc:
+        MODULE["_batch_run"](["getsubtitle", "--title", "Slow"], dry_run=True, timeout=120)
+
+    assert exc.value.code == 128 + signal_mod.SIGTERM
+    assert terminated == [12345]
+    assert not scope["_ACTIVE_BATCH_PROCESSES"]
+    assert (signal_mod.SIGTERM, previous[signal_mod.SIGTERM]) in restored_handlers
 
 
 def test_batch_fetch_timeout_cap_is_two_minutes(tmp_path):
@@ -14398,6 +14449,26 @@ def test_plan_mkv_subtitle_extraction_skips_image_streams_and_names_text_outputs
         g["_ffprobe_subtitle_streams"] = saved_probe
 
 
+def test_ffprobe_missing_after_which_check_is_clierror(monkeypatch, tmp_path):
+    import pytest
+
+    video = tmp_path / "Movie.mkv"
+    video.write_bytes(b"video")
+    g = MODULE["_ffprobe_subtitle_streams"].__globals__
+    monkeypatch.setitem(g["shutil"].__dict__, "which", lambda name: "/usr/bin/ffprobe" if name == "ffprobe" else None)
+
+    def fake_run(*_args, **_kwargs):
+        raise FileNotFoundError("ffprobe")
+
+    monkeypatch.setitem(g["subprocess"].__dict__, "run", fake_run)
+
+    with pytest.raises(MODULE["CliError"]) as exc:
+        MODULE["_ffprobe_subtitle_streams"](video)
+
+    assert "ffprobe" in str(exc.value)
+    assert "Install ffmpeg first" in str(exc.value)
+
+
 def test_extract_mkv_subtitle_plan_writes_sidecar_atomically(tmp_path, monkeypatch):
     video = tmp_path / "Movie.mkv"
     video.write_bytes(b"video")
@@ -14429,6 +14500,32 @@ def test_extract_mkv_subtitle_plan_writes_sidecar_atomically(tmp_path, monkeypat
     assert "hello" in dest.read_text(encoding="utf-8")
     assert not list(tmp_path.glob(".Movie.en.srt.*"))
     assert calls and calls[0][-1] != str(dest)
+
+
+def test_extract_mkv_subtitle_plan_handles_missing_ffmpeg_after_which_check(tmp_path, monkeypatch):
+    video = tmp_path / "Movie.mkv"
+    video.write_bytes(b"video")
+    dest = tmp_path / "Movie.en.srt"
+    dest.write_text("EXISTING\n", encoding="utf-8")
+
+    g = MODULE["extract_mkv_subtitle_plan"].__globals__
+    monkeypatch.setitem(g["shutil"].__dict__, "which", lambda name: "/usr/bin/ffmpeg" if name == "ffmpeg" else None)
+
+    def fake_run(*_args, **_kwargs):
+        raise FileNotFoundError("ffmpeg")
+
+    monkeypatch.setitem(g["subprocess"].__dict__, "run", fake_run)
+
+    written, skipped, errors = MODULE["extract_mkv_subtitle_plan"](
+        [(video, 2, "en", "subrip", dest)],
+        force=True,
+    )
+
+    assert written == []
+    assert skipped == []
+    assert errors and "ffmpeg not found" in errors[0]
+    assert dest.read_text(encoding="utf-8") == "EXISTING\n"
+    assert not list(tmp_path.glob(".Movie.en.srt.*"))
 
 
 def test_extract_mkv_subtitle_plan_preserves_existing_on_ffmpeg_failure(tmp_path, monkeypatch):

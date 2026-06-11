@@ -31,7 +31,7 @@ into language-learning subtitle workflows. It serves **CLI power users** and
 
 **Human subtitles first.** Always prefer human-created subtitles; machine
 translation is a *fallback* that fills missing languages only. Never redesign
-workflows around MT being the primary source.
+workflows around AI translation being the primary source.
 
 ```text
 Fetch     → human subtitles
@@ -47,7 +47,7 @@ terminology.
 technical details on request.
 
 ```text
-Bad:   Provider timeout / HTTP 429 / Retry count 4 / Search provider failed
+Bad:   Source timeout / HTTP 429 / Retry count 4 / Search source failed
 Good:  Could not search for subtitles.
        Retry in a few minutes.
        Show technical details? [y/N]

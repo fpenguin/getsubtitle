@@ -98,6 +98,24 @@ final multi-language subtitle is readable enough to use for study.
 - v1.0 should not require users to understand provider internals, subtitle
   formats, or TOML before getting one useful multi-language subtitle file.
 
+## v0.9.9 — what's new
+
+- **CI/platform hardening.** Python 3.10 TOML fallback tests now use the same
+  loader path as the app, so clean Linux CI and local Python 3.11+ installs
+  exercise the intended compatibility chain.
+- **Cleaner local-tool failures.** Missing `ffprobe` / `ffmpeg` after a PATH
+  lookup now reports a clean GetSubtitle error instead of a traceback.
+- **Safer child-process cleanup.** Timed-out or externally terminated local
+  fetch batches clean up active child process groups so subtitle searches do
+  not keep running in the background.
+- **Release-facing docs/help cleanup.** README, topic help, install docs, and
+  troubleshooting now describe local embedded-track behavior, Python 3.10+
+  requirements, and workflow terminology consistently.
+- **Local QA artifacts ignored.** Generated `QA_*.md` stress-test plans are
+  kept out of release commits unless promoted intentionally into docs/tests.
+- **Validation.** Full 800+ test suite, help smoke checks, and packaging build
+  pass before tagging.
+
 ## v0.9.8.1 — what's new
 
 - **PATH fetch timeout cleanup.** Timed-out local fetch searches now terminate
@@ -685,7 +703,7 @@ vs original-file rename.
 
 ### Tests
 
-- 765 automated tests covering URL parsing, provider response shapes, TMDB / AniList resolution, low-confidence subtitle match gating, subtitle download sanity checks, SAMI parsing, VTT/ASS input parsing, MT helpers + auto_load/auto_unload, Argos direct/pivot package preflight, wizard run summaries, output/provider/coverage preflight, in-wizard pip dependency setup, setup onboarding UX, recoverable download timeouts, workflow save-path guardrails, editable smart defaults, explicit format selection, merge with format hints and font-size styling, Crunchyroll watch-URL metadata resolution, shared pipeline episode-scope inheritance, the wizard scenario harness, rename mode, the named pipeline registry, pipeline orchestration, `--config` CLI overrides, config validation, source smoke diagnostics, help system, and dispatch routing.
+- 800+ automated tests covering URL parsing, provider response shapes, TMDB / AniList resolution, low-confidence subtitle match gating, subtitle download sanity checks, SAMI parsing, VTT/ASS input parsing, AI-translation helpers + auto_load/auto_unload, Argos direct/pivot package preflight, wizard run summaries, output/provider/coverage preflight, in-wizard pip dependency setup, setup onboarding UX, recoverable download timeouts, workflow save-path guardrails, editable smart defaults, explicit format selection, merge with format hints and font-size styling, Crunchyroll watch-URL metadata resolution, shared workflow episode-scope inheritance, the wizard scenario harness, rename mode, the named workflow registry, workflow orchestration, `--config` CLI overrides, config validation, source smoke diagnostics, help system, and dispatch routing.
 
 ## v2.0 target: AI-assisted subtitle sync engine
 

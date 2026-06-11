@@ -9867,7 +9867,10 @@ def _ffprobe_subtitle_streams(path: Path) -> list[dict]:
         "-of", "json",
         str(path),
     ]
-    proc = subprocess.run(cmd, text=True, capture_output=True)
+    try:
+        proc = subprocess.run(cmd, text=True, capture_output=True)
+    except FileNotFoundError as e:
+        raise CliError("MKV subtitle extraction needs ffprobe on PATH. Install ffmpeg first.") from e
     if proc.returncode != 0:
         msg = (getattr(proc, "stderr", "") or getattr(proc, "stdout", "") or "ffprobe failed").strip()
         raise CliError(msg)
@@ -10108,7 +10111,7 @@ def _print_other_subtitle_files(video: Path) -> None:
 def _print_inspect_video_block(video: Path, tracks: list[SubtitleInspectionTrack]) -> None:
     print(f"\n{video.name}")
     if not tracks:
-        print("  - no embedded or matching sidecar subtitles found")
+        print("  - no embedded tracks or matching subtitle files found")
         return
     for track in tracks:
         print(_format_inspect_track(track, include_source=True))
@@ -10317,7 +10320,7 @@ def _inspect_continue_menu(
 def build_inspect_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(
         prog="getsubtitle inspect",
-        description="Inspect local video files or folders for embedded and sidecar subtitles.",
+        description="Inspect local video files or folders for embedded tracks and local subtitle files.",
         epilog=textwrap.dedent(
             """\
             Examples:
@@ -10378,7 +10381,7 @@ def inspect_main(argv: list[str]) -> int:
                     for track in sample:
                         print(_format_inspect_track(track, include_source=False))
                 else:
-                    print("  - no embedded or matching sidecar subtitles found")
+                    print("  - no embedded tracks or matching subtitle files found")
             else:
                 print("Subtitle sets differ by file:")
                 for video in video_files:
@@ -10439,6 +10442,8 @@ def extract_mkv_subtitle_plan(
             else:
                 msg = (proc.stderr or proc.stdout or "ffmpeg failed").strip()
                 errors.append(f"{video.name} stream {stream_index}: {msg}")
+        except FileNotFoundError:
+            errors.append(f"{video.name} stream {stream_index}: ffmpeg not found. Install ffmpeg first.")
         finally:
             with contextlib.suppress(OSError):
                 tmp_dest.unlink()
@@ -11460,6 +11465,54 @@ def _terminate_batch_process(proc: subprocess.Popen) -> None:
         proc.wait(timeout=5)
 
 
+_ACTIVE_BATCH_PROCESSES: set[subprocess.Popen] = set()
+
+
+def _terminate_active_batch_processes() -> None:
+    """Best-effort cleanup for child fetches if this process is interrupted."""
+    for proc in list(_ACTIVE_BATCH_PROCESSES):
+        if proc.poll() is None:
+            _terminate_batch_process(proc)
+
+
+@contextlib.contextmanager
+def _batch_process_guard(proc: subprocess.Popen):
+    """Register a child process and clean it up on SIGINT/SIGTERM.
+
+    `_batch_run` starts child searches in a separate process group so an
+    internal timeout can kill the whole tree. This guard handles the other
+    path: the parent itself being interrupted by Ctrl-C or an external timeout
+    wrapper before `_batch_run` reaches its own timeout handler.
+    """
+    _ACTIVE_BATCH_PROCESSES.add(proc)
+    guarded_signals = [signal.SIGINT]
+    if hasattr(signal, "SIGTERM"):
+        guarded_signals.append(signal.SIGTERM)
+    previous_handlers: dict[int, object] = {}
+
+    def cleanup_then_exit(signum, frame):  # noqa: ANN001 - signal handler API
+        _terminate_active_batch_processes()
+        if signum == signal.SIGINT:
+            raise KeyboardInterrupt
+        raise SystemExit(128 + int(signum))
+
+    for sig in guarded_signals:
+        try:
+            previous_handlers[sig] = signal.getsignal(sig)
+            signal.signal(sig, cleanup_then_exit)
+        except (OSError, ValueError):
+            # Non-main threads cannot install handlers; timeout cleanup still
+            # covers normal batch operation in that case.
+            pass
+    try:
+        yield
+    finally:
+        _ACTIVE_BATCH_PROCESSES.discard(proc)
+        for sig, handler in previous_handlers.items():
+            with contextlib.suppress(Exception):
+                signal.signal(sig, handler)
+
+
 def _batch_run(cmd: list[str], dry_run: bool, *, timeout: float | None = None) -> int:
     """Run a getsubtitle subprocess, printing the shell-quoted command first.
     Used so the user can copy-paste any single line if something looks off."""
@@ -11474,7 +11527,8 @@ def _batch_run(cmd: list[str], dry_run: bool, *, timeout: float | None = None) -
         popen_kwargs["start_new_session"] = True
     try:
         proc = subprocess.Popen(args, **popen_kwargs)
-        proc.communicate(timeout=timeout)
+        with _batch_process_guard(proc):
+            proc.communicate(timeout=timeout)
         return proc.returncode
     except subprocess.TimeoutExpired:
         _terminate_batch_process(proc)
@@ -13268,7 +13322,7 @@ def _merge_overrides_into_toml(data: dict, overrides: dict, verb_blocks: dict) -
 
 
 def _pipeline_registry_dir() -> Path:
-    """Folder holding named pipeline TOMLs, beside user_settings.toml."""
+    """Folder holding named workflow TOMLs, beside user_settings.toml."""
     return config_path().parent / "pipelines"
 
 
@@ -13282,14 +13336,14 @@ def _pipeline_registry_path(name: str) -> Path:
     )
     if bad:
         raise CliError(
-            f"Invalid pipeline name {name!r}. Use letters, numbers, dashes "
+            f"Invalid workflow name {name!r}. Use letters, numbers, dashes "
             "(no slashes, and not starting with '.' or '-')."
         )
     return _pipeline_registry_dir() / f"{safe}.toml"
 
 
 def run_main(argv: list[str]) -> int:
-    """Named pipeline registry: save / list / remove / run a workflow TOML
+    """Named workflow registry: save / list / remove / run a workflow TOML
     by short name so you don't have to remember its path.
 
         getsubtitle run --save anime path/to/workflow.toml
@@ -13306,10 +13360,10 @@ def run_main(argv: list[str]) -> int:
         reg = _pipeline_registry_dir()
         names = sorted(p.stem for p in reg.glob("*.toml")) if reg.is_dir() else []
         if not names:
-            print("No saved pipelines yet.")
+            print("No saved workflows yet.")
             print("Save one with:  getsubtitle run --save NAME path/to/workflow.toml")
             return 0
-        print("Saved pipelines:")
+        print("Saved workflows:")
         for n in names:
             print(f"  {n}")
         print()
@@ -13334,7 +13388,7 @@ def run_main(argv: list[str]) -> int:
             raise CliError(f"Saved workflow {name!r} already exists. Re-run with --force to overwrite it.")
         dest.parent.mkdir(parents=True, exist_ok=True)
         atomic_write_bytes(dest, src_path.read_bytes())
-        print(f"Saved pipeline {name!r}.")
+        print(f"Saved workflow {name!r}.")
         print(f"Run it with:  getsubtitle run {name}")
         return 0
     if argv[0] == "--remove":
@@ -13342,15 +13396,15 @@ def run_main(argv: list[str]) -> int:
             raise CliError("Usage: getsubtitle run --remove NAME")
         dest = _pipeline_registry_path(argv[1])
         if not dest.exists():
-            raise CliError(f"No saved pipeline named {argv[1]!r}.")
+            raise CliError(f"No saved workflow named {argv[1]!r}.")
         dest.unlink()
-        print(f"Removed pipeline {argv[1]!r}.")
+        print(f"Removed workflow {argv[1]!r}.")
         return 0
     name, *overrides = argv
     dest = _pipeline_registry_path(name)
     if not dest.exists():
         raise CliError(
-            f"No saved pipeline named {name!r}. "
+            f"No saved workflow named {name!r}. "
             "List them with:  getsubtitle run --list"
         )
     full_argv = ["--config", str(dest), *overrides]
@@ -13546,7 +13600,7 @@ def build_parser() -> argparse.ArgumentParser:
     translation.add_argument("--mt-source", "--mt-source-lang", dest="mt_source_lang", metavar="CODES", help="Force the AI translation source language(s). Single code (ja) applies to all targets; target:source pairs (ko:ja,es:en) map per target.")
 
     advanced = p.add_argument_group("Advanced / Experimental")
-    advanced.add_argument("--debug-providers", action="store_true", help="Show raw provider counts and language tags for missing-subtitle debugging.")
+    advanced.add_argument("--debug-providers", action="store_true", help="Show raw subtitle-source counts and language tags for missing-subtitle debugging.")
     advanced.add_argument("--experimental-subdivx", action="store_true", help="Enable experimental Spanish Subdivx fallback.")
     advanced.add_argument("--experimental-addic7ed", action="store_true", help="Enable experimental Korean Addic7ed fallback; may rate-limit.")
     advanced.add_argument("-i", "--interactive", action="store_true", help=argparse.SUPPRESS)
@@ -13931,9 +13985,9 @@ def subtitle_search_issue_heading(issue_kind: str) -> str:
 
 def subtitle_search_issue_cause(issue_kind: str) -> str:
     if issue_kind == "rate_limited":
-        return "A subtitle provider asked us to slow down."
+        return "A subtitle source asked us to slow down."
     if issue_kind == "provider_error":
-        return "A subtitle provider did not respond."
+        return "A subtitle source did not respond."
     if issue_kind == "metadata_mismatch":
         return "The title or metadata did not line up with a provider entry."
     if issue_kind == "low_confidence":
@@ -14651,14 +14705,14 @@ def print_manual_subtitle_recovery(
     print()
     if issue_kind == "rate_limited":
         print("What you can do")
-        print("The subtitle provider asked us to slow down.")
+        print("The subtitle source asked us to slow down.")
         print("1. Wait a few minutes, then retry the search.")
         print("2. Open subtitle sources manually if retrying still fails.")
         print("3. Download subtitles if you find them.")
         next_number = 4
     elif issue_kind == "provider_error":
         print("What you can do")
-        print("The subtitle provider did not respond.")
+        print("The subtitle source did not respond.")
         print("1. Retry the search in a few minutes.")
         print("2. Open subtitle sources manually if retrying still fails.")
         print("3. Download subtitles if you find them.")
@@ -14856,7 +14910,7 @@ def print_missing_subtitle_next_steps(
     if any(lang in {"ja", "ko", "zh", "yue"} for lang in missing_by_lang):
         print("  1. Open subtitle sources with `--manual-search-open always`.")
     else:
-        print("  1. Re-run with `--debug-providers` to inspect provider language/source tags.")
+        print("  1. Re-run with `--debug-providers` to inspect subtitle-source language/source tags.")
     if expected_output_dir is not None:
         print(f"  2. Put manually downloaded subtitles in: {expected_output_dir}")
     else:
@@ -17337,6 +17391,10 @@ Quick start:
   getsubtitle merge PATH -l ja,en                 # create one multi-language file
   getsubtitle --config FILE.toml                  # run a saved workflow
 
+Requirements:
+  Python 3.10+. ffmpeg/ffprobe are optional, but needed to inspect or
+  extract embedded subtitle tracks from local video files.
+
 Subcommands (each has its own --help):
   setup         First-time onboarding: keys, config, recommendations.
   doctor        Check install, keys, dependencies, ffmpeg, and Ollama.
@@ -17345,7 +17403,7 @@ Subcommands (each has its own --help):
   translate     Fill missing languages with AI translation (argos / ollama / deepl).
   modify        Clean up subtitle lines, convert formats, and add reading aids.
   merge         Create one multi-language subtitle file.
-  inspect       Show local embedded/sidecar subtitles, then continue in the wizard.
+  inspect       Show embedded tracks and local subtitle files, then continue in the wizard.
   run           Save and run workflows by short name (run --save NAME FILE; run NAME).
   config        Manage user_settings.toml defaults.
   sources       Check subtitle-source access for your configured API keys.
@@ -17447,7 +17505,7 @@ Providers:
   jimaku                   Japanese anime subtitles
   wyzie                    Movie and TV subtitles by IMDb/TMDB ID
   subdl                    Direct SubDL fallback by IMDb/TMDB ID
-  deepl                    Machine translation with DeepL
+  deepl                    Online AI translation with DeepL
   tmdb                     Movie/TV title → ID resolution (improves Wyzie
                            match rate when only a title is known)
   all                      Set or reset all supported providers
@@ -17471,7 +17529,7 @@ Environment variables:
 Notes:
   macOS stores keys in Keychain.
   Linux and Windows use environment variables.
-  TMDB key is optional — without it the rest of the pipeline still works,
+  TMDB key is optional — without it the rest of the workflow still works,
   but title-only inputs won't auto-resolve to IMDb/TMDB IDs and Wyzie's
   match rate will be lower. Get a free key at:
   https://www.themoviedb.org/settings/api
@@ -17762,7 +17820,8 @@ Operations (run in this order; pick at least one):
   --extract-mkv-subs       Manual utility: extract embedded text subtitles from
                            MKV/video files with local ffprobe + ffmpeg. Normal
                            local-video workflows should use `fetch PATH` so
-                           embedded tracks, sidecar files, and online search
+                           embedded tracks, subtitle files next to the video,
+                           and online search
                            are handled in one flow. Image subtitle streams such
                            as PGS are reported and skipped.
   --single-line, --single  Flatten each cue to one text line in place.
@@ -17819,7 +17878,7 @@ File location:
 Precedence (lowest → highest):
   built-in defaults  <  user_settings.toml  <  --config FILE.toml  <  CLI flags
 
-Sections — same names as the pipeline (--config) TOML so blocks
+Sections — same names as the workflow (--config) TOML so blocks
 copy-paste between this file and any workflow config. In execution order:
 
   [fetch]         languages, release_source, manual_search, manual_search_open
@@ -17842,16 +17901,16 @@ Notes:
   Run `getsubtitle config --show` to see what's currently active.
 """,
     "sources": """\
-Check subtitle provider/source access.
+Check subtitle-source access.
 
 Usage:
   getsubtitle sources --check
   getsubtitle sources --check --provider wyzie
 
-This is mainly for debugging provider coverage. Wyzie access can vary by
-API key/tier, so this command asks Wyzie which internal sources your key
-can currently use. If your Wyzie key does not expose SubDL, configure the
-separate direct fallback with `getsubtitle --set-key subdl`.
+This is mainly for debugging subtitle-source coverage. Wyzie access can vary
+by API key/tier, so this command asks Wyzie which internal sources your key can
+currently use. If your Wyzie key does not expose SubDL, configure the separate
+direct fallback with `getsubtitle --set-key subdl`.
 
 Notes:
   - Requires a Wyzie key: getsubtitle --set-key wyzie
@@ -17882,9 +17941,9 @@ Examples:
 
 Notes:
   - Inspect does not modify video files.
-  - Extraction writes separate subtitle sidecar files using ffmpeg/ffprobe.
+  - Extraction writes separate subtitle files beside the video using ffmpeg/ffprobe.
   - For everyday local-video fetching, `getsubtitle fetch PATH -l LANGS --run`
-    checks embedded tracks and sidecar subtitles before online search.
+    checks embedded tracks and subtitle files next to the video before online search.
 """,
     "doctor": """\
 Check install health.
@@ -17899,18 +17958,18 @@ Checks:
   - Optional reading-aid dependencies:
       sudachipy, sudachidict_core, korean-romanizer, g2pk, pypinyin, pycantonese
   - Optional local tools:
-      ffmpeg / ffprobe for MKV embedded subtitle extraction
+      ffmpeg / ffprobe for embedded subtitle inspection/extraction
       Ollama daemon for offline LLM translation
   - Provider API keys:
       Jimaku, Wyzie, SubDL, DeepL, TMDB
 
-It does not download subtitles or contact subtitle providers. Use
-`getsubtitle sources --check` for provider-source diagnostics.
+It does not download subtitles or contact subtitle sources. Use
+`getsubtitle sources --check` for source-access diagnostics.
 """,
     "run": """\
 Save and run workflows by short name.
 
-A named pipeline registry lives beside user_settings.toml. Save any
+A named workflow registry lives beside user_settings.toml. Save any
 workflow TOML under a short name, then run it without typing the path.
 
 Usage:
@@ -17929,11 +17988,11 @@ Notes:
     (--source, --output, --format, --season, --episode, -l, --dry-run,
     --force). CLI flags win over the saved file.
   - The TOML is copied into the registry, so editing the original later
-    does not change the saved pipeline. Re-save with --force to update it.
+    does not change the saved workflow. Re-save with --force to update it.
 """,
     "fetch": """\
 Fetch subtitles from a URL, folder, video file, embedded text tracks,
-subtitle files next to your videos, or online providers.
+subtitle files next to your videos, or online subtitle sources.
 
 Not sure what flags you need? `getsubtitle -i` walks you through it.
 
@@ -17944,20 +18003,20 @@ Usage:
   getsubtitle fetch PATH --subdirectory [--profile ...] [--run]
 
 With a URL, fetch resolves IDs from the URL and downloads matching
-subtitles from providers (Jimaku for anime; Wyzie for movies/TV).
+subtitles from online sources (Jimaku for anime; Wyzie for movies/TV).
 
 With a PATH, fetch treats local subtitles as sources before going online:
 embedded text subtitle streams are used first, along with matching subtitle
-files next to your videos. Then online providers are searched only for missing
-languages. This is the normal place to use subtitles already inside MKV/video
-files. It derives the title from the folder name, auto-detects the show's
+files next to your videos. Then online subtitle sources are searched only for
+missing languages. This is the normal place to use subtitles already inside
+local video files. It derives the title from the folder name, auto-detects the show's
 origin language via TMDB (or character-set heuristic when no TMDB key), and
 runs the right per-profile fetch chain. Add --subdirectory to walk one level
 of subdirs and treat each as its own show — the whole-library mode.
 
 `fetch` is download-only. To fill in missing languages via AI translation, clean up
 subtitles, or stack a merge afterward, use the one-command workflow form
-(see `getsubtitle --help pipeline`):
+(see `getsubtitle --help workflow`):
   getsubtitle --fetch /Plex/Anime --subdirectory \\
               --translate ollama \\
               --merge -l ja,en --format vtt
@@ -18036,7 +18095,7 @@ Fetch options:
   --browser                Open URL first for login/Cloudflare pages
   --manual-search MODE     off | on-missing | always. Default: on-missing.
                            When Japanese/Korean/Chinese subtitles are missing
-                           after normal providers, print likely community searches.
+                           after normal online sources, print likely community searches.
   --manual-search-open MODE
                            ask | always | never. Default: ask. Opens multiple
                            browser tabs for the manual-search links.
@@ -18052,7 +18111,7 @@ Notes:
   - PATH form defaults to dry-run. Add --run to actually fetch.
   - URL form does NOT default to dry-run — it's opt-in via --dry-run.
   - Local PATH fetches cap each online search attempt at about two minutes.
-    If a provider is slow, GetSubtitle skips that attempt cleanly and suggests
+    If an online source is slow, GetSubtitle skips that attempt cleanly and suggests
     retry/manual-search options instead of waiting indefinitely.
 """,
     "merge": """\
@@ -22562,7 +22621,7 @@ def _wizard_coverage_preflight(state: _WizardState) -> list[tuple[str, str, str]
             notes.append((
                 "warn",
                 "No subtitles found in this folder yet",
-                "Fetch will search online providers automatically.",
+                "Fetch will search online subtitle sources automatically.",
             ))
         else:
             notes.append((
@@ -22624,7 +22683,7 @@ def _wizard_coverage_preflight(state: _WizardState) -> list[tuple[str, str, str]
             if missing_langs:
                 if "fetch" in state.steps:
                     detail_parts.append(
-                        "Fetch will search online providers for: "
+                        "Fetch will search online subtitle sources for: "
                         + ", ".join(_display_lang(lang) for lang in missing_langs)
                     )
                 else:

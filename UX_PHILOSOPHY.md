@@ -27,11 +27,12 @@ help someone *learn* from the subtitles," not just "did we fetch a file."
 
 ## Why human subtitles come first
 
-Machine translation drifts, mistimes, and flattens nuance — and a learner
-can't tell a mistranslation from the truth, so MT errors teach the *wrong*
-thing. Human subtitles are the trustworthy baseline; MT only fills gaps the
-learner would otherwise have nothing for. Designing around MT-as-primary
-would quietly degrade the one thing learners depend on: accuracy.
+AI translation drifts, mistimes, and flattens nuance — and a learner
+can't tell a mistranslation from the truth, so AI-translation errors teach the
+*wrong* thing. Human subtitles are the trustworthy baseline; AI translation
+only fills gaps the learner would otherwise have nothing for. Designing around
+AI-translation-as-primary would quietly degrade the one thing learners depend
+on: accuracy.
 
 ## Why examples beat explanations
 
@@ -79,7 +80,7 @@ format names with compatibility guidance and let the situation decide.
 
 ## Why failures must differ
 
-"No subtitles exist," "the provider timed out," "you're rate-limited," and
+"No subtitles exist," "the subtitle source timed out," "you're rate-limited," and
 "the title didn't match" need *different* recovery actions — search an
 alternate title, retry now, wait a few minutes, try a different title source.
 Collapsing them into one generic error strands the user with no usable next

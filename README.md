@@ -68,6 +68,9 @@ or fill the gap with AI translation.
 
 ## Install In 30 Seconds
 
+Requires Python 3.10 or newer. The installer checks this for you and creates
+an isolated environment so you do not need to activate `.venv` for normal use.
+
 **macOS / Linux:**
 
 ```sh
@@ -93,7 +96,7 @@ More install options: [docs/install.md](docs/install.md).
 ```sh
 getsubtitle setup     # optional first-time profile: what you watch, what you study
 getsubtitle -i        # guided workflow builder
-getsubtitle inspect PATH  # see embedded/sidecar subtitles before choosing a workflow
+getsubtitle inspect PATH  # see embedded tracks and local subtitle files first
 ```
 
 The wizard asks for a source, languages, reading aids, and output choices.

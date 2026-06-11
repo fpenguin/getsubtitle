@@ -71,6 +71,6 @@ If you want to see what is already available before choosing a workflow, run:
 getsubtitle inspect PATH
 ```
 
-Inspect lists embedded tracks, matching sidecar subtitle files, and other
-subtitle files in the folder. In an interactive terminal it can continue into
-the guided workflow with the path and detected languages prefilled.
+Inspect lists embedded tracks, matching subtitle files next to the video, and
+other subtitle files in the folder. In an interactive terminal it can continue
+into the guided workflow with the path and detected languages prefilled.

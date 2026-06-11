@@ -41,7 +41,7 @@ TMDB_API_KEY
 |---|---|---|---|
 | `argos` | yes | `pip install argostranslate` | gist |
 | `ollama` | yes | Ollama daemon + model | good |
-| `deepl` | online | `getsubtitle --set-key deepl` | best |
+| `deepl` | online | `getsubtitle --set-key deepl` | better |
 
 Per-pair Ollama model selection lives in `[translate.ollama_models]` in
 `user_settings.toml`. Engine spec accepts colon-form to pin a model:

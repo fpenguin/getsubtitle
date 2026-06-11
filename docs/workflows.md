@@ -104,5 +104,5 @@ that step once per show.
 See:
 
 ```sh
-getsubtitle --help pipeline
+getsubtitle --help workflow
 ```

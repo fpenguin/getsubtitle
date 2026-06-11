@@ -75,6 +75,10 @@ getsubtitle-workflow*.toml
 # Local UX/review planning notes.
 /WIZARD_UX_CODEX_REVIEW.md
 
+# Generated local QA planning / stress-test notes. Keep durable QA fixtures
+# under tests/ or docs/ux/ instead.
+/QA_*.md
+
 # AI-agent briefing kept locally; contains absolute paths for this machine.
 .claude/
 HANDOFF.md
