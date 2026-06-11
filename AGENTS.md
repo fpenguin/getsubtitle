@@ -9,9 +9,9 @@ the tool does and how users run it.
 | File | What it is | Changes |
 |---|---|---|
 | `AGENTS.md` (this file) | Durable product philosophy + engineering contract (the rules). Read every session. | Rarely |
-| `UX_PHILOSOPHY.md` | The reasoning behind the UX rules (the *why*). | Rarely |
+| `docs/dev/ux-philosophy.md` | The reasoning behind the UX rules (the *why*). | Rarely |
 | `CONTRIBUTING.md` | Dev mechanics: setup, tests, re-bless, CI, PR process. | Rarely |
-| `ARCHITECTURE.md` | Code map: dispatch, pipeline, layers, where things live. | Rarely |
+| `docs/dev/architecture.md` | Code map: dispatch, pipeline, layers, where things live. | Rarely |
 | `README.md` | User-facing docs (install, commands, formats). | With features |
 | `ROADMAP.md` | What's shipped / planned; pre-1.0 versioning policy. | With releases |
 | `HANDOFF.md` / `CLAUDE.md` | Private local notes (gitignored): current baseline, session state, deep wizard internals. May be absent on a fresh clone. | Often |
@@ -173,5 +173,5 @@ When uncertain, prefer **short, clear, example-driven, actionable** over
 helpful guide, not a debugging console.
 
 > The reasoning behind these rules — plus user personas and the priority
-> order when principles conflict — lives in `UX_PHILOSOPHY.md`. Keep this
+> order when principles conflict — lives in `docs/dev/ux-philosophy.md`. Keep this
 > file short enough that agents read all of it every session.

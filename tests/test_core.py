@@ -4711,7 +4711,7 @@ def test_help_reading_format_guidance_matches_player_findings():
 def test_example_settings_points_to_language_guide():
     from pathlib import Path
     repo = Path(MODULE["__file__"]).parent
-    example = (repo / "user_settings.example.toml").read_text(encoding="utf-8")
+    example = (repo / "examples" / "config" / "user_settings.example.toml").read_text(encoding="utf-8")
     assert "getsubtitle --help language" in example
     assert "Spanish" in example and "Vietnamese" in example
     assert "ja, en, ko, es, fr, zh, de, it, pt, ru" not in example
@@ -15600,7 +15600,7 @@ def test_user_settings_example_uses_canonical_names():
     [merge].furigana / strip_furigana_before_mt / mt_source_lang."""
     from pathlib import Path
     repo = Path(MODULE["__file__"]).parent
-    example = (repo / "user_settings.example.toml").read_text(encoding="utf-8")
+    example = (repo / "examples" / "config" / "user_settings.example.toml").read_text(encoding="utf-8")
     # New canonical TOML keys appear (line-anchored):
     assert "\nmt_source =" in example
     assert "\nreading_format =" in example

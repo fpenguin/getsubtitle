@@ -1,8 +1,8 @@
 # GetSubtitle — UX Philosophy
 
-The **why** behind the product. `AGENTS.md` is the **what** (the rules);
+The **why** behind the product. [`AGENTS.md`](../../AGENTS.md) is the **what** (the rules);
 this file explains the reasoning so you can apply the rules to situations
-they don't literally cover. Read `AGENTS.md` first. When this file and
+they don't literally cover. Read [`AGENTS.md`](../../AGENTS.md) first. When this file and
 AGENTS.md seem to overlap, AGENTS.md owns the rule — this file owns the
 rationale.
 

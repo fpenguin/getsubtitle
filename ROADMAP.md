@@ -98,6 +98,19 @@ final multi-language subtitle is readable enough to use for study.
 - v1.0 should not require users to understand provider internals, subtitle
   formats, or TOML before getting one useful multi-language subtitle file.
 
+## v0.9.9.2 — what's new
+
+- **Cleaner repository root.** Development notes moved to `docs/dev/`, saved
+  workflow examples moved to `examples/workflows/`, and the settings template
+  moved to `examples/config/`.
+- **Updated examples and help text.** Built-in workflow help and docs now
+  point to the organized example paths.
+- **Config template lookup preserved.** `getsubtitle config --init` still
+  finds the full settings example in a source checkout, with the embedded
+  fallback kept for installed packages.
+- **Validation.** Full 800+ test suite, TOML parse checks, help smoke checks,
+  and packaging checks pass before tagging.
+
 ## v0.9.9.1 — what's new
 
 - **Linux CI fix.** Title-candidate input now preserves the original case of
@@ -168,7 +181,7 @@ final multi-language subtitle is readable enough to use for study.
 ## v0.9.7 — what's new
 
 - **Beginner-facing wording pass.** Public help, README, docs, setup text,
-  wizard transcripts, and `user_settings.example.toml` now say "AI
+  wizard transcripts, and `examples/config/user_settings.example.toml` now say "AI
   translation," "workflow," "subtitle source," "timing language," and
   "subtitle lines" instead of developer shorthand such as MT, pipeline,
   provider, master, and cues.
@@ -644,7 +657,7 @@ vs original-file rename.
 - Bare URL shape: `getsubtitle URL ...` works as a shortcut for `fetch URL ...`.
 - `--subdirectory` on every PATH-based verb walks one level of immediate subdirs and runs the verb per show.
 - Pipeline form chains verbs in one call: `getsubtitle --fetch X --translate ollama --modify --merge -l ja,en`. Verbs always execute in canonical order (fetch → translate → modify → merge).
-- Config-file form: `getsubtitle --config FILE.toml`. CLI flags layer over the TOML; per-verb inline blocks merge per-section. Two ship-with examples in the repo: `simpsons-s1-en-fr.toml`, `plex-movies-fill-merge.toml`.
+- Config-file form: `getsubtitle --config FILE.toml`. CLI flags layer over the TOML; per-verb inline blocks merge per-section. Two ship-with examples in the repo: `examples/workflows/simpsons-s1-en-fr.toml`, `examples/workflows/plex-movies-fill-merge.toml`.
 - Layered config: built-in defaults < `user_settings.toml` < `--config` TOML < CLI flags.
 - Topic-based help: `--help fetch | translate | modify | merge | pipeline | config | keys | reading | advanced`.
 

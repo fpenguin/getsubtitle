@@ -5,27 +5,27 @@ GetSubtitle can save wizard answers as a workflow file and rerun them later with
 ## Save Workflow Files
 
 ```sh
-getsubtitle --config simpsons-s1-en-fr.toml
-getsubtitle --config plex-movies-fill-merge.toml
+getsubtitle --config examples/workflows/simpsons-s1-en-fr.toml
+getsubtitle --config examples/workflows/plex-movies-fill-merge.toml
 ```
 
 CLI flags override saved settings:
 
 ```sh
-getsubtitle --source /Plex/Anime --config plex-movies-fill-merge.toml
+getsubtitle --source /Plex/Anime --config examples/workflows/plex-movies-fill-merge.toml
 ```
 
 Two example configs ship in this repo:
 
-- [`../simpsons-s1-en-fr.toml`](../simpsons-s1-en-fr.toml) - download Simpsons S1 in English + French.
-- [`../plex-movies-fill-merge.toml`](../plex-movies-fill-merge.toml) - scan `/Plex/Movies`, fetch JP/KO/EN/ES, fill AI translation gaps, and merge beside the source files.
+- [`../examples/workflows/simpsons-s1-en-fr.toml`](../examples/workflows/simpsons-s1-en-fr.toml) - download Simpsons S1 in English + French.
+- [`../examples/workflows/plex-movies-fill-merge.toml`](../examples/workflows/plex-movies-fill-merge.toml) - scan `/Plex/Movies`, fetch JP/KO/EN/ES, fill AI translation gaps, and merge beside the source files.
 
 ## Named Workflows
 
 Save a workflow under a short name and run it without typing the path:
 
 ```sh
-getsubtitle run --save anime plex-movies-fill-merge.toml
+getsubtitle run --save anime examples/workflows/plex-movies-fill-merge.toml
 getsubtitle run anime
 getsubtitle run anime --source /Plex/NewShow
 getsubtitle run --list

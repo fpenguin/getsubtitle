@@ -1,6 +1,6 @@
 # GetSubtitle — Architecture
 
-A map for navigating the codebase. Read `AGENTS.md` for the rules and
+A map for navigating the codebase. Read [`AGENTS.md`](../../AGENTS.md) for the rules and
 conventions; this file is about *where things are*.
 
 **Navigate by name, not by line.** `getsubtitle_core.py` is one large file

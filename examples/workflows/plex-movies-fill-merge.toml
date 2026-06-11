@@ -2,12 +2,12 @@
 # gaps via MT, then merge a 4-language study file next to each movie.
 #
 # Run with:
-#   getsubtitle --config plex-movies-fill-merge.toml
+#   getsubtitle --config examples/workflows/plex-movies-fill-merge.toml
 #
 # Override per-run (CLI wins over this file):
-#   getsubtitle --source /Plex/Anime --config plex-movies-fill-merge.toml
-#   getsubtitle --dry-run --config plex-movies-fill-merge.toml
-#   getsubtitle --languages ja,en --config plex-movies-fill-merge.toml
+#   getsubtitle --source /Plex/Anime --config examples/workflows/plex-movies-fill-merge.toml
+#   getsubtitle --dry-run --config examples/workflows/plex-movies-fill-merge.toml
+#   getsubtitle --languages ja,en --config examples/workflows/plex-movies-fill-merge.toml
 
 [fetch]
 source = "/Plex/Movies"

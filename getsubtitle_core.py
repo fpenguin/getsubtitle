@@ -14942,6 +14942,7 @@ CONFIG_PATH_ENV = "GETSUBTITLE_CONFIG_PATH"
 CONFIG_DIR_NAME = "getsubtitle"
 CONFIG_FILE_NAME = "user_settings.toml"
 CONFIG_EXAMPLE_FILE_NAME = "user_settings.example.toml"
+CONFIG_EXAMPLE_RELATIVE_PATH = Path("examples") / "config" / CONFIG_EXAMPLE_FILE_NAME
 
 
 def config_path() -> Path:
@@ -15435,15 +15436,17 @@ def load_user_config() -> dict:
 def _example_template_text() -> str:
     """Return the example user_settings.toml content.
 
-    Tries the file alongside the script first (editable install); falls back
-    to a minimal embedded template so `config --init` works after pip install
-    even if package_data isn't present."""
+    Tries the repo example first (editable install); falls back to a minimal
+    embedded template so `config --init` works after pip install even if
+    package_data isn't present."""
     candidates: list[Path] = []
     try:
         here = Path(__file__).resolve().parent
+        candidates.append(here / CONFIG_EXAMPLE_RELATIVE_PATH)
         candidates.append(here / CONFIG_EXAMPLE_FILE_NAME)
     except NameError:  # __file__ not defined under runpy
         pass
+    candidates.append(Path.cwd() / CONFIG_EXAMPLE_RELATIVE_PATH)
     candidates.append(Path.cwd() / CONFIG_EXAMPLE_FILE_NAME)
     for c in candidates:
         if c.exists():
@@ -15452,8 +15455,8 @@ def _example_template_text() -> str:
 
 
 # Embedded fallback. Kept intentionally minimal — the on-disk
-# user_settings.example.toml at the repo root is the authoritative copy and
-# preferred whenever it can be located.
+# examples/config/user_settings.example.toml is the authoritative copy and
+# preferred whenever it can be located in a source checkout.
 _EMBEDDED_EXAMPLE_TEMPLATE = """\
 # getsubtitle user settings — minimal embedded fallback.
 # Schema mirrors the pipeline TOML: fetch → translate → modify → merge → output.
@@ -17413,11 +17416,11 @@ Workflow — run several steps in one command:
   getsubtitle --source X --output Y --format vtt --config FILE.toml
 
 Two example configs ship in this repo. Copy and tweak:
-  simpsons-s1-en-fr.toml          URL → download an entire season
-  plex-movies-fill-merge.toml     PATH → bulk fetch + AI translation + merge
+  examples/workflows/simpsons-s1-en-fr.toml       URL → download an entire season
+  examples/workflows/plex-movies-fill-merge.toml  PATH → bulk fetch + AI translation + merge
 
-  getsubtitle --config simpsons-s1-en-fr.toml
-  getsubtitle --config plex-movies-fill-merge.toml
+  getsubtitle --config examples/workflows/simpsons-s1-en-fr.toml
+  getsubtitle --config examples/workflows/plex-movies-fill-merge.toml
 
 Layered config (lowest → highest priority):
   built-in defaults  <  user_settings.toml  <  --config FILE.toml  <  CLI flags
@@ -18280,10 +18283,10 @@ Examples (inline):
               --merge -l ja,en
 
 Examples (config file with CLI overrides):
-  getsubtitle --config simpsons-s1-en-fr.toml
-  getsubtitle --config plex-movies-fill-merge.toml
-  getsubtitle --source /Plex/Anime --format vtt --config plex-movies-fill-merge.toml
-  getsubtitle --season 2 --config simpsons-s1-en-fr.toml
+  getsubtitle --config examples/workflows/simpsons-s1-en-fr.toml
+  getsubtitle --config examples/workflows/plex-movies-fill-merge.toml
+  getsubtitle --source /Plex/Anime --format vtt --config examples/workflows/plex-movies-fill-merge.toml
+  getsubtitle --season 2 --config examples/workflows/simpsons-s1-en-fr.toml
 
 Workflow file schema (sections in execution order):
 

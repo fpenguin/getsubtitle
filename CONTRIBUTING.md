@@ -5,7 +5,7 @@ Thanks for contributing. This file is the **how** (mechanics). For the
 
 1. `README.md` — what the tool does.
 2. `AGENTS.md` — the rules (vocabulary, conventions, engineering contract).
-3. `UX_PHILOSOPHY.md` — the reasoning behind the rules.
+3. `docs/dev/ux-philosophy.md` — the reasoning behind the rules.
 
 This file does not restate those principles; it covers setup, testing, and
 the PR process.
@@ -82,11 +82,11 @@ Keep docs in sync with behavior. When you change behavior, update:
 
 - `README.md` (user-facing behavior)
 - `AGENTS.md` (only if agent guidance / a rule changes)
-- `UX_PHILOSOPHY.md` (only if a UX principle changes)
+- `docs/dev/ux-philosophy.md` (only if a UX principle changes)
 
 Avoid duplicating the same fact across docs — duplication drifts. Volatile
 facts (test counts, versions, commit hashes) do not belong in AGENTS.md or
-UX_PHILOSOPHY.md.
+docs/dev/ux-philosophy.md.
 
 ## Pull requests
 
@@ -96,5 +96,5 @@ UX_PHILOSOPHY.md.
 (Fetch / Translate / Modify / Merge / Rename); and mixing UX changes with
 architecture changes in one PR.
 
-When priorities conflict, use the order in `UX_PHILOSOPHY.md` →
+When priorities conflict, use the order in `docs/dev/ux-philosophy.md` →
 "Priority order when principles conflict".
