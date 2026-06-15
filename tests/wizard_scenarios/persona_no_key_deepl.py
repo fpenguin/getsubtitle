@@ -18,7 +18,7 @@ SCENARIO = Scenario(
         "2,3,4",        # translate + modify + merge (so probe sees deepl + we get a local source)
         "{TMP}/Show",   # path
         "ja,en",
-        "4",            # translate engine: DeepL
+        "2",            # translate engine: DeepL
         "1",            # reading aids — skip
         "",             # format — accept recommended SRT
         "",             # font size — regular

@@ -16,7 +16,7 @@ SCENARIO = Scenario(
         "https://www.imdb.com/title/tt28299608/",
         "3",            # scope: auto
         "ja,en",
-        "4",            # Q6 translate engine: DeepL
+        "2",            # Q6 translate engine: DeepL
         "1",            # reading aids — skip
         "",             # format — accept recommended SRT
         "",             # font size — regular

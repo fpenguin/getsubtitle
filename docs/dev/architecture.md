@@ -74,7 +74,7 @@ this for most provider tests). HTML pages use `request_text`; subtitle file
 bodies use `download_bytes`. Jimaku (anime, AniList id), Wyzie (movie/TV by
 IMDb/TMDB id), SubDL, and the experimental Subdivx/Addic7ed scrapers live here.
 
-**Machine translation.** Engines argos / ollama / deepl. `translate_srt_file`
+**Machine translation.** Engines argos / apple / ollama / deepl. `translate_srt_file`
 runs a file through the chosen engine; the per-target source picker honors
 `mt_source` (e.g. `ko ← ja`). MT output is suffixed `.mt.` so it never masks
 human subtitles.

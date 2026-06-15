@@ -18,7 +18,7 @@ SCENARIO = Scenario(
         "2,3,4",        # translate + modify + merge
         "{TMP}/Show",
         "ja,en",
-        "3",            # translate engine: Ollama
+        "5",            # translate engine: Qwen3 via Ollama
         "1",            # reading aids — skip
         "",             # format — accept recommended SRT
         "",             # font size — regular

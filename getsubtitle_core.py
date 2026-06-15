@@ -3856,6 +3856,101 @@ class OllamaTranslator(_BaseTranslator):
             return False
 
 
+class AppleTranslationTranslator(_BaseTranslator):
+    """On-device Apple Translation through Arthur-Ficial/translate.
+
+    The `translate` CLI wraps Apple's Translation framework. Models are
+    installed in macOS System Settings; this class uses --no-install so a
+    missing pair fails with a clear setup hint instead of hanging on a
+    headless download attempt.
+    """
+
+    name = "apple"
+
+    def __init__(self, command: str = "translate", batch_size: int = 50, timeout: int = 180):
+        self.command = command
+        self.batch_size = max(1, batch_size)
+        self.timeout = timeout
+
+    def is_available(self) -> bool:
+        return shutil.which(self.command) is not None
+
+    def setup_help(self, source_lang: str | None = None, target_lang: str | None = None) -> str:
+        pair = f"\n  Required pair: {source_lang}-{target_lang}" if source_lang and target_lang else ""
+        return (
+            "Set up Apple Translation (on-device, Mac-only):\n"
+            "  brew install Arthur-Ficial/tap/translate\n"
+            "  translate --installed\n"
+            "Requires Apple Silicon, macOS 26/Tahoe or newer, and Apple Translation language models.\n"
+            "Install models in System Settings > General > Language & Region > Translation Languages."
+            f"{pair}\n"
+            "See docs/install-apple-translation-models.md for the guided setup."
+        )
+
+    def translate_batch(self, texts: list[str], source_lang: str, target_lang: str, on_progress=None) -> list[str]:
+        if not texts:
+            return []
+        if not self.is_available():
+            raise TranslatorError(
+                "Apple Translation CLI is not installed. Run:\n"
+                "  brew install Arthur-Ficial/tap/translate"
+            )
+        total = len(texts)
+        results: list[str] = []
+        for chunk_start in range(0, total, self.batch_size):
+            chunk = texts[chunk_start : chunk_start + self.batch_size]
+            translated = self._translate_chunk(chunk, source_lang, target_lang)
+            results.extend(translated[i] if i < len(translated) and translated[i] else chunk[i] for i in range(len(chunk)))
+            if on_progress is not None:
+                on_progress(min(chunk_start + len(chunk), total), total)
+        return results
+
+    def _translate_chunk(self, texts: list[str], source: str, target: str) -> list[str]:
+        translated: list[str] = [""] * len(texts)
+        nonempty: list[tuple[int, str]] = [(i, t) for i, t in enumerate(texts) if t]
+        if not nonempty:
+            return translated
+        input_text = "\n".join(t for _i, t in nonempty) + "\n"
+        try:
+            proc = subprocess.run(
+                [
+                    self.command,
+                    "--from", source,
+                    "--to", target,
+                    "--batch",
+                    "--no-install",
+                    "--quiet",
+                ],
+                input=input_text,
+                capture_output=True,
+                text=True,
+                timeout=self.timeout,
+            )
+        except FileNotFoundError as e:
+            raise TranslatorError(
+                "Apple Translation CLI is not installed. Run: "
+                "brew install Arthur-Ficial/tap/translate"
+            ) from e
+        except subprocess.TimeoutExpired as e:
+            raise TranslatorError(f"Apple Translation timed out after {self.timeout}s while translating.") from e
+        if proc.returncode != 0:
+            detail = (proc.stderr or proc.stdout or "").strip()
+            if "not installed" in detail.lower() or "unable to translate" in detail.lower():
+                pair = f"{source}-{target}"
+                detail = (
+                    f"{detail}\n"
+                    f"Install Apple Translation models for {pair} in System Settings > "
+                    "General > Language & Region > Translation Languages, then verify with "
+                    "`translate --installed`."
+                )
+            suffix = f": {detail[:300]}" if detail else ""
+            raise TranslatorError(f"Apple Translation failed{suffix}")
+        lines = proc.stdout.splitlines()
+        for out_i, (original_i, _text) in enumerate(nonempty):
+            translated[original_i] = lines[out_i] if out_i < len(lines) and lines[out_i] else texts[original_i]
+        return translated
+
+
 class DeepLTranslator(_BaseTranslator):
     """DeepL Free API client. Free tier: 500,000 characters per month.
 
@@ -4090,7 +4185,12 @@ def _normalize_lang_code(value: str) -> str:
     return LANGUAGE_ALIASES.get(value, value)
 
 
-def parse_mt_source_lang(value: str | None, requested_langs: list[str]) -> dict[str, tuple[str, ...]] | None:
+def parse_mt_source_lang(
+    value: str | None,
+    requested_langs: list[str],
+    *,
+    strict_targets: bool = True,
+) -> dict[str, tuple[str, ...]] | None:
     """Parse the --mt-source value into a {target: (sources...)} mapping.
 
     Accepts:
@@ -4100,8 +4200,10 @@ def parse_mt_source_lang(value: str | None, requested_langs: list[str]) -> dict[
       "ko:ja,es:en"             -> {"ko": "ja", "es": "en"}
       "es:fr|en"                -> {"es": ("fr", "en")} first available wins
 
-    Raises CliError for ambiguous comma-lists-without-colons, unknown targets
-    (not in --langs), empty halves, or duplicated targets.
+    Raises CliError for ambiguous comma-lists-without-colons, empty halves, or
+    duplicated targets. Unknown targets (not in --langs) are rejected by
+    default for explicit CLI input; config defaults can pass
+    strict_targets=False so unrelated saved pairs are ignored for this run.
 
     Public for testing."""
     if not value:
@@ -4147,14 +4249,16 @@ def parse_mt_source_lang(value: str | None, requested_langs: list[str]) -> dict[
         if not sources:
             raise CliError(f"--mt-source: empty source list in {part!r}")
         if target not in requested_lower:
-            raise CliError(
-                f"--mt-source: target {target!r} is not in -l "
-                f"({','.join(requested_langs)}). Add it to -l or remove the pair."
-            )
+            if strict_targets:
+                raise CliError(
+                    f"--mt-source: target {target!r} is not in -l "
+                    f"({','.join(requested_langs)}). Add it to -l or remove the pair."
+                )
+            continue
         if target in mapping:
             raise CliError(f"--mt-source: target {target!r} mapped twice")
         mapping[target] = sources
-    return mapping
+    return mapping or None
 
 
 def _format_mt_source_overrides(mapping: dict[str, tuple[str, ...]]) -> str:
@@ -4240,9 +4344,11 @@ def select_translator(engine: str, model: str | None) -> _BaseTranslator:
             model=model or DEFAULT_OLLAMA_MODEL,
             auto_load=_ollama_models_flag("auto_load", True),
         )
+    if engine == "apple":
+        return AppleTranslationTranslator()
     if engine == "deepl":
         return DeepLTranslator(api_key=get_provider_api_key("deepl", prompt_if_missing=True))
-    raise CliError(f"Unknown --engine: {engine}. Use argos, ollama, or deepl.")
+    raise CliError(f"Unknown --engine: {engine}. Use argos, apple, ollama, or deepl.")
 
 
 def ollama_model_for_pair(source_lang: str, target_lang: str, cli_model: str | None = None) -> str:
@@ -9368,7 +9474,7 @@ def combine_main(argv: list[str]) -> int:
 
     print("\nWriting:")
     written: list[Path] = []
-    for key, _src, dest, _rates in plan:
+    for idx, (_key, _src, dest, _rates) in enumerate(plan, start=1):
         combined, _missing = _COMBINE_PENDING.pop(dest, ([], []))
         if not args.no_watermark:
             combined = add_merged_watermarks(combined)
@@ -9385,9 +9491,12 @@ def combine_main(argv: list[str]) -> int:
             body = serialize_srt(combined, font_size=font_size)
         atomic_write_text(dest, body)
         written.append(dest)
-        print(f"  {dest}")
+        progress_bar(idx, len(plan), "writing", dest.name, transient=True)
 
     print(f"\nWrote {len(written)} combined file(s).")
+    print("Outputs:")
+    for dest in written:
+        print(f"  {dest}")
     _wizard_summary_add("merge", written=len(written), outputs=written)
     should_open = args.open_folder
     if not should_open and not args.no_open_folder_prompt and sys.stdin.isatty():
@@ -9464,7 +9573,7 @@ def build_translate_parser() -> argparse.ArgumentParser:
     p.add_argument("-l", "--languages", "--langs", "--lang", dest="langs", required=True, metavar="CODES", help="Target languages to make sure exist (e.g. ja,en). Missing ones are AI-translated from the best available source subtitle.")
     p.add_argument("-s", "--season", default="all", metavar="N|all", help="Season filter. Default: all detected seasons.")
     p.add_argument("-e", "--episode", default="all", metavar="N|N-M|all", help="Episode filter. Accepts one episode, a range, a comma list, or all. Default: all detected episodes.")
-    p.add_argument("--engine", "--mt-engine", dest="mt_engine", choices=["argos", "ollama", "deepl"], help="Translation engine. Default: argos (via [translate].engine in user_settings.toml). --mt-engine still accepted as alias.")
+    p.add_argument("--engine", "--mt-engine", dest="mt_engine", choices=["argos", "apple", "ollama", "deepl"], help="Translation engine. Default: argos (via [translate].engine in user_settings.toml). --mt-engine still accepted as alias.")
     p.add_argument("--no-mt-engine", dest="mt_engine", action="store_const", const="", help="Disable AI translation for this run even when [translate].engine is set in user_settings.toml.")
     p.add_argument("--model", "--mt-model", dest="mt_model", metavar="NAME", help=f"Ollama model when --engine ollama. Default: {DEFAULT_OLLAMA_MODEL}. --mt-model still accepted as alias.")
     p.add_argument("--mt-model-pair", metavar="PAIRS", help="Per-pair Ollama model overrides for this run, e.g. ja:ko=qwen3:4b,en:es=llama3.2:3b. Ignored unless --engine ollama.")
@@ -9509,7 +9618,7 @@ def translate_main(argv: list[str]) -> int:
     ) else None
     if not args.mt_engine:
         raise CliError(
-            "translate needs an engine. Pass --engine {argos|ollama|deepl} "
+            "translate needs an engine. Pass --engine {argos|apple|ollama|deepl} "
             "or set [translate].engine in user_settings.toml."
         )
     langs = split_csv(args.langs, "ja")
@@ -9525,8 +9634,18 @@ def translate_main(argv: list[str]) -> int:
         _cfg_tr = {}
     strip_reading_before_mt = bool(_cfg_tr.get("strip_reading_before_mt", True))
 
-    # Parse --mt-source once (so a bad value errors before the scan).
-    source_overrides = parse_mt_source_lang(args.mt_source_lang, langs)
+    # Parse --mt-source once (so a bad value errors before the scan). Values
+    # inherited from config are filtered to this run's requested languages so
+    # broad defaults like ja:ko do not break one-off en,es jobs.
+    explicit_mt_source = (
+        option_was_passed(argv, "--mt-source")
+        or option_was_passed(argv, "--mt-source-lang")
+    )
+    source_overrides = parse_mt_source_lang(
+        args.mt_source_lang,
+        langs,
+        strict_targets=explicit_mt_source,
+    )
 
     paths = [Path(p).expanduser() for p in args.paths]
     missing = [p for p in paths if not p.exists()]
@@ -9671,7 +9790,7 @@ def translate_main(argv: list[str]) -> int:
                 _last[0] = pct
                 progress_bar(
                     done, total, "translating",
-                    f"{_label} cue {done}/{total} ({format_elapsed(time.monotonic() - started_at)})",
+                    f"{_label} cue {done}/{total}",
                     transient=True,
                 )
 
@@ -9687,7 +9806,7 @@ def translate_main(argv: list[str]) -> int:
             continue
         elapsed = time.monotonic() - started_at
         written.append((dest_path, elapsed))
-        print(f"  {ep_label} {src_lang}->{target}: wrote {dest_path.name} in {format_elapsed(elapsed)}")
+        print(f"  {ep_label} {src_lang}->{target}: wrote {dest_path.name}")
 
     if grouped_failures:
         print(f"\nFailures ({sum(len(v) for v in grouped_failures.values())}):")
@@ -12154,18 +12273,20 @@ def split_pipeline_argv(argv: list[str]) -> dict[str, list[str]]:
 
 def _parse_engine_spec(spec: str) -> tuple[str, str | None]:
     """Split an engine spec like "ollama:qwen3:8b" into (engine, model).
-    Bare "ollama" or "argos"/"deepl" → (engine, None). Empty string → ("", None).
+    Bare "ollama" or "argos"/"apple"/"deepl" → (engine, None). Empty string → ("", None).
     Anything else with a colon → first segment is engine, rest is model.
-    Engine must be one of argos/ollama/deepl (or empty)."""
+    Engine must be one of argos/apple/ollama/deepl (or empty)."""
     if not spec:
         return ("", None)
     engine, sep, model = spec.partition(":")
     engine = engine.strip().lower()
-    if engine not in ("argos", "ollama", "deepl"):
+    if engine not in ("argos", "apple", "ollama", "deepl"):
         raise CliError(
-            f"Unknown engine: {engine!r}. Use argos, ollama[:model], or deepl. "
+            f"Unknown engine: {engine!r}. Use argos, apple, ollama[:model], or deepl. "
             "Pass an empty string to disable."
         )
+    if sep and engine != "ollama":
+        raise CliError(f"Engine {engine!r} does not accept a model suffix. Use ollama:MODEL for local LLM models.")
     return (engine, model if sep else None)
 
 
@@ -12182,7 +12303,7 @@ def _rewrite_translate_block(block: list[str]) -> list[str]:
     if not block:
         raise CliError(
             "--translate needs an engine. Use --translate argos, "
-            "--translate ollama[:model], or --translate deepl."
+            "--translate apple, --translate ollama[:model], or --translate deepl."
         )
     # First non-flag token is the engine spec.
     engine_spec = block[0]
@@ -12929,7 +13050,7 @@ def _toml_to_pipeline_argv(toml_data: dict) -> tuple[list[str], dict]:
       languages = "japanese,english"  # full names normalize; alias: langs
 
       [translate]
-      engine = "ollama"               # required: argos | ollama[:model] | deepl
+      engine = "ollama"               # required: argos | apple | ollama[:model] | deepl
       mt_source = { ko = "ja", es = ["fr", "en"] }
                                       # per-target source; lists try first available
       # or: mt_source = "ko:ja,es:fr|en"     # string form (mt_source_lang accepted as alias)
@@ -13593,7 +13714,7 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--set-jimaku-key", action="store_true", help=argparse.SUPPRESS)
 
     translation = p.add_argument_group("AI Translation", description="Runs AFTER download. Requires at least one other requested language to download successfully so AI translation has a source subtitle to translate from. Output saved as <name>.<lang>.mt.srt.")
-    translation.add_argument("--engine", "--mt-engine", dest="mt_engine", choices=["argos", "ollama", "deepl"], help="Translate missing requested languages from the best available subtitle. Engines: argos (offline; pip install argostranslate), ollama (local; needs Ollama daemon), deepl (online; free tier, needs DEEPL_API_KEY). Default: argos (via [translate].engine).")
+    translation.add_argument("--engine", "--mt-engine", dest="mt_engine", choices=["argos", "apple", "ollama", "deepl"], help="Translate missing requested languages from the best available subtitle. Engines: argos (offline; pip install argostranslate), apple (Apple Translation; Mac-only, system models required), ollama (local; needs Ollama daemon), deepl (online; needs DEEPL_API_KEY). Default: argos (via [translate].engine).")
     translation.add_argument("--no-engine", "--no-mt-engine", dest="mt_engine", action="store_const", const="", help="Disable AI translation for this run even when [translate].engine is set in user_settings.toml.")
     translation.add_argument("--model", "--mt-model", dest="mt_model", metavar="NAME", help=f"Ollama model for --engine ollama. Default: {DEFAULT_OLLAMA_MODEL}")
     translation.add_argument("--mt-model-pair", metavar="PAIRS", help="Per-pair Ollama model overrides for this run, e.g. ja:ko=qwen3:4b,en:es=llama3.2:3b. Ignored unless --engine ollama.")
@@ -13741,16 +13862,32 @@ class _StatusLine:
 
 
 PROGRESS_BAR_WIDTH = 13
+PROGRESS_SPINNER = ("⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏")
+_PROGRESS_STATE: dict[tuple[str, int], tuple[float, int]] = {}
 
 
 def progress_bar(current: int, total: int, label: str, detail: str = "", *, transient: bool = False) -> None:
     total = max(total, 1)
     width = PROGRESS_BAR_WIDTH
+    current = max(0, min(current, total))
     filled = round(width * current / total)
     filled = min(width, max(0, filled))
     bar = "◼" * filled + "◻" * (width - filled)
-    suffix = f" {detail}" if detail else ""
-    line = f"[{bar}] {current}/{total} {label}{suffix}"
+    key = (label, total)
+    started_at, tick = _PROGRESS_STATE.get(key, (time.monotonic(), 0))
+    if current <= 1 or key not in _PROGRESS_STATE:
+        started_at, tick = time.monotonic(), 0
+    tick += 1
+    _PROGRESS_STATE[key] = (started_at, tick)
+
+    done = current >= total
+    marker = "✓" if done else PROGRESS_SPINNER[(tick - 1) % len(PROGRESS_SPINNER)]
+    elapsed = format_elapsed(time.monotonic() - started_at)
+    padded_count = f"{current:>{len(str(total))}}/{total}"
+    detail_text = f" {detail}" if detail else ""
+    line = f"{marker} {label:<13} [{bar}] {padded_count}{detail_text}  {elapsed:>4}"
+    if done:
+        _PROGRESS_STATE.pop(key, None)
     if transient and sys.stdout.isatty():
         print(f"\r{line}", end="\n" if current >= total else "", flush=True)
     elif not transient or current >= total:
@@ -15302,13 +15439,16 @@ def validate_user_config(raw: dict) -> dict:
     tr_out: dict[str, object] = {}
     if "engine" in tr:
         if not isinstance(tr["engine"], str):
-            raise CliError("translate.engine: expected string ('', 'argos', 'ollama'[':MODEL'], or 'deepl')")
+            raise CliError("translate.engine: expected string ('', 'argos', 'apple', 'ollama'[':MODEL'], or 'deepl')")
         # Accept "ollama:qwen3:8b" colon-spec.
-        engine_head = tr["engine"].split(":", 1)[0] if tr["engine"] else ""
-        if tr["engine"] and engine_head not in {"argos", "ollama", "deepl"}:
+        engine_spec = tr["engine"]
+        engine_head, sep, _model_part = engine_spec.partition(":")
+        if engine_spec and engine_head not in {"argos", "apple", "ollama", "deepl"}:
             raise CliError(
-                f"translate.engine: expected one of ['argos', 'ollama', 'deepl'] or empty, got {tr['engine']!r}"
+                f"translate.engine: expected one of ['argos', 'apple', 'ollama', 'deepl'] or empty, got {tr['engine']!r}"
             )
+        if sep and engine_head != "ollama":
+            raise CliError("translate.engine: model suffix is only supported for ollama, e.g. ollama:qwen3:8b")
         tr_out["engine"] = tr["engine"]
     if "model" in tr:
         tr_out["model"] = _validate_str(tr["model"], "translate.model")
@@ -15470,7 +15610,7 @@ manual_search = "on-missing"      # off | on-missing | always
 manual_search_open = "ask"        # ask | always | never
 
 [translate]
-engine = "argos"                  # "" | argos | ollama[:model] | deepl
+engine = "argos"                  # "" | argos | apple | ollama[:model] | deepl
 model = "qwen3:4b"                # default Ollama model
 mt_source = "auto"                # "auto" | "ja" | "ko:ja,es:en" | { ko = "ja" }
 strip_reading_before_mt = true   # strip 漢字（かんじ） readings before AI translation
@@ -16023,6 +16163,15 @@ def _setup_recommendations(choice: _SetupChoice) -> list[_SetupRecommendation]:
             setup_time="0-5 minutes depending on language packages.",
             selected_by_default=True,
         ))
+    if mt == "apple":
+        recs.append(_SetupRecommendation(
+            key="apple",
+            title="Apple Translation",
+            reason="You asked for Mac-only on-device translation when subtitles are missing.",
+            cost="Free; requires Apple Silicon, macOS 26/Tahoe or newer, and Apple Translation language models.",
+            setup_time="About 1 minute for the CLI, plus one-time language downloads in System Settings.",
+            selected_by_default=True,
+        ))
     if mt == "ollama":
         recs.append(_SetupRecommendation(
             key="ollama",
@@ -16084,7 +16233,7 @@ def _setup_recommendation_group(rec: _SetupRecommendation) -> tuple[str, str]:
         return ("Getting subtitles", "Find subtitle files and identify the right movie/show.")
     if rec.key.startswith("reading:"):
         return ("Language learning", "Add pronunciation guides for the languages you study.")
-    if rec.key in {"argos", "ollama", "deepl"}:
+    if rec.key in {"argos", "apple", "ollama", "deepl"}:
         return ("Translation fallback", "Fill gaps when a requested language is missing.")
     if rec.key == "config":
         return ("Convenience", "Save your normal defaults for shorter future commands.")
@@ -16218,6 +16367,8 @@ def _setup_config_summary(choice: _SetupChoice) -> list[str]:
     fmt, reason = _setup_profile_preferred_format(choice, reading_specs)
     if choice.mt in {"online", "deepl"}:
         mt = "DeepL translation fallback"
+    elif choice.mt == "apple":
+        mt = "Apple Translation fallback"
     elif choice.mt == "ollama":
         mt = "Ollama translation fallback"
     elif choice.mt == "argos":
@@ -16262,6 +16413,8 @@ def _setup_config_text(choice: _SetupChoice) -> str:
     # "offline" / "online".
     if choice.mt in {"online", "deepl"}:
         mt_engine = "deepl"
+    elif choice.mt == "apple":
+        mt_engine = "apple"
     elif choice.mt == "ollama":
         mt_engine = "ollama"
     elif choice.mt == "argos":
@@ -16671,6 +16824,7 @@ def _setup_profile_mt_engine(choice: _SetupChoice) -> str:
     """
     return {
         "deepl": "deepl",
+        "apple": "apple",
         "ollama": "ollama",
         "argos": "argos",
         "online": "deepl",
@@ -16733,6 +16887,8 @@ def _setup_profile_defaults(choice: _SetupChoice) -> list[str]:
     mt = _setup_profile_mt_engine(choice)
     if mt == "ollama":
         rows.append("Ollama translation fallback")
+    elif mt == "apple":
+        rows.append("Apple Translation fallback")
     elif mt == "deepl":
         rows.append("DeepL translation fallback")
     elif mt == "argos":
@@ -16763,6 +16919,8 @@ def _setup_ready_label(rec: _SetupRecommendation) -> str:
         return rec.title
     if rec.key == "ollama":
         return "Ollama translation"
+    if rec.key == "apple":
+        return "Apple Translation"
     if rec.key == "argos":
         return "Argos translation"
     if rec.key == "deepl":
@@ -16903,12 +17061,13 @@ def _setup_collect_choice() -> _SetupChoice:
                     [
                         ("a", "Skip (use only what's downloaded)"),
                         ("b", "Translate with Argos (local, basic quality)"),
-                        ("c", "Translate with Ollama (local, good quality; slower)"),
-                        ("d", "Translate with DeepL (online, better quality; needs API key)"),
+                        ("c", "Translate with Apple Translation (Mac-only, system models required)"),
+                        ("d", "Translate with Ollama (local, good quality; slower)"),
+                        ("e", "Translate with DeepL (online, polished; needs API key)"),
                     ],
                     "a",
                 )
-                values["mt"] = {"a": "none", "b": "argos", "c": "ollama", "d": "deepl"}[mt]
+                values["mt"] = {"a": "none", "b": "argos", "c": "apple", "d": "ollama", "e": "deepl"}[mt]
             elif step == 5:
                 partial = _SetupChoice(
                     native=list(values.get("native") or ["en"]),
@@ -17403,7 +17562,7 @@ Subcommands (each has its own --help):
   doctor        Check install, keys, dependencies, ffmpeg, and Ollama.
   interactive   Guided wizard — builds workflows or safely renames subtitle files.
   fetch         Get subtitles from URLs, folders, files (embedded tracks), or online subtitle sources.
-  translate     Fill missing languages with AI translation (argos / ollama / deepl).
+  translate     Fill missing languages with AI translation (argos / apple / ollama / deepl).
   modify        Clean up subtitle lines, convert formats, and add reading aids.
   merge         Create one multi-language subtitle file.
   inspect       Show embedded tracks and local subtitle files, then continue in the wizard.
@@ -17472,7 +17631,7 @@ Setup asks a few plain-language questions:
   2. Languages you are learning
   3. What you watch most: movie / TV shows / anime / mixed
   4. Where you watch: web browser / tablet-TV app / Plex / local player
-  5. AI translation preference: skip / Argos / Ollama / DeepL
+  5. AI translation preference: skip / DeepL / Argos / Apple Translation / Ollama
 
 Then it groups recommendations by outcome:
   - Getting subtitles
@@ -17736,6 +17895,10 @@ Explicit source mapping (per-target):
 
 Engines:
   argos                    Offline translation. Requires argostranslate
+  apple                    Apple Translation. Requires Apple Silicon,
+                           macOS 26/Tahoe or newer, `brew install
+                           Arthur-Ficial/tap/translate`, and downloaded
+                           Apple Translation language models.
   ollama                   Offline LLM translation. Requires Ollama running
                            in the background. Open the Ollama desktop app, or
                            use `brew services start ollama` on macOS/Homebrew.
@@ -17748,7 +17911,7 @@ Engines:
 Translation options:
   -s, --season N|all       (translate subcommand) season filter
   -e, --episode N|N-M|all  (translate subcommand) episode filter
-  --engine ENGINE          argos, ollama, or deepl. Default: argos
+  --engine ENGINE          argos, apple, ollama, or deepl. Default: argos
                            (via [translate].engine in user_settings.toml).
                            --mt-engine is still accepted as a compatibility alias.
   --no-mt-engine           Disable AI translation for this run even when the config
@@ -18303,7 +18466,7 @@ Workflow file schema (sections in execution order):
   manual_search_open = "ask"       # ask | always | never
 
   [translate]
-  engine = "ollama"                # required: argos | ollama[:model] | deepl
+  engine = "ollama"                # required: argos | apple | ollama[:model] | deepl
   mt_source = { ko = "ja", es = ["fr", "en"], ja = "ko" }
                                    # per-target source map; lists try first available
                                    # comma-string `mt_source = "ko:ja,es:fr|en"` also works
@@ -18402,7 +18565,7 @@ What it asks (only the questions relevant to your step choice appear):
       already encodes SxxExx.
   • Languages to collect (comma list: ja,en,ko,es,…).
       Type 'g' at the language prompt for the full supported guide.
-  • AI translation engine: skip / argos / ollama / deepl. Only when
+  • AI translation engine: skip / argos / apple / ollama / deepl. Only when
       translate is selected.
   • Reading aids — phonetic guides for the original script. Option 1 is
       'No reading aid (skip)' and the default; aids start at 2 and are
@@ -18933,7 +19096,8 @@ class _WizardState:
     season: str = ""                       # Q5
     episode: str = ""                      # Q5
     episode_filename_start: str = ""       # optional: first episode number to use in filenames
-    mt_engine: str = ""                    # Q6: "" | argos | ollama | deepl
+    mt_engine: str = ""                    # Q6: "" | argos | apple | ollama | deepl
+    mt_model: str = ""                     # Q6: Ollama model selected in the wizard
     reading_aids: list[str] = field(default_factory=list)     # Q7: spec entries
     asbplayer: bool = False                # Q8
     convert_smi: bool = False              # Local modify: convert .smi before cleanup/readings
@@ -21092,6 +21256,38 @@ def _wizard_argos_missing_packages(statuses: list[tuple[str, str, bool, list[str
     return packages
 
 
+def _apple_translation_installed_pairs(command: str = "translate") -> set[tuple[str, str]]:
+    try:
+        proc = subprocess.run(
+            [command, "--installed"],
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+    except (FileNotFoundError, subprocess.TimeoutExpired, OSError):
+        return set()
+    if proc.returncode != 0:
+        return set()
+    pairs: set[tuple[str, str]] = set()
+    for line in proc.stdout.splitlines():
+        raw = line.strip().lower()
+        if not raw or "-" not in raw:
+            continue
+        src, tgt = raw.split("-", 1)
+        if src and tgt:
+            pairs.add((src, tgt))
+    return pairs
+
+
+def _wizard_apple_translation_missing_pairs(state: _WizardState) -> list[tuple[str, str]]:
+    installed = _apple_translation_installed_pairs()
+    missing: list[tuple[str, str]] = []
+    for pair in _wizard_argos_likely_pairs(state):
+        if pair not in installed:
+            missing.append(pair)
+    return missing
+
+
 def _wizard_install_argos_packages(packages: list[str]) -> bool:
     if not packages:
         return True
@@ -21149,12 +21345,45 @@ def _wizard_q6_translate(state: _WizardState) -> None:
     print()
     print(_wizard_next_q(state, "Fill missing subtitles?"))
     while True:
-        print("    1) Skip (use only what's downloaded)")
-        print("    2) Translate with Argos (local, basic quality)")
-        print("    3) Translate with Ollama (local, good quality; slower)")
-        print("    4) Translate with DeepL (online, better quality; needs API key)")
-        pick = _wizard_read_choice("Number", ["1", "2", "3", "4"], "1")
-        state.mt_engine = {"1": "", "2": "argos", "3": "ollama", "4": "deepl"}[pick]
+        state.mt_model = ""
+        print("    1) Skip")
+        print("    2) DeepL                  online, polished, API key required")
+        print("    3) Argos                  on-device, basic quality, cross-platform")
+        print("    4) Apple Translation      on-device, Mac-only, system models required")
+        print("    5) Qwen3                  on-device, general-purpose local AI")
+        print("    6) TranslateGemma         on-device, translation-focused local AI")
+        print()
+        print("    Or type any Ollama model name, e.g. translategemma:12b or qwen3:14b.")
+        pick = _wizard_prompt("Number or model name", "1").strip().lower()
+        if pick in ("1", "skip", "none", "no"):
+            state.mt_engine = ""
+            return
+        if pick == "2":
+            state.mt_engine = "deepl"
+            return
+        if pick == "4":
+            state.mt_engine = "apple"
+            return
+        if pick in ("5", "qwen3"):
+            state.mt_engine = "ollama"
+            state.mt_model = "qwen3:8b"
+            return
+        if pick in ("6", "translategemma"):
+            state.mt_engine = "ollama"
+            state.mt_model = "translategemma:12b"
+            return
+        if pick == "3":
+            state.mt_engine = "argos"
+        elif _wizard_valid_ollama_model_name(pick):
+            state.mt_engine = "ollama"
+            state.mt_model = pick
+            return
+        else:
+            print()
+            print("    I don't recognize that as a menu number or Ollama model name.")
+            print("    Use names like: translategemma:12b, qwen3:8b, qwen3:14b")
+            print()
+            continue
         if state.mt_engine != "argos":
             return
         try:
@@ -21167,6 +21396,14 @@ def _wizard_q6_translate(state: _WizardState) -> None:
             return
         print()
         print("    Pick another translation option:")
+
+
+def _wizard_valid_ollama_model_name(value: str) -> bool:
+    """Accept ordinary Ollama model names like qwen3:14b,
+    translategemma:12b, or namespace/model:tag."""
+    if not value or value in {"b", "back", "q", "quit", "exit"}:
+        return False
+    return bool(re.fullmatch(r"[a-z0-9][a-z0-9._/-]*(?::[a-z0-9][a-z0-9._-]*)?", value))
 
 
 def _wizard_q7_reading_aids(state: _WizardState) -> None:
@@ -21474,7 +21711,15 @@ def _wizard_plain_plan(state: _WizardState) -> list[str]:
         lines.append(f"Use local {langs} files in:")
         lines.append(f"  {src}")
     if "translate" in steps and state.mt_engine:
-        lines.append(f"Fill gaps with {state.mt_engine.title()} AI translation")
+        label = state.mt_engine.title()
+        if state.mt_engine == "ollama" and state.mt_model:
+            label = f"Ollama ({state.mt_model})"
+        elif state.mt_engine == "apple":
+            label = "Apple Translation"
+        if state.mt_engine == "apple":
+            lines.append(f"Fill gaps with {label}")
+        else:
+            lines.append(f"Fill gaps with {label} translation")
     if "modify" in steps:
         if state.reading_aids:
             lines.append(f"Add pronunciation guides: {', '.join(_wizard_human_reading_aids(state.reading_aids))}")
@@ -22125,6 +22370,8 @@ def _wizard_emit_cli(state: _WizardState) -> list[str]:
             argv += ["--languages", ",".join(state.languages)]
         if state.mt_engine:
             argv += ["--engine", state.mt_engine]
+            if state.mt_engine == "ollama" and state.mt_model:
+                argv += ["--model", state.mt_model]
         if state.output:
             argv += ["--output", state.output]
         return argv
@@ -22161,7 +22408,10 @@ def _wizard_emit_cli(state: _WizardState) -> list[str]:
     # is requested; --no-engine is the explicit opt-out when fetch is
     # selected without translate.
     if "translate" in steps and state.mt_engine:
-        argv += ["--translate", state.mt_engine]
+        engine_spec = state.mt_engine
+        if state.mt_engine == "ollama" and state.mt_model:
+            engine_spec = f"ollama:{state.mt_model}"
+        argv += ["--translate", engine_spec]
         add_downstream_episode_filter(argv)
         if "fetch" not in steps and state.languages:
             argv += ["--languages", ",".join(state.languages)]
@@ -22334,6 +22584,8 @@ def _wizard_emit_toml(state: _WizardState) -> str:
     if "translate" in steps and state.mt_engine:
         lines.append("[translate]")
         lines.append(f'engine = "{state.mt_engine}"')
+        if state.mt_engine == "ollama" and state.mt_model:
+            lines.append(f'model = "{state.mt_model}"')
         if downstream_episode_filter:
             if state.season:
                 lines.append(f'season = "{state.season}"')
@@ -22854,7 +23106,7 @@ def _wizard_probe_dependencies(state: _WizardState) -> list[tuple[str, str, str]
         else:
             # Daemon is up — verify the model the run will use is present so a
             # long translate job doesn't stall on a first-run model download.
-            model = _wizard_ollama_target_model()
+            model = _wizard_ollama_target_model(state)
             if not _wizard_ollama_model_installed(model, _wizard_ollama_installed_models()):
                 if _ollama_models_flag("auto_load", True):
                     out.append(("info", f"Ollama model {model!r} is not downloaded yet",
@@ -22865,6 +23117,17 @@ def _wizard_probe_dependencies(state: _WizardState) -> list[tuple[str, str, str]
                     out.append(("block", f"Ollama model {model!r} is not installed",
                                 f"ollama pull {model}   "
                                 "(auto-pull is off in [translate.ollama_models])"))
+    if state.mt_engine == "apple":
+        if shutil.which("translate") is None:
+            out.append(("block", "Apple Translation CLI",
+                        "brew install Arthur-Ficial/tap/translate"))
+        else:
+            missing_pairs = _wizard_apple_translation_missing_pairs(state)
+            if missing_pairs:
+                pairs = ", ".join(f"{src}-{tgt}" for src, tgt in missing_pairs)
+                out.append(("block", f"Apple Translation model pair(s): {pairs}",
+                            "Install in System Settings > General > Language & Region > "
+                            "Translation Languages, then verify with: translate --installed"))
     if state.mt_engine == "deepl":
         if not get_provider_api_key("deepl"):
             out.append(("block", "DeepL API key", "getsubtitle --set-key deepl"))
@@ -22921,8 +23184,10 @@ def _wizard_ollama_installed_models() -> set[str]:
         return set()
 
 
-def _wizard_ollama_target_model() -> str:
+def _wizard_ollama_target_model(state: _WizardState | None = None) -> str:
     """The Ollama model the run will use: [translate].model or the default."""
+    if state is not None and state.mt_model:
+        return state.mt_model
     try:
         cfg = load_user_config()
     except CliError:
@@ -23994,8 +24259,17 @@ def main(argv: list[str] | None = None) -> int:
             raise CliError(
                 f"{translator.name}: not ready.\n{translator.setup_help()}"
             )
-        # Same explicit-pair syntax as `getsubtitle translate`.
-        source_overrides = parse_mt_source_lang(args.mt_source_lang, langs)
+        # Same explicit-pair syntax as `getsubtitle translate`. Config
+        # defaults are filtered to this run's requested languages.
+        explicit_mt_source = (
+            option_was_passed(raw_argv, "--mt-source")
+            or option_was_passed(raw_argv, "--mt-source-lang")
+        )
+        source_overrides = parse_mt_source_lang(
+            args.mt_source_lang,
+            langs,
+            strict_targets=explicit_mt_source,
+        )
         found_by_lang_ep: dict[tuple[str, str], bool] = {}
         for r in search_results:
             if r.status == "found":
@@ -24054,7 +24328,7 @@ def main(argv: list[str] | None = None) -> int:
                         _last[0] = pct
                         progress_bar(
                             done, total, "translating",
-                            f"{_label} subtitle {done}/{total} ({format_elapsed(time.monotonic() - started_at)})",
+                            f"{_label} subtitle {done}/{total}",
                             transient=True,
                         )
 
@@ -24072,7 +24346,7 @@ def main(argv: list[str] | None = None) -> int:
                 elapsed = time.monotonic() - started_at
                 mt_files.append(target_path)
                 mt_written_times.append((target_path, elapsed))
-                print(f"  ep{ep} {src_lang}->{target}: wrote {target_path.name} in {format_elapsed(elapsed)}")
+                print(f"  ep{ep} {src_lang}->{target}: wrote {target_path.name}")
             # Compact one warning per unique error message so the user sees a
             # single actionable line instead of N near-identical ones.
             for msg, tasks in grouped_mt_failures.items():

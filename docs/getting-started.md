@@ -30,9 +30,11 @@ The wizard can:
 
 1. **Fetch** - download subtitles from a streaming/catalog URL, scan a local
    folder, or both.
-2. **Modify** - clean broadcast noise, add reading aids, convert legacy `.smi`,
+2. **Translate** - fill missing languages with AI translation when a human
+   subtitle is not available.
+3. **Modify** - clean broadcast noise, add reading aids, convert legacy `.smi`,
    or extract text subtitles from local files.
-3. **Merge** - stack 2-4 language tracks into one synced study file.
+4. **Merge** - stack 2-4 language tracks into one synced study file.
 
 The wizard runs the common path by default, but each step can also be used on
 its own from the CLI.

@@ -3761,6 +3761,22 @@ def test_config_validates_translate_engine():
             raise AssertionError("expected CliError for bad engine")
 
 
+def test_config_accepts_apple_translate_engine():
+    with _isolated_config('[translate]\nengine = "apple"\n'):
+        cfg = MODULE["load_user_config"]()
+    assert cfg["translate"]["engine"] == "apple"
+
+
+def test_config_rejects_model_suffix_for_non_ollama_engine():
+    with _isolated_config('[translate]\nengine = "apple:foo"\n'):
+        try:
+            MODULE["load_user_config"]()
+        except MODULE["CliError"] as e:
+            assert "model suffix" in str(e)
+        else:
+            raise AssertionError("expected CliError for apple model suffix")
+
+
 def test_config_accepts_ollama_models_nested_table():
     toml = '[translate]\nmodel = "aya-expanse:8b"\n[translate.ollama_models]\n"ja:ko" = "qwen3:4b"\nen-es = "llama3.2:3b"\n'
     with _isolated_config(toml):
@@ -4287,7 +4303,7 @@ def test_setup_collect_choice_accepts_short_language_codes_and_examples():
     fn = MODULE["_setup_collect_choice"]
     g = fn.__globals__
     saved_prompt = g["_wizard_prompt"]
-    answers = iter(["en,ko", "jp,es", "3", "1", "3", "3"])
+    answers = iter(["en,ko", "jp,es", "3", "1", "4", "3"])
     try:
         g["_wizard_prompt"] = lambda q, default=None, **kw: next(answers)
         buf = io.StringIO()
@@ -4790,7 +4806,7 @@ def test_help_topic_keys_lists_providers_and_env_vars():
 def test_help_topic_translate_lists_engines():
     rc, out, _ = _capture_main(["--help", "translate"])
     assert rc == 0
-    assert "argos" in out and "ollama" in out and "deepl" in out
+    assert "argos" in out and "apple" in out and "ollama" in out and "deepl" in out
 
 
 def test_help_topic_advanced_uses_new_strip_name_and_keeps_aliases():
@@ -4904,6 +4920,45 @@ def test_translate_main_writes_mt_files_using_fake_translator():
                 assert out_path.exists()
                 body = out_path.read_text(encoding="utf-8")
                 assert "[ko] こんにちは" in body
+    finally:
+        scope["select_translator"] = saved_select
+
+
+def test_translate_main_progress_shows_single_elapsed_time_signal():
+    import contextlib
+    import io
+    import tempfile
+    from pathlib import Path
+
+    class _FakeTranslator(MODULE["_BaseTranslator"]):
+        name = "fake"
+        def is_available(self):
+            return True
+        def translate_batch(self, texts, source, target, on_progress=None):
+            if on_progress is not None:
+                on_progress(len(texts), len(texts))
+            return [f"[{target}] {t}" for t in texts]
+
+    scope = MODULE["translate_main"].__globals__
+    saved_select = scope["select_translator"]
+    try:
+        scope["select_translator"] = lambda engine, model: _FakeTranslator()
+        with _isolated_config(None):
+            with tempfile.TemporaryDirectory() as d:
+                root = Path(d)
+                (root / "Show.S01E01.en.srt").write_text(
+                    "1\n00:00:01,000 --> 00:00:02,000\nHello\n", encoding="utf-8"
+                )
+                out = io.StringIO()
+                with contextlib.redirect_stdout(out):
+                    rc = MODULE["translate_main"]([
+                        str(root), "-l", "en,es", "--mt-engine", "argos",
+                    ])
+                text = out.getvalue()
+        assert rc == 0
+        assert "cue 1/1 (" not in text
+        assert "wrote Show.S01E01.es.mt.srt in " not in text
+        assert "  S01E01 en->es: wrote Show.S01E01.es.mt.srt" in text
     finally:
         scope["select_translator"] = saved_select
 
@@ -5641,6 +5696,13 @@ def test_parse_mt_source_lang_target_not_in_langs_rejected():
         raise AssertionError("expected CliError for unknown target")
 
 
+def test_parse_mt_source_lang_can_ignore_unrelated_config_targets():
+    p = MODULE["parse_mt_source_lang"]
+    parsed = p("ja:ko,es:en", ["en", "es"], strict_targets=False)
+    assert parsed == {"es": ("en",)}
+    assert p("ja:ko", ["en", "es"], strict_targets=False) is None
+
+
 def test_parse_mt_source_lang_duplicate_target_rejected():
     p = MODULE["parse_mt_source_lang"]
     try:
@@ -5806,7 +5868,7 @@ def test_translator_signatures_accept_on_progress_kwarg():
     # Guards against accidental signature regressions in any built-in
     # translator. Each must accept on_progress=None.
     import inspect
-    for cls_name in ("ArgosTranslator", "OllamaTranslator", "DeepLTranslator"):
+    for cls_name in ("ArgosTranslator", "AppleTranslationTranslator", "OllamaTranslator", "DeepLTranslator"):
         sig = inspect.signature(MODULE[cls_name].translate_batch)
         assert "on_progress" in sig.parameters, f"{cls_name}.translate_batch lacks on_progress"
 
@@ -8698,8 +8760,11 @@ def test_progress_bar_uses_wizard_block_style():
         MODULE["progress_bar"](1, 3, "searching", "episode 1 ja")
         MODULE["progress_bar"](3, 3, "searching", "episode 3 ja")
     text = out.getvalue()
-    assert "[◼◼◼◼◻◻◻◻◻◻◻◻◻] 1/3 searching episode 1 ja" in text
-    assert "[◼◼◼◼◼◼◼◼◼◼◼◼◼] 3/3 searching episode 3 ja" in text
+    assert "searching" in text
+    assert "[◼◼◼◼◻◻◻◻◻◻◻◻◻] 1/3 episode 1 ja" in text
+    assert "✓ searching" in text
+    assert "[◼◼◼◼◼◼◼◼◼◼◼◼◼] 3/3 episode 3 ja" in text
+    assert "0s" in text
     assert "#" not in text
     assert "-" not in text
 
@@ -9119,6 +9184,7 @@ def test_translator_setup_help_messages_are_specific():
     # Each engine should give an actionable setup hint with at least one
     # concrete command and the engine name.
     argos = MODULE["ArgosTranslator"]()
+    apple = MODULE["AppleTranslationTranslator"]()
     ollama = MODULE["OllamaTranslator"]()
     deepl = MODULE["DeepLTranslator"](api_key=None)
     # Argos should reference pip + the English-pivot packages most non-English
@@ -9130,6 +9196,11 @@ def test_translator_setup_help_messages_are_specific():
     # Ollama should reference the daemon command + model pull.
     msg = ollama.setup_help()
     assert "ollama serve" in msg and "ollama pull" in msg
+    # Apple Translation should reference the Homebrew install and model setup.
+    msg = apple.setup_help()
+    assert "brew install Arthur-Ficial/tap/translate" in msg
+    assert "translate --installed" in msg
+    assert "System Settings" in msg
     # DeepL should reference the key setup command.
     msg = deepl.setup_help()
     assert "--set-key deepl" in msg or "DEEPL_API_KEY" in msg
@@ -9372,6 +9443,90 @@ def test_ollama_pull_failure_gives_model_install_hint():
     assert "ollama pull aya-expanse:8b" in msg
     assert "--model NAME" in msg
     assert "model not found" in msg
+
+
+def test_apple_translation_translator_uses_cli_batch_mode():
+    captured = {}
+    progress_calls = []
+
+    class _Proc:
+        returncode = 0
+        stdout = "Pensaba que volverias manana.\nNo me digas eso.\n"
+        stderr = ""
+
+    def fake_which(command):
+        assert command == "translate"
+        return "/opt/homebrew/bin/translate"
+
+    def fake_run(args, input, capture_output, text, timeout):
+        captured["args"] = args
+        captured["input"] = input
+        captured["capture_output"] = capture_output
+        captured["text"] = text
+        captured["timeout"] = timeout
+        return _Proc()
+
+    shutil_mod = MODULE["shutil"]
+    subprocess_mod = MODULE["subprocess"]
+    saved_which = shutil_mod.which
+    saved_run = subprocess_mod.run
+    try:
+        shutil_mod.which = fake_which
+        subprocess_mod.run = fake_run
+        out = MODULE["AppleTranslationTranslator"]().translate_batch(
+            ["I thought you were coming back tomorrow.", "Don't tell me that."],
+            "en",
+            "es",
+            on_progress=lambda done, total: progress_calls.append((done, total)),
+        )
+    finally:
+        shutil_mod.which = saved_which
+        subprocess_mod.run = saved_run
+
+    assert out == ["Pensaba que volverias manana.", "No me digas eso."]
+    assert captured["args"] == [
+        "translate",
+        "--from", "en",
+        "--to", "es",
+        "--batch",
+        "--no-install",
+        "--quiet",
+    ]
+    assert captured["input"] == "I thought you were coming back tomorrow.\nDon't tell me that.\n"
+    assert captured["capture_output"] is True
+    assert captured["text"] is True
+    assert captured["timeout"] == 180
+    assert progress_calls == [(2, 2)]
+
+
+def test_apple_translation_installed_pairs_parses_translate_output():
+    class _Proc:
+        returncode = 0
+        stdout = "en-es\nja-ko\n\n"
+        stderr = ""
+
+    captured = {}
+
+    def fake_run(args, capture_output, text, timeout):
+        captured["args"] = args
+        captured["capture_output"] = capture_output
+        captured["text"] = text
+        captured["timeout"] = timeout
+        return _Proc()
+
+    subprocess_mod = MODULE["subprocess"]
+    saved_run = subprocess_mod.run
+    try:
+        subprocess_mod.run = fake_run
+        pairs = MODULE["_apple_translation_installed_pairs"]()
+    finally:
+        subprocess_mod.run = saved_run
+
+    assert pairs == {("en", "es"), ("ja", "ko")}
+    assert captured["args"] == ["translate", "--installed"]
+    assert captured["capture_output"] is True
+    assert captured["text"] is True
+    assert captured["timeout"] == 10
 
 
 def test_translate_main_fails_fast_when_engine_not_available():
@@ -10861,7 +11016,7 @@ def test_wizard_q6_argos_preflight_can_disable_translation():
     saved_statuses = fn_g["_wizard_argos_pair_statuses"]
     had_input = "input" in fn_g
     saved_input = fn_g.get("input")
-    answers = iter(["2", "2"])  # choose Argos, then continue without translation
+    answers = iter(["3", "2"])  # choose Argos, then continue without translation
     try:
         fn_g["_wizard_argos_pair_statuses"] = lambda _state: [
             ("en", "ko", True, []),
@@ -12951,7 +13106,7 @@ def test_wizard_translate_argos_preflight_back_reasks_engine_choice():
     fn_g = MODULE["_wizard_q6_translate"].__globals__
     saved_prompt = fn_g["_wizard_prompt"]
     saved_handler = fn_g["_wizard_handle_argos_preflight"]
-    picks = iter(["2", "1"])
+    picks = iter(["3", "1"])
     try:
         fn_g["_wizard_prompt"] = lambda _q, _d=None, **_kwargs: next(picks)
         fn_g["_wizard_handle_argos_preflight"] = lambda _state: (_ for _ in ()).throw(
@@ -12966,6 +13121,37 @@ def test_wizard_translate_argos_preflight_back_reasks_engine_choice():
 
     assert s.mt_engine == ""
     assert "Going back to translation choices." in out
+
+
+def test_wizard_translate_accepts_custom_ollama_model():
+    import contextlib
+    import io
+
+    s = MODULE["_WizardState"](steps={"translate"}, languages=["ja", "ko"])
+    fn_g = MODULE["_wizard_q6_translate"].__globals__
+    saved_prompt = fn_g["_wizard_prompt"]
+    try:
+        fn_g["_wizard_prompt"] = lambda _q, _d=None, **_kwargs: "translategemma:27b"
+        with contextlib.redirect_stdout(io.StringIO()) as buf:
+            MODULE["_wizard_q6_translate"](s)
+        out = buf.getvalue()
+    finally:
+        fn_g["_wizard_prompt"] = saved_prompt
+
+    assert "Or type any Ollama model name" in out
+    assert s.mt_engine == "ollama"
+    assert s.mt_model == "translategemma:27b"
+
+
+def test_wizard_emit_cli_and_toml_include_selected_ollama_model():
+    s = _wizard_state(mt_engine="ollama")
+    s.mt_model = "translategemma:12b"
+    cli = MODULE["_wizard_emit_cli"](s)
+    toml = MODULE["_wizard_emit_toml"](s)
+
+    assert "ollama:translategemma:12b" in cli
+    assert 'engine = "ollama"' in toml
+    assert 'model = "translategemma:12b"' in toml
 
 
 def test_wizard_local_missing_languages_can_add_fetch_on_spot():
@@ -13975,6 +14161,21 @@ def test_wizard_plain_plan_hides_reading_aid_pseudo_language_tokens():
     assert "Chinese pinyin" in plan
     assert "Chinese + Korean ASS study subtitle file" in plan
     assert "zh-marks" not in plan
+
+
+def test_wizard_plain_plan_apple_translation_label_is_not_duplicated():
+    s = MODULE["_WizardState"](
+        steps={"translate"},
+        source="/tmp/subs",
+        source_kind="path",
+        languages=["en", "es"],
+        mt_engine="apple",
+    )
+
+    plan = "\n".join(MODULE["_wizard_plain_plan"](s))
+
+    assert "Fill gaps with Apple Translation" in plan
+    assert "Apple Translation translation" not in plan
 
 
 def test_wizard_emit_cli_merges_single_chinese_pinyin_variant():

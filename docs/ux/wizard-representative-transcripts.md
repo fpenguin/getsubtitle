@@ -85,12 +85,16 @@ Q4. Which subtitle languages do you want to collect?                Progress [�
 ------------------------------------------------------------------------------------------------
 Q5. Fill missing subtitles?                                         Progress [◼◼◼◼◼◼◼◻◻◻◻◻◻] 56%
 
-    1) Skip (use only what's downloaded)
-    2) Translate with Argos (local, basic quality)
-    3) Translate with Ollama (local, good quality; slower)
-    4) Translate with DeepL (online, better quality; needs API key)
+    1) Skip
+    2) DeepL                  online, polished, API key required
+    3) Argos                  on-device, basic quality, cross-platform
+    4) Apple Translation      on-device, Mac-only, system models required
+    5) Qwen3                  on-device, general-purpose local AI
+    6) TranslateGemma         on-device, translation-focused local AI
 
-  Number [1 | b=back | q=quit] >
+    Or type any Ollama model name, e.g. translategemma:12b or qwen3:14b.
+
+  Number or model name [1 | b=back | q=quit] >
 
 ------------------------------------------------------------------------------------------------
 Q6. Reading aids (phonetic guides for the original script).         Progress [◼◼◼◼◼◼◼◼◼◻◻◻◻] 69%
@@ -1223,12 +1227,16 @@ Q3. Which subtitle languages do you want to collect?                Progress [�
 ------------------------------------------------------------------------------------------------
 Q4. Fill missing subtitles?                                         Progress [◼◼◼◼◼◼◼◼◻◻◻◻◻] 58%
 
-    1) Skip (use only what's downloaded)
-    2) Translate with Argos (local, basic quality)
-    3) Translate with Ollama (local, good quality; slower)
-    4) Translate with DeepL (online, better quality; needs API key)
+    1) Skip
+    2) DeepL                  online, polished, API key required
+    3) Argos                  on-device, basic quality, cross-platform
+    4) Apple Translation      on-device, Mac-only, system models required
+    5) Qwen3                  on-device, general-purpose local AI
+    6) TranslateGemma         on-device, translation-focused local AI
 
-  Number [1 | b=back | q=quit] > 4
+    Or type any Ollama model name, e.g. translategemma:12b or qwen3:14b.
+
+  Number or model name [1 | b=back | q=quit] > 2
 
 ------------------------------------------------------------------------------------------------
 Q5. Reading aids (phonetic guides for the original script).         Progress [◼◼◼◼◼◼◼◼◼◼◻◻◻] 75%
@@ -1295,7 +1303,7 @@ Review your workflow                                                Progress [�
 Plan
   • Use local Japanese, English files in:
     {TMP}/Show
-  • Fill gaps with Deepl AI translation
+  • Fill gaps with Deepl translation
   • Clean up subtitle lines (single line, strip broadcast noise)
   • Create one Japanese + English SRT study subtitle file
   • Use subtitle text size: Regular
@@ -1433,12 +1441,16 @@ Q3. Which subtitle languages do you want to collect?                Progress [�
 ------------------------------------------------------------------------------------------------
 Q4. Fill missing subtitles?                                         Progress [◼◼◼◼◼◼◼◼◻◻◻◻◻] 58%
 
-    1) Skip (use only what's downloaded)
-    2) Translate with Argos (local, basic quality)
-    3) Translate with Ollama (local, good quality; slower)
-    4) Translate with DeepL (online, better quality; needs API key)
+    1) Skip
+    2) DeepL                  online, polished, API key required
+    3) Argos                  on-device, basic quality, cross-platform
+    4) Apple Translation      on-device, Mac-only, system models required
+    5) Qwen3                  on-device, general-purpose local AI
+    6) TranslateGemma         on-device, translation-focused local AI
 
-  Number [1 | b=back | q=quit] > 3
+    Or type any Ollama model name, e.g. translategemma:12b or qwen3:14b.
+
+  Number or model name [1 | b=back | q=quit] > 5
 
 ------------------------------------------------------------------------------------------------
 Q5. Reading aids (phonetic guides for the original script).         Progress [◼◼◼◼◼◼◼◼◼◼◻◻◻] 75%
@@ -1505,7 +1517,7 @@ Review your workflow                                                Progress [�
 Plan
   • Use local Japanese, English files in:
     {TMP}/Show
-  • Fill gaps with Ollama AI translation
+  • Fill gaps with Ollama (qwen3:8b) translation
   • Clean up subtitle lines (single line, strip broadcast noise)
   • Create one Japanese + English SRT study subtitle file
   • Use subtitle text size: Regular
@@ -1831,12 +1843,16 @@ Q5. Which subtitle languages do you want to collect?                Progress [�
 ------------------------------------------------------------------------------------------------
 Q6. Fill missing subtitles?                                         Progress [◼◼◼◼◼◼◼◼◼◻◻◻◻] 69%
 
-    1) Skip (use only what's downloaded)
-    2) Translate with Argos (local, basic quality)
-    3) Translate with Ollama (local, good quality; slower)
-    4) Translate with DeepL (online, better quality; needs API key)
+    1) Skip
+    2) DeepL                  online, polished, API key required
+    3) Argos                  on-device, basic quality, cross-platform
+    4) Apple Translation      on-device, Mac-only, system models required
+    5) Qwen3                  on-device, general-purpose local AI
+    6) TranslateGemma         on-device, translation-focused local AI
 
-  Number [1 | b=back | q=quit] > 1
+    Or type any Ollama model name, e.g. translategemma:12b or qwen3:14b.
+
+  Number or model name [1 | b=back | q=quit] > 1
 
 ------------------------------------------------------------------------------------------------
 Q7. Reading aids (phonetic guides for the original script).         Progress [◼◼◼◼◼◼◼◼◼◼◼◻◻] 81%
@@ -2972,12 +2988,16 @@ Q4. Which subtitle languages do you want to collect?                Progress [�
 ------------------------------------------------------------------------------------------------
 Q5. Fill missing subtitles?                                         Progress [◼◼◼◼◼◼◼◻◻◻◻◻◻] 56%
 
-    1) Skip (use only what's downloaded)
-    2) Translate with Argos (local, basic quality)
-    3) Translate with Ollama (local, good quality; slower)
-    4) Translate with DeepL (online, better quality; needs API key)
+    1) Skip
+    2) DeepL                  online, polished, API key required
+    3) Argos                  on-device, basic quality, cross-platform
+    4) Apple Translation      on-device, Mac-only, system models required
+    5) Qwen3                  on-device, general-purpose local AI
+    6) TranslateGemma         on-device, translation-focused local AI
 
-  Number [1 | b=back | q=quit] > 1
+    Or type any Ollama model name, e.g. translategemma:12b or qwen3:14b.
+
+  Number or model name [1 | b=back | q=quit] > 1
 
 ------------------------------------------------------------------------------------------------
 Q6. Reading aids (phonetic guides for the original script).         Progress [◼◼◼◼◼◼◼◼◼◻◻◻◻] 69%
@@ -3191,12 +3211,16 @@ Q4. Which subtitle languages do you want to collect?                Progress [�
 ------------------------------------------------------------------------------------------------
 Q5. Fill missing subtitles?                                         Progress [◼◼◼◼◼◼◼◻◻◻◻◻◻] 56%
 
-    1) Skip (use only what's downloaded)
-    2) Translate with Argos (local, basic quality)
-    3) Translate with Ollama (local, good quality; slower)
-    4) Translate with DeepL (online, better quality; needs API key)
+    1) Skip
+    2) DeepL                  online, polished, API key required
+    3) Argos                  on-device, basic quality, cross-platform
+    4) Apple Translation      on-device, Mac-only, system models required
+    5) Qwen3                  on-device, general-purpose local AI
+    6) TranslateGemma         on-device, translation-focused local AI
 
-  Number [1 | b=back | q=quit] > 1
+    Or type any Ollama model name, e.g. translategemma:12b or qwen3:14b.
+
+  Number or model name [1 | b=back | q=quit] > 1
 
 ------------------------------------------------------------------------------------------------
 Q6. Reading aids (phonetic guides for the original script).         Progress [◼◼◼◼◼◼◼◼◼◻◻◻◻] 69%
@@ -4608,12 +4632,16 @@ Q5. Which subtitle languages do you want to collect?                Progress [�
 ------------------------------------------------------------------------------------------------
 Q6. Fill missing subtitles?                                         Progress [◼◼◼◼◼◼◼◼◼◻◻◻◻] 69%
 
-    1) Skip (use only what's downloaded)
-    2) Translate with Argos (local, basic quality)
-    3) Translate with Ollama (local, good quality; slower)
-    4) Translate with DeepL (online, better quality; needs API key)
+    1) Skip
+    2) DeepL                  online, polished, API key required
+    3) Argos                  on-device, basic quality, cross-platform
+    4) Apple Translation      on-device, Mac-only, system models required
+    5) Qwen3                  on-device, general-purpose local AI
+    6) TranslateGemma         on-device, translation-focused local AI
 
-  Number [1 | b=back | q=quit] > 4
+    Or type any Ollama model name, e.g. translategemma:12b or qwen3:14b.
+
+  Number or model name [1 | b=back | q=quit] > 2
 
 ------------------------------------------------------------------------------------------------
 Q7. Reading aids (phonetic guides for the original script).         Progress [◼◼◼◼◼◼◼◼◼◼◼◻◻] 81%
@@ -4680,7 +4708,7 @@ Review your workflow                                                Progress [�
 Plan
   • Fetch Japanese, English for:
     https://www.imdb.com/title/tt28299608/
-  • Fill gaps with Deepl AI translation
+  • Fill gaps with Deepl translation
   • Clean up subtitle lines (single line, strip broadcast noise)
   • Create one Japanese + English SRT study subtitle file
   • Use subtitle text size: Regular
@@ -4804,12 +4832,16 @@ Q4. Which subtitle languages do you want to collect?                Progress [�
 ------------------------------------------------------------------------------------------------
 Q5. Fill missing subtitles?                                         Progress [◼◼◼◼◼◼◼◻◻◻◻◻◻] 56%
 
-    1) Skip (use only what's downloaded)
-    2) Translate with Argos (local, basic quality)
-    3) Translate with Ollama (local, good quality; slower)
-    4) Translate with DeepL (online, better quality; needs API key)
+    1) Skip
+    2) DeepL                  online, polished, API key required
+    3) Argos                  on-device, basic quality, cross-platform
+    4) Apple Translation      on-device, Mac-only, system models required
+    5) Qwen3                  on-device, general-purpose local AI
+    6) TranslateGemma         on-device, translation-focused local AI
 
-  Number [1 | b=back | q=quit] >
+    Or type any Ollama model name, e.g. translategemma:12b or qwen3:14b.
+
+  Number or model name [1 | b=back | q=quit] >
 
 ------------------------------------------------------------------------------------------------
 Q6. Reading aids (phonetic guides for the original script).         Progress [◼◼◼◼◼◼◼◼◼◻◻◻◻] 69%

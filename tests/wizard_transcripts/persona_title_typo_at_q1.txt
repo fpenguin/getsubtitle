@@ -101,12 +101,16 @@ Q4. Which subtitle languages do you want to collect?                Progress [�
 ------------------------------------------------------------------------------------------------
 Q5. Fill missing subtitles?                                         Progress [◼◼◼◼◼◼◼◻◻◻◻◻◻] 56%
 
-    1) Skip (use only what's downloaded)
-    2) Translate with Argos (local, basic quality)
-    3) Translate with Ollama (local, good quality; slower)
-    4) Translate with DeepL (online, better quality; needs API key)
+    1) Skip
+    2) DeepL                  online, polished, API key required
+    3) Argos                  on-device, basic quality, cross-platform
+    4) Apple Translation      on-device, Mac-only, system models required
+    5) Qwen3                  on-device, general-purpose local AI
+    6) TranslateGemma         on-device, translation-focused local AI
 
-  Number [1 | b=back | q=quit] > 1
+    Or type any Ollama model name, e.g. translategemma:12b or qwen3:14b.
+
+  Number or model name [1 | b=back | q=quit] > 1
 
 ------------------------------------------------------------------------------------------------
 Q6. Reading aids (phonetic guides for the original script).         Progress [◼◼◼◼◼◼◼◼◼◻◻◻◻] 69%
